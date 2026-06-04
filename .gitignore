@@ -1,0 +1,98 @@
+# --- Monolythium Vision base .gitignore (applies to every repo) ---
+
+# Local-only development context (NEVER push these)
+plans/
+docs-internal/
+*.internal.md
+AUDIT-*.md
+RESUME.md
+STATUS.md
+TODO.md
+
+# Environment + secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.keystore
+*.p12
+secrets/
+credentials/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/settings.recommended.json
+*.iml
+
+# Local scratch
+scratch/
+tmp/
+.cache/
+
+# Logs
+*.log
+logs/
+# --- Rust additions (append to gitignore.base) ---
+target/
+**/target/
+Cargo.lock
+# Tauri app releases run cargo with --locked, so commit the desktop lockfile.
+!src-tauri/Cargo.lock
+*.rs.bk
+rustc-ice-*.txt
+# --- Node / TS / Vite additions (append to gitignore.base) ---
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+.vitest-cache/
+.astro/
+.next/
+.turbo/
+.nuxt/
+.svelte-kit/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+.pnp.*
+.yarn/
+
+# Lockfiles: keep pnpm-lock.yaml; drop others if pnpm is the workspace's package manager
+# package-lock.json
+# yarn.lock
+# --- Tauri 2 additions (append to gitignore.base + gitignore.rust + gitignore.node) ---
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/bundles/
+src-tauri/WixTools/
+# Generated icons are OK to commit if reproducible; otherwise:
+# src-tauri/icons/generated/
+
+# Mobile
+gen/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
+*.aab
+*.ipa
+*.app.dSYM/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+build/
+Pods/
+
+# Operator-targets local file — never committed. See examples/operators.json.example.
+examples/operators.json

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Local operator-targets file for the Logs view dropdown. Copy this file to `examples/operators.json` (gitignored) and edit. Each entry follows the `SshTarget` shape from `src/sdk/useLogStream.ts`. Addresses below use the IETF-reserved TEST-NET-1 block (192.0.2.0/24); replace with your real operator hostnames before use.",
+  "targets": [
+    {
+      "id": "lyth-val-1",
+      "transport": "ssh",
+      "label": "lyth-val-1",
+      "host": "192.0.2.1",
+      "user": "root",
+      "keyPath": "~/.ssh/id_ed25519"
+    },
+    {
+      "id": "lyth-val-2",
+      "transport": "ssh",
+      "label": "lyth-val-2",
+      "host": "192.0.2.2",
+      "user": "root",
+      "keyPath": "~/.ssh/id_ed25519"
+    }
+  ]
+}

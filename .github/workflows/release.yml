@@ -1,0 +1,485 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # A pushed tag auto-triggers the signed production release (the `release`
+      # job publishes with prerelease:false + make_latest:true). Preview tags
+      # are NOT the signed production channel — the README tells operators to
+      # wait for "the first non-preview tag" before trusting a build — so
+      # `*-preview` tags are excluded here and never auto-publish a "Latest"
+      # release. Preview/dry-run builds go through `workflow_dispatch` instead
+      # (which only uploads a release when its `tag` input is set).
+      - "v*"
+      - "!v*-preview"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach artifacts to (e.g. v0.1.0). Leave empty for a dry-run build with no release upload."
+        required: false
+        type: string
+      rpc_endpoint:
+        description: "Default Protocore JSON-RPC endpoint baked into the app."
+        required: false
+        default: "http://127.0.0.1:8545"
+        type: string
+      windows_trusted_signing_account:
+        description: "Azure Trusted Signing account name for Windows artifacts."
+        required: false
+        type: string
+      desktop_e2e_evidence:
+        description: "Optional checked-out path to monarch-desktop-e2e-evidence/v1 JSON to verify before packaging."
+        required: false
+        type: string
+      run_desktop_e2e:
+        description: "Run the Linux Tauri GUI e2e harness against a downloaded Monarch OS raw image."
+        required: false
+        default: false
+        type: boolean
+      monarch_os_release_tag:
+        description: "Monarch OS release tag to download for GUI e2e. Empty uses latest release."
+        required: false
+        type: string
+      monarch_os_raw_pattern:
+        description: "Raw image release asset pattern for GUI e2e."
+        required: false
+        default: "*.raw.xz"
+        type: string
+      desktop_e2e_expected_digest:
+        description: "Optional assertion for the Protocore runtime digest; must match Monarch OS release metadata."
+        required: false
+        type: string
+      desktop_e2e_cluster_id:
+        description: "Cluster id used for signed chat evidence."
+        required: false
+        type: string
+      desktop_e2e_chat_bootstrap_peers:
+        description: "Comma/space-separated libp2p chat bootstrap peers for e2e."
+        required: false
+        type: string
+      desktop_e2e_dkg_reshare_attestation:
+        description: "monarch-dkg-reshare-attestation/v1 JSON used by GUI e2e. If omitted, MONARCH_E2E_DKG_RESHARE_ATTESTATION from vars/secrets is used."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  gui-e2e:
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.run_desktop_e2e == 'true' || github.event.inputs.tag != '')) }}
+    runs-on: ubuntu-latest
+    env:
+      VITE_MONARCH_E2E_RECORDER: "true"
+      VITE_RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || vars.MONARCH_TESTNET_RPC_ENDPOINT || 'http://127.0.0.1:8545' }}
+      TAURI_RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || vars.MONARCH_TESTNET_RPC_ENDPOINT || 'http://127.0.0.1:8545' }}
+      MONARCH_E2E_CHAT_BOOTSTRAP_PEERS: ${{ github.event.inputs.desktop_e2e_chat_bootstrap_peers || vars.MONARCH_E2E_CHAT_BOOTSTRAP_PEERS || '' }}
+      MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS: "true"
+      MONARCH_E2E_EXPECTED_DIGEST: ${{ github.event.inputs.desktop_e2e_expected_digest || vars.MONARCH_E2E_EXPECTED_DIGEST || '' }}
+      MONARCH_E2E_CLUSTER_ID: ${{ github.event.inputs.desktop_e2e_cluster_id || vars.MONARCH_E2E_CLUSTER_ID || '' }}
+      MONARCH_E2E_OPERATOR_MNEMONIC: ${{ secrets.MONARCH_E2E_OPERATOR_MNEMONIC }}
+      MONARCH_E2E_PEER_OPERATOR_MNEMONIC: ${{ secrets.MONARCH_E2E_PEER_OPERATOR_MNEMONIC }}
+      MONARCH_E2E_DKG_RESHARE_ATTESTATION: ${{ github.event.inputs.desktop_e2e_dkg_reshare_attestation || vars.MONARCH_E2E_DKG_RESHARE_ATTESTATION || secrets.MONARCH_E2E_DKG_RESHARE_ATTESTATION || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: monolythium/monarch-os-talos
+          path: monarch-os-talos
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 qemu-system-x86 qemu-utils xz-utils curl jq
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Install talosctl
+        env:
+          TALOS_VERSION: v1.13.0
+        run: |
+          sudo curl -fsSL \
+            -o /usr/local/bin/talosctl \
+            "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
+          sudo chmod +x /usr/local/bin/talosctl
+          talosctl version --client --short
+
+      - name: Validate GUI e2e inputs
+        run: pnpm run check:e2e-inputs
+
+      - name: Download Monarch OS raw image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MONARCH_OS_RELEASE_TAG: ${{ github.event.inputs.monarch_os_release_tag || vars.MONARCH_OS_RELEASE_TAG || '' }}
+          MONARCH_OS_RAW_PATTERN: ${{ github.event.inputs.monarch_os_raw_pattern || vars.MONARCH_OS_RAW_PATTERN || '*.raw.xz' }}
+        run: |
+          set -euo pipefail
+          mkdir -p monarch-os-talos/_out
+          tag="$MONARCH_OS_RELEASE_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(gh release list --repo monolythium/monarch-os-talos --limit 1 --json tagName --jq '.[0].tagName')"
+          fi
+          gh release download "$tag" \
+            --repo monolythium/monarch-os-talos \
+            --pattern "$MONARCH_OS_RAW_PATTERN" \
+            --pattern "${MONARCH_OS_RAW_PATTERN}.sha256" \
+            --pattern "*.release.json" \
+            --pattern "*.release.json.sha256" \
+            --dir monarch-os-talos/_out
+          (cd monarch-os-talos/_out && sha256sum -c *.raw.xz.sha256)
+          (cd monarch-os-talos/_out && sha256sum -c *.release.json.sha256)
+          metadata="$(find monarch-os-talos/_out -maxdepth 1 -type f -name '*.release.json' | sort | head -n 1)"
+          if [ -z "$metadata" ]; then
+            echo "Monarch OS release metadata was not downloaded" >&2
+            exit 1
+          fi
+          digest="$(jq -r '.sources.protocore_binary.sha256 // ""' "$metadata")"
+          if ! [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "Monarch OS release metadata does not include sources.protocore_binary.sha256" >&2
+            exit 1
+          fi
+          effective_digest="${digest,,}"
+          if [ -n "$MONARCH_E2E_EXPECTED_DIGEST" ] && [ "${MONARCH_E2E_EXPECTED_DIGEST,,}" != "$effective_digest" ]; then
+            echo "Desktop e2e expected digest input does not match Monarch OS release metadata" >&2
+            exit 1
+          fi
+          if ! [[ "$effective_digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Effective Desktop e2e expected digest is not a SHA-256 digest" >&2
+            exit 1
+          fi
+          echo "MONARCH_E2E_EXPECTED_DIGEST=$effective_digest" >> "$GITHUB_ENV"
+          xz -d -k monarch-os-talos/_out/*.raw.xz
+
+      - name: Run Tauri GUI e2e
+        run: |
+          set -euo pipefail
+          mkdir -p _out
+          xvfb-run -a pnpm run e2e:monarch -- \
+            --os-repo monarch-os-talos \
+            --build-app \
+            --output _out/monarch-desktop-e2e-evidence.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monarch-desktop-e2e-evidence
+          path: _out/monarch-desktop-e2e-evidence.json
+
+  build:
+    needs: gui-e2e
+    if: ${{ always() && (needs.gui-e2e.result == 'success' || needs.gui-e2e.result == 'skipped') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   target: aarch64-apple-darwin,        platform: macos-arm64 }
+          - { os: macos-latest,   target: x86_64-apple-darwin,         platform: macos-x64 }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,    platform: linux-x64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,      platform: windows-x64 }
+
+    runs-on: ${{ matrix.os }}
+    env:
+      VITE_RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || vars.MONARCH_TESTNET_RPC_ENDPOINT || 'http://127.0.0.1:8545' }}
+      TAURI_RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || vars.MONARCH_TESTNET_RPC_ENDPOINT || 'http://127.0.0.1:8545' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release readiness gates
+        run: |
+          pnpm run check:release-terminology
+          pnpm typecheck
+          pnpm run test:release-readiness
+          pnpm test
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Verify supplied GUI e2e evidence
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.desktop_e2e_evidence != ''
+        run: pnpm run verify:e2e-evidence -- "${{ github.event.inputs.desktop_e2e_evidence }}"
+
+      - name: Verify signing inputs for release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          APPSTORE_CONNECT_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_KEY_BASE64 }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: |
+          set -euo pipefail
+          missing=()
+          check() {
+            local name="$1"
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          }
+
+          check TAURI_SIGNING_PRIVATE_KEY
+          case "$PLATFORM" in
+            macos-*)
+              check APPLE_CERTIFICATE_BASE64
+              check APPLE_CERTIFICATE_PASSWORD
+              check APPLE_SIGNING_IDENTITY
+              check APPLE_TEAM_ID
+              check APPSTORE_CONNECT_ISSUER_ID
+              check APPSTORE_CONNECT_KEY_ID
+              check APPSTORE_CONNECT_KEY_BASE64
+              ;;
+            windows-*)
+              check AZURE_TENANT_ID
+              check AZURE_CLIENT_ID
+              check AZURE_CLIENT_SECRET
+              check AZURE_CERT_PROFILE
+              ;;
+          esac
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing signing input(s) for %s: %s\n' "$PLATFORM" "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Import macOS signing certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cert_path="$RUNNER_TEMP/apple-signing.p12"
+          keychain_path="$RUNNER_TEMP/monarch-signing.keychain-db"
+          keychain_password="monarch-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$cert_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            >/dev/null
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path" \
+            >/dev/null
+
+      - name: Build (macOS — signed + notarized)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          echo "${{ secrets.APPSTORE_CONNECT_KEY_BASE64 }}" | base64 --decode > /tmp/asc-key.p8
+          export APPLE_API_KEY_PATH=/tmp/asc-key.p8
+          pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles deb,appimage,updater
+
+      - name: Build (Windows — Tauri updater signed)
+        if: matrix.os == 'windows-latest'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: Sign Windows binaries (Azure Trusted Signing)
+        if: matrix.os == 'windows-latest'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT || 'https://eus.codesigning.azure.net/' }}
+          trusted-signing-account-name: ${{ github.event.inputs.windows_trusted_signing_account || vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME || 'mono-labs' }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files-folder: src-tauri/target/${{ matrix.target }}/release/bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          bundle_dir="src-tauri/target/${{ matrix.target }}/release/bundle"
+          # User-facing installers + updater bundles + their .sig files.
+          # The .sig files are produced when TAURI_SIGNING_PRIVATE_KEY is set;
+          # the release job downstream reads them to build latest.json.
+          find "$bundle_dir" -type f \
+            \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+               -o -name '*.deb' -o -name '*.AppImage' \
+               -o -name '*.AppImage.tar.gz' -o -name '*.AppImage.tar.gz.sig' \
+               -o -name '*.msi' -o -name '*.msi.zip' -o -name '*.msi.zip.sig' \
+               -o -name '*.exe' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) \
+            -exec cp -f {} dist-release/ \;
+          ls -la dist-release/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist-release/
+
+  release:
+    needs: build
+    # A tagged release must be a complete signed matrix. Partial platform
+    # uploads are preview artifacts, not a release channel.
+    if: ${{ needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la ./artifacts
+
+      # latest.json is the manifest tauri-plugin-updater fetches from
+      # the GitHub Releases endpoint configured in tauri.conf.json. It
+      # tells the running app which version is current and where to
+      # download the signed update bundle from. The pubkey on the
+      # device side verifies these signatures against the corresponding
+      # private key held in TAURI_SIGNING_PRIVATE_KEY.
+      - name: Generate latest.json (updater manifest)
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          REPO="${{ github.repository }}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          cd artifacts
+
+          read_sig() {
+            if [ -f "$1" ]; then
+              tr -d '\n\r' < "$1"
+            fi
+          }
+
+          DARWIN_ARM_BUNDLE=$(ls *aarch64*.app.tar.gz 2>/dev/null | head -1 || true)
+          DARWIN_ARM_SIG="${DARWIN_ARM_BUNDLE}.sig"
+          DARWIN_X64_BUNDLE=$(ls *x86_64*.app.tar.gz 2>/dev/null | head -1 || true)
+          DARWIN_X64_SIG="${DARWIN_X64_BUNDLE}.sig"
+          LINUX_BUNDLE=$(ls *.AppImage.tar.gz 2>/dev/null | head -1 || true)
+          LINUX_SIG="${LINUX_BUNDLE}.sig"
+          WIN_BUNDLE=$(ls *.nsis.zip 2>/dev/null | head -1 || ls *.msi.zip 2>/dev/null | head -1 || true)
+          WIN_SIG="${WIN_BUNDLE}.sig"
+
+          PLATFORMS_JSON="{}"
+          add_platform() {
+            local key="$1" bundle="$2" sig="$3"
+            if [ -n "$bundle" ] && [ -f "$sig" ]; then
+              local sig_data
+              local bundle_url
+              sig_data=$(read_sig "$sig")
+              bundle_url=$(jq -rn --arg v "$bundle" '$v | @uri')
+              PLATFORMS_JSON=$(jq \
+                --arg k "$key" \
+                --arg s "$sig_data" \
+                --arg u "${BASE}/${bundle_url}" \
+                '. + {($k): {signature: $s, url: $u}}' \
+                <<<"$PLATFORMS_JSON")
+            fi
+          }
+
+          add_platform "darwin-aarch64" "$DARWIN_ARM_BUNDLE" "$DARWIN_ARM_SIG"
+          add_platform "darwin-x86_64"  "$DARWIN_X64_BUNDLE" "$DARWIN_X64_SIG"
+          add_platform "linux-x86_64"   "$LINUX_BUNDLE"      "$LINUX_SIG"
+          add_platform "windows-x86_64" "$WIN_BUNDLE"        "$WIN_SIG"
+
+          jq -n \
+            --arg v "$VERSION" \
+            --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg n "Monarch Desktop ${TAG}" \
+            --argjson p "$PLATFORMS_JSON" \
+            '{version: $v, pub_date: $d, notes: $n, platforms: $p}' \
+            > latest.json
+
+          echo "=== latest.json ==="
+          cat latest.json
+
+      - name: Verify release artifact set
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/verify-release-artifacts.mjs ./artifacts --tag "$TAG"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ./artifacts/*
+          draft: false
+          prerelease: false
+          make_latest: "true"
+          fail_on_unmatched_files: true

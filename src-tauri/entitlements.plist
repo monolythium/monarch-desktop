@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened-runtime entitlements required by the WKWebView the Tauri shell
+    embeds. JavaScriptCore JITs JavaScript and allocates executable memory at
+    runtime; under the macOS hardened runtime (enabled by default in Tauri v2)
+    both operations are blocked unless these exceptions are granted. Without
+    them the app notarizes successfully but crashes on launch on a clean Mac.
+    These are the two standard WebView entitlements from the official Tauri v2
+    macOS code-signing guide — no broader exceptions (no disable-library-validation,
+    no allow-dyld-environment-variables) so the hardened-runtime posture stays tight.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

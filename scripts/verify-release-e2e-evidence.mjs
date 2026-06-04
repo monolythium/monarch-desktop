@@ -1,0 +1,493 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+const SCHEMA = "monarch-desktop-e2e-evidence/v1";
+const DKG_RESHARE_SCHEMA = "monarch-dkg-reshare-attestation/v1";
+const REQUIRED_ROUTES = ["/home", "/hardware", "/operations", "/chat"];
+const REQUIRED_COMMANDS = [
+  "talos_config_info",
+  "talos_protocore_readiness",
+  "talos_service_action:restart",
+  "chat_initialize",
+  "chat_subscribe_channel",
+  "chat_send_message",
+];
+const TALOSCTL_PROBES = new Set(["talosctl_ok", "talosctl_secure_ok"]);
+const OPERATION_RECEIPT_AUDIT_SCHEMA = "monarch-desktop-operation-receipt/v1";
+const HASH32_RE = /^[0-9a-f]{64}$/u;
+const TALOS_CERT_MIN_VALIDITY_DAYS = 14;
+const MAX_DKG_RESHARE_INTENT_ID = 72057594037927935n;
+
+const file = process.argv.slice(2).find((arg) => arg !== "--") ?? process.env.MONARCH_DESKTOP_E2E_EVIDENCE;
+if (!file) {
+  fail(["usage: verify-release-e2e-evidence.mjs <evidence.json>"]);
+}
+
+let evidence;
+try {
+  evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch (err) {
+  fail([`failed to read evidence JSON: ${errorMessage(err)}`]);
+}
+
+const blockers = verify(evidence);
+if (blockers.length > 0) {
+  fail(blockers);
+}
+
+const resolved = path.relative(process.cwd(), path.resolve(file));
+console.log(JSON.stringify({ ok: true, evidence: resolved || file }));
+
+function verify(root) {
+  const out = [];
+  if (!isRecord(root)) return ["Evidence root must be an object."];
+
+  if (stringValue(root.schema_version) !== SCHEMA) {
+    out.push(`Unsupported evidence schema: ${stringValue(root.schema_version) || "missing"}.`);
+  }
+
+  if (!isRecord(root.source)) {
+    out.push("Evidence source is missing.");
+  } else {
+    checkSource(root.source, out);
+  }
+
+  if (!isRecord(root.os_smoke)) {
+    out.push("OS QEMU smoke evidence is missing.");
+  } else {
+    checkOsSmoke(root.os_smoke, out);
+  }
+
+  if (!isRecord(root.desktop_readiness)) {
+    out.push("Desktop readiness evidence is missing.");
+  } else {
+    checkDesktopReadiness(root.desktop_readiness, out);
+  }
+  if (!isRecord(root.dkg_reshare_attestation)) {
+    out.push("DKG re-share attestation evidence is missing.");
+  } else {
+    checkDkgReshareAttestation(root.dkg_reshare_attestation, out);
+  }
+  if (isRecord(root.os_smoke) && isRecord(root.desktop_readiness)) {
+    checkReleaseDigestBinding(root.os_smoke, root.desktop_readiness, out);
+  }
+
+  return out;
+}
+
+function checkSource(source, out) {
+  if (source.kind !== "tauri-gui-e2e") {
+    out.push("Evidence must be collected by the Tauri GUI e2e harness.");
+  }
+  for (const key of ["runner", "app_version", "commit"]) {
+    if (!stringValue(source[key])) out.push(`Evidence source.${key} is required.`);
+  }
+  const generatedAt = stringValue(source.generated_at);
+  if (!generatedAt || Number.isNaN(Date.parse(generatedAt))) {
+    out.push("Evidence source.generated_at must be an ISO timestamp.");
+  }
+  if (numberValue(source.windows_observed) < 2) {
+    out.push("Evidence must observe two Tauri windows for the chat exchange.");
+  }
+  const routes = stringArray(source.routes_visited);
+  for (const route of REQUIRED_ROUTES) {
+    if (!routes.includes(route)) out.push(`Evidence did not visit required route: ${route}.`);
+  }
+  const commands = stringArray(source.commands_observed);
+  for (const command of REQUIRED_COMMANDS) {
+    if (!commands.includes(command)) {
+      out.push(`Evidence did not observe required Tauri command: ${command}.`);
+    }
+  }
+}
+
+function checkOsSmoke(osSmoke, out) {
+  if (stringValue(osSmoke.status) !== "ok") {
+    out.push(`QEMU smoke status is not ok: ${stringValue(osSmoke.status) || "missing"}.`);
+  }
+  const rawImage = stringValue(osSmoke.raw_image);
+  if (!/^monarch-os-talos-v[0-9][^-]*-[a-z0-9_]+\.raw$/u.test(rawImage)) {
+    out.push(`QEMU smoke raw image is not a Monarch OS raw artifact: ${rawImage || "missing"}.`);
+  }
+  if (!boolish(osSmoke.require_talos_api_probe)) {
+    out.push("QEMU smoke did not require a Talos API probe.");
+  }
+  const probe = stringValue(osSmoke.talos_api_probe);
+  if (!TALOSCTL_PROBES.has(probe)) {
+    out.push(`QEMU smoke did not prove Talos API through talosctl: ${probe || "missing"}.`);
+  }
+  if (!boolish(osSmoke.machine_config_applied)) {
+    out.push("QEMU smoke did not apply a Talos machine config.");
+  }
+  if (osSmoke.extension_service_name !== "ext-protocore") {
+    out.push("QEMU smoke did not target ext-protocore.");
+  }
+  if (osSmoke.extension_service_check !== "ok") {
+    out.push("QEMU smoke did not verify ext-protocore service.");
+  }
+  if (osSmoke.protocore_rpc_probe !== "ok") {
+    out.push("QEMU smoke did not verify Protocore RPC.");
+  }
+  if (osSmoke.substrate_runtime_proof !== "ok") {
+    out.push("QEMU smoke did not verify runtime substrate proof.");
+  }
+  const releaseMetadata = stringValue(osSmoke.release_metadata);
+  if (!/^monarch-os-talos-v[0-9][^-]*-[a-z0-9_]+\.release\.json$/u.test(releaseMetadata)) {
+    out.push(`QEMU smoke release metadata is not a Monarch OS metadata artifact: ${releaseMetadata || "missing"}.`);
+  }
+  if (!normalizeDigest(stringValue(osSmoke.expected_protocore_digest))) {
+    out.push("QEMU smoke did not provide a valid expected Protocore digest from release metadata.");
+  }
+}
+
+function checkDkgReshareAttestation(dkg, out) {
+  const schema = stringValue(dkg.schema_version);
+  if (schema !== DKG_RESHARE_SCHEMA) {
+    out.push(`DKG re-share attestation schema is unsupported: ${schema || "missing"}.`);
+  }
+  const createdAt = stringValue(dkg.created_at);
+  if (createdAt && Number.isNaN(Date.parse(createdAt))) {
+    out.push("DKG re-share attestation created_at must be an ISO timestamp when set.");
+  }
+  const intent = stringValue(dkg.intent_id);
+  if (!/^(0|[1-9][0-9]*)$/u.test(intent)) {
+    out.push("DKG re-share attestation intent_id must be a decimal integer.");
+  } else {
+    const parsed = BigInt(intent);
+    if (parsed === 0n || parsed > MAX_DKG_RESHARE_INTENT_ID) {
+      out.push("DKG re-share attestation intent_id must be 1..2^56-1.");
+    }
+  }
+
+  const keysHex = normalizeHex(stringValue(dkg.bls_public_keys_hex));
+  if (!/^[0-9a-f]+$/u.test(keysHex) || keysHex.length % 96 !== 0) {
+    out.push("DKG re-share attestation BLS pubkeys must be concatenated 48-byte values.");
+  } else {
+    const signerCount = keysHex.length / 96;
+    if (signerCount < 5 || signerCount > 7) {
+      out.push("DKG re-share attestation must include 5..7 signer pubkeys.");
+    }
+    const keys = [];
+    for (let offset = 0; offset < keysHex.length; offset += 96) {
+      keys.push(keysHex.slice(offset, offset + 96));
+    }
+    if (new Set(keys).size !== keys.length) {
+      out.push("DKG re-share attestation signer pubkeys must be unique.");
+    }
+    if (numberValue(dkg.signer_count) !== signerCount) {
+      out.push("DKG re-share attestation signer_count does not match pubkeys.");
+    }
+  }
+
+  const sigHex = normalizeHex(stringValue(dkg.threshold_sig_hex));
+  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== 192) {
+    out.push("DKG re-share attestation threshold_sig_hex must be 96 bytes.");
+  }
+}
+
+function checkDesktopReadiness(readiness, out) {
+  checkTalos(readiness, out);
+  checkProtocore(readiness, out);
+  checkReleaseAttestation(readiness.releaseAttestation, out);
+  checkOperationReceipts(readiness, out);
+  checkChat(readiness, out);
+}
+
+function checkTalos(readiness, out) {
+  const config = readiness.talosConfig;
+  const status = readiness.talosStatus;
+  if (!isRecord(config)) {
+    out.push("Desktop talos-identity: Talos config has not been inspected.");
+    return;
+  }
+  if (config.caPinStatus !== "matched") {
+    out.push("Desktop talos-identity: Trusted Talos CA pin is not matched.");
+  }
+  if (!Array.isArray(config.certificates) || config.certificates.length === 0) {
+    out.push("Desktop talos-identity: Talos config exposes no certificates to validate.");
+  } else {
+    const invalidCerts = config.certificates.filter((cert) =>
+      isRecord(cert) && (cert.expired || cert.notYetValid));
+    const missingExpiryHorizon = config.certificates.filter((cert) =>
+      !isRecord(cert) ||
+      typeof cert.expiresInDays !== "number" ||
+      !Number.isFinite(cert.expiresInDays));
+    const expiringCerts = config.certificates.filter((cert) =>
+      isRecord(cert) &&
+      cert.expired !== true &&
+      cert.notYetValid !== true &&
+      typeof cert.expiresInDays === "number" &&
+      Number.isFinite(cert.expiresInDays) &&
+      cert.expiresInDays < TALOS_CERT_MIN_VALIDITY_DAYS);
+    if (invalidCerts.length > 0) {
+      out.push("Desktop talos-identity: Talos config has expired or not-yet-valid certificate(s).");
+    }
+    if (missingExpiryHorizon.length > 0) {
+      out.push("Desktop talos-identity: Talos config has certificate(s) without expiry-horizon evidence.");
+    }
+    if (expiringCerts.length > 0) {
+      out.push(`Desktop talos-identity: Talos config has ${expiringCerts.length} certificate(s) inside the ${TALOS_CERT_MIN_VALIDITY_DAYS}-day rotation window.`);
+    }
+  }
+  const endpoint = stringValue(config.endpoint);
+  const endpoints = stringArray(config.endpoints);
+  const nodes = stringArray(config.nodes);
+  if (!endpoints.includes(endpoint) && !nodes.includes(endpoint)) {
+    out.push("Desktop talos-identity: Selected Talos endpoint is outside the active context.");
+  }
+  if (isRecord(status)) {
+    const statusEndpoint = stringValue(status.endpoint);
+    if (status.reachable !== true || (statusEndpoint && trimEndpoint(statusEndpoint) !== trimEndpoint(endpoint))) {
+      out.push("Desktop talos-identity: Talos status is unreachable or points at another endpoint.");
+    }
+  }
+}
+
+function checkProtocore(readiness, out) {
+  const protocore = readiness.protocore;
+  const expectedChainId = numberValue(readiness.expectedChainId) || 69420;
+  if (!isRecord(protocore)) {
+    out.push("Desktop protocore-readiness: Protocore readiness has not been checked.");
+    return;
+  }
+  const service = protocore.service;
+  if (!isRecord(service) || service.id !== "ext-protocore" || service.severity !== "ok") {
+    out.push("Desktop protocore-readiness: Talos service ext-protocore is not healthy.");
+  }
+  if (protocore.displayState !== "serving-rpc" || protocore.severity !== "ok") {
+    out.push("Desktop protocore-readiness: Protocore is not serving RPC in a healthy state.");
+  }
+  if (protocore.chainId !== expectedChainId) {
+    out.push(`Desktop protocore-readiness: Protocore chain id is not ${expectedChainId}.`);
+  }
+  if (numberValue(protocore.blockNumber) < 0 || typeof protocore.blockNumber !== "number") {
+    out.push("Desktop protocore-readiness: Protocore block number is unavailable.");
+  }
+  if (!stringValue(protocore.clientVersion)) {
+    out.push("Desktop protocore-readiness: Protocore client version is unavailable.");
+  }
+  if (protocore.listening !== true) {
+    out.push("Desktop protocore-readiness: Protocore P2P listener is not confirmed.");
+  }
+  if (protocore.syncing !== false) {
+    out.push("Desktop protocore-readiness: Protocore has not reported eth_syncing=false.");
+  }
+}
+
+function checkReleaseAttestation(attestation, out) {
+  if (!isRecord(attestation)) {
+    out.push("Desktop release-attestation: Release digest attestation has not been evaluated.");
+    return;
+  }
+  if (!stringValue(attestation.className).includes("halo--ok") || !/matched/iu.test(stringValue(attestation.text))) {
+    out.push("Desktop release-attestation: Live runtime digest does not match the expected release digest.");
+  }
+}
+
+function checkReleaseDigestBinding(osSmoke, readiness, out) {
+  const osDigest = normalizeDigest(stringValue(osSmoke.expected_protocore_digest));
+  const attestation = readiness.releaseAttestation;
+  if (!isRecord(attestation) || !osDigest) return;
+
+  const expectedDigest = normalizeDigest(stringValue(attestation.expectedDigest));
+  const liveDigest = normalizeDigest(stringValue(attestation.liveDigest));
+  if (!expectedDigest) {
+    out.push("Desktop release-attestation: Expected digest evidence is missing.");
+  } else if (expectedDigest !== osDigest) {
+    out.push("Desktop release-attestation: Expected digest does not match the Monarch OS release metadata digest.");
+  }
+  if (!liveDigest) {
+    out.push("Desktop release-attestation: Live runtime digest evidence is missing.");
+  } else if (liveDigest !== osDigest) {
+    out.push("Desktop release-attestation: Live runtime digest does not match the Monarch OS release metadata digest.");
+  }
+}
+
+function checkOperationReceipts(readiness, out) {
+  const receipts = Array.isArray(readiness.operationReceipts) ? readiness.operationReceipts : [];
+  const required = Array.isArray(readiness.requiredOperationActions) && readiness.requiredOperationActions.length > 0
+    ? readiness.requiredOperationActions
+    : ["restart"];
+  const missing = required.filter((action) => {
+    const kind = `operator-${action}`;
+    return !receipts.some((receipt) =>
+      isRecord(receipt) &&
+      receipt.kind === kind &&
+      receipt.status === "ok" &&
+      receipt.transport === "talos" &&
+      receipt.service === "ext-protocore" &&
+      receipt.action === action &&
+      Boolean(receipt.endpoint) &&
+      Boolean(receipt.nodeAddress) &&
+      receipt.auditPayloadSchema === OPERATION_RECEIPT_AUDIT_SCHEMA &&
+      HASH32_RE.test(String(receipt.auditPayloadHash || "")));
+  });
+  if (missing.length > 0) {
+    out.push(`Desktop operation-receipts: Missing audit-ready successful Talos receipt(s) for: ${missing.join(", ")}.`);
+  }
+}
+
+function checkChat(readiness, out) {
+  const chat = readiness.chat;
+  if (!isRecord(chat)) {
+    out.push("Desktop chat-exchange: Chat evidence has not been collected.");
+    return;
+  }
+  const init = chat.init;
+  if (!isRecord(init) || !stringValue(init.address_hex) || !stringValue(init.public_key_hex)) {
+    out.push("Desktop chat-exchange: Chat identity has not initialized.");
+  }
+  const expectedRpc = stringValue(readiness.expectedRpcEndpoint);
+  if (expectedRpc && isRecord(init) && trimEndpoint(stringValue(init.rpc_endpoint)) !== trimEndpoint(expectedRpc)) {
+    out.push("Desktop chat-exchange: Chat initialized against a different RPC endpoint.");
+  }
+  if (chat.requireBootstrapPeers !== false && stringArray(chat.bootstrapPeers).length === 0) {
+    out.push("Desktop chat-exchange: Chat bootstrap peers are not configured.");
+  }
+  const activeId = stringValue(chat.activeChannelId);
+  const channels = Array.isArray(chat.channels) ? chat.channels : [];
+  const active = channels.find((channel) => isRecord(channel) && channel.channel_id === activeId);
+  if (!isSubscribedClusterChannel(active)) {
+    out.push("Desktop chat-exchange: No subscribed active cluster channel is selected.");
+  }
+  const messages = Array.isArray(chat.messages) ? chat.messages : [];
+  const activeVerifiedMessages = messages.filter((message) => isSignedActiveChatMessage(message, active));
+  const allActiveAndVerified = messages.every((message) =>
+    isRecord(message) &&
+    isSignedActiveChatMessage(message, active));
+  if (!allActiveAndVerified) {
+    out.push("Desktop chat-exchange: Chat history contains stale, unsigned, or unverified messages.");
+  }
+  const ownSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me === true)
+    .map((message) => normalizeHex(stringValue(message.sender_address))));
+  const peerSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me === false)
+    .map((message) => normalizeHex(stringValue(message.sender_address))));
+  const distinctSenders = new Set(activeVerifiedMessages
+    .map((message) => normalizeHex(stringValue(message.sender_address))));
+  if (activeVerifiedMessages.length < 2 || ownSenders.size === 0 || peerSenders.size === 0) {
+    out.push("Desktop chat-exchange: Chat has not proved a two-party signed exchange.");
+  }
+  if (distinctSenders.size < 2 || setsOverlap(ownSenders, peerSenders)) {
+    out.push("Desktop chat-exchange: Chat has not proved two distinct signed operator identities.");
+  }
+  if (!isRecord(chat.membership)) {
+    out.push("Desktop chat-exchange: Chat sender membership has not been proven against the cluster registry.");
+  } else if (!chatMembershipCoversSenders(chat.membership, active, distinctSenders)) {
+    out.push("Desktop chat-exchange: Chat sender membership proof does not cover every signed sender.");
+  }
+}
+
+function chatMembershipCoversSenders(membership, active, senders) {
+  if (!isRecord(active)) return false;
+  if (membership.source !== "lyth_clusterStatus+lyth_operatorInfo") return false;
+  if (membership.clusterId !== active.cluster_id) return false;
+  const checkedAt = stringValue(membership.checkedAt);
+  if (!checkedAt || Number.isNaN(Date.parse(checkedAt))) return false;
+  if (typeof membership.membersChecked !== "number" || membership.membersChecked < senders.size) {
+    return false;
+  }
+
+  const covered = new Set();
+  const proofs = Array.isArray(membership.proofs) ? membership.proofs : [];
+  for (const proof of proofs) {
+    if (!isRecord(proof)) continue;
+    if (proof.source !== membership.source || proof.clusterId !== active.cluster_id) continue;
+    if (!isHexBytes(stringValue(proof.operatorId), 32)) continue;
+    const sender = normalizeHex(stringValue(proof.senderAddress));
+    const chainAddress = normalizeHex(stringValue(proof.chainAddressHex));
+    if (!isAddressHex(sender) || !isAddressHex(chainAddress) || sender !== chainAddress) continue;
+    covered.add(sender);
+  }
+
+  for (const sender of senders) {
+    if (!covered.has(sender)) return false;
+  }
+  return true;
+}
+
+function isSubscribedClusterChannel(channel) {
+  if (!isRecord(channel)) return false;
+  if (channel.subscribed !== true || channel.kind !== "cluster") return false;
+  if (typeof channel.cluster_id !== "number" || !Number.isFinite(channel.cluster_id)) return false;
+  return channel.channel_id === `cluster-${channel.cluster_id}`;
+}
+
+function isSignedActiveChatMessage(message, active) {
+  return Boolean(
+    isRecord(message) &&
+    isRecord(active) &&
+    message.channel_id === active.channel_id &&
+    message.cluster_id === active.cluster_id &&
+    message.verified === true &&
+    isHexBytes(stringValue(message.msg_id), 32) &&
+    isHexBytes(stringValue(message.signature_hex)) &&
+    isHexBytes(stringValue(message.sender_pubkey_hex)) &&
+    isHexBytes(stringValue(message.nonce_hex)) &&
+    isAddressHex(stringValue(message.sender_address)) &&
+    stringValue(message.body).length > 0 &&
+    typeof message.timestamp_ms === "number" &&
+    Number.isFinite(message.timestamp_ms),
+  );
+}
+
+function isAddressHex(value) {
+  return /^[0-9a-f]{40}$/u.test(normalizeHex(value));
+}
+
+function isHexBytes(value, byteLength) {
+  const hex = normalizeHex(value);
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9a-f]+$/u.test(hex)) return false;
+  return typeof byteLength === "number" ? hex.length === byteLength * 2 : true;
+}
+
+function normalizeHex(value) {
+  return value.trim().replace(/^0x/iu, "").toLowerCase();
+}
+
+function setsOverlap(a, b) {
+  for (const value of a) {
+    if (b.has(value)) return true;
+  }
+  return false;
+}
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function stringArray(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+
+function numberValue(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function boolish(value) {
+  return value === true || value === "true" || value === "1";
+}
+
+function trimEndpoint(value) {
+  return value.trim().replace(/\/+$/u, "");
+}
+
+function normalizeDigest(value) {
+  const digest = value.trim().replace(/^sha256:/iu, "").replace(/^0x/iu, "").toLowerCase();
+  return /^[0-9a-f]{64}$/u.test(digest) ? digest : "";
+}
+
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function fail(lines) {
+  for (const line of lines) console.error(line);
+  process.exit(1);
+}

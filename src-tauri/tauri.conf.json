@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Monarch Desktop",
+  "version": "0.0.6",
+  "identifier": "com.monolythium.monarch.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Monarch Desktop",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Monarch Desktop — operator and cluster GUI",
+    "longDescription": "Monarch Desktop is the operator GUI for Monolythium v5.0 operators and DVT clusters. Operator console with Talos API node control, OS-keychain-bound signing, and an Ask Monarch advisory surface.",
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/monolythium/monarch-desktop/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGNDk5MjJFNzgwMDlBRTIKUldUaW1nQjRMcEpKYnpQaHpPdU0rNXlldGIwa1ZHZ05qb0VrYmdPWnRLZkFOOFQyWTFMYVVlbWUK"
+    }
+  }
+}
