@@ -56,6 +56,7 @@ export function Chat() {
 
   return (
     <div className="chat-shell">
+      <h1 className="sr-only">Chat</h1>
       {/* ——— Channel list ——— */}
       <aside className="chat-channels">
         <header className="chat-channels__head">

@@ -18,6 +18,7 @@
     "verify:release-artifacts": "node scripts/verify-release-artifacts.mjs",
     "e2e:tauri": "node scripts/run-tauri-e2e.mjs",
     "e2e:monarch": "node scripts/run-monarch-e2e.mjs",
+    "e2e:browser": "node scripts/run-browser-route-smoke.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

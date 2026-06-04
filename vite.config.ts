@@ -12,6 +12,9 @@ export default defineConfig({
   },
   // Don't watch src-tauri output — Tauri handles that itself.
   envPrefix: ["VITE_", "TAURI_"],
+  optimizeDeps: {
+    entries: ["index.html"],
+  },
   build: {
     target: "es2022",
     sourcemap: true,
