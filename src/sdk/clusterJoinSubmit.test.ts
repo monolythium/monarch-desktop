@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { OperatorOnboardingPreview } from "./clusterJoinOps";
 
 type SubmitArg = {
   private: boolean;
@@ -13,8 +14,16 @@ type SubmitArg = {
 };
 
 const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
-let ethCallResponse = "0x" + "00".repeat(8 * 32);
-let ethCallFailure: Error | null = null;
+let previewResponse: OperatorOnboardingPreview = {
+  schemaVersion: 1,
+  capability: "operatorOnboardingRpcV1",
+  method: "requestClusterJoin",
+  ok: true,
+  status: "ok",
+  reason: null,
+  message: null,
+};
+let previewFailure: Error | null = null;
 const rpcCalls: Array<{ method: string; params?: unknown }> = [];
 let transactionCountReads = 0;
 const transactionCountAddresses: string[] = [];
@@ -40,8 +49,8 @@ vi.mock("@monolythium/core-sdk", async (importOriginal) => {
       }
       call = vi.fn(async (method: string, params?: unknown) => {
         rpcCalls.push({ method, params });
-        if (ethCallFailure) throw ethCallFailure;
-        return ethCallResponse;
+        if (previewFailure) throw previewFailure;
+        return previewResponse;
       });
       ethChainId = vi.fn(async () => 69420n);
       lythGetTransactionCount = vi.fn(async (address: string) => {
@@ -82,38 +91,25 @@ const operatorPubkeyHex = "0x" + "44".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTE
 const voterPubkeyHex = "0x" + "55".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
 const operatorIdHex = "0x" + "66".repeat(32);
 
-function word(value: bigint | number | string): string {
-  if (typeof value === "string" && value.startsWith("0x")) {
-    return value.slice(2).padStart(64, "0");
-  }
-  return BigInt(value).toString(16).padStart(64, "0");
-}
-
-function requestView(status: number): string {
-  const owner = status === 0 ? "0x" + "00".repeat(20) : "0x" + "77".repeat(20);
-  return `0x${[
-    word(owner),
-    word(9),
-    word(7),
-    word(10),
-    word(status === 1 ? 3 : 7),
-    word(status),
-    word(5000),
-    word(1),
-  ].join("")}`;
-}
-
 describe("CJ-1 submit helpers", () => {
   beforeEach(() => {
     submitWithPrivacy.mockClear();
     rpcCalls.length = 0;
     transactionCountAddresses.length = 0;
     transactionCountReads = 0;
-    ethCallFailure = null;
-    ethCallResponse = requestView(0);
+    previewFailure = null;
+    previewResponse = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "requestClusterJoin",
+      ok: true,
+      status: "ok",
+      reason: null,
+      message: null,
+    };
   });
 
-  it("submits requestClusterJoin as a plaintext native tx after the CJ-1 view preflight", async () => {
+  it("submits requestClusterJoin as a plaintext native tx after native preview", async () => {
     const res = await submitRequestClusterJoin({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -122,7 +118,13 @@ describe("CJ-1 submit helpers", () => {
       bondLythoshi: "9000",
     });
 
-    expect(rpcCalls[0]?.method).toBe("eth_call");
+    expect(rpcCalls[0]?.method).toBe("lyth_previewRequestClusterJoin");
+    expect(rpcCalls[0]?.params).toMatchObject([{
+      from: "mono1typedoperator",
+      clusterId: 7,
+      operatorPubkey: operatorPubkeyHex,
+      bondLythoshi: "9000",
+    }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
     expect(call.private).toBe(false);
@@ -139,7 +141,15 @@ describe("CJ-1 submit helpers", () => {
   });
 
   it("submits voteClusterAdmit only when the candidate request is open", async () => {
-    ethCallResponse = requestView(1);
+    previewResponse = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "voteClusterAdmit",
+      ok: true,
+      status: "ok",
+      reason: null,
+      message: null,
+    };
 
     const res = await submitVoteClusterAdmit({
       rpcUrl: "http://127.0.0.1:8545",
@@ -149,6 +159,13 @@ describe("CJ-1 submit helpers", () => {
       voterPubkeyHex,
     });
 
+    expect(rpcCalls[0]?.method).toBe("lyth_previewVoteClusterAdmit");
+    expect(rpcCalls[0]?.params).toMatchObject([{
+      from: "mono1typedoperator",
+      clusterId: 7,
+      operatorId: operatorIdHex,
+      voterPubkey: voterPubkeyHex,
+    }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
     expect(call.private).toBe(false);
@@ -159,8 +176,8 @@ describe("CJ-1 submit helpers", () => {
     expect(res.operatorIdHex).toBe(operatorIdHex);
   });
 
-  it("does not sign or broadcast when the connected runtime does not expose CJ-1", async () => {
-    ethCallFailure = new Error("method not found");
+  it("does not sign or broadcast when the connected runtime does not expose native preview", async () => {
+    previewFailure = new Error("method not found");
 
     await expect(submitRequestClusterJoin({
       rpcUrl: "http://127.0.0.1:8545",
@@ -168,14 +185,22 @@ describe("CJ-1 submit helpers", () => {
       clusterId: 7,
       operatorPubkeyHex,
       bondLythoshi: "9000",
-    })).rejects.toThrow(/getClusterJoinRequest is not exposed/u);
+    })).rejects.toThrow(/request preview is not exposed/u);
 
     expect(submitWithPrivacy).not.toHaveBeenCalled();
     expect(transactionCountReads).toBe(0);
   });
 
-  it("does not broadcast an admit vote when no open candidate request exists", async () => {
-    ethCallResponse = requestView(0);
+  it("does not broadcast an admit vote when preview rejects the candidate", async () => {
+    previewResponse = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "voteClusterAdmit",
+      ok: false,
+      status: "rejected",
+      reason: "request_not_open",
+      message: "candidate join request is not open",
+    };
 
     await expect(submitVoteClusterAdmit({
       rpcUrl: "http://127.0.0.1:8545",
@@ -183,7 +208,7 @@ describe("CJ-1 submit helpers", () => {
       clusterId: 7,
       operatorIdHex,
       voterPubkeyHex,
-    })).rejects.toThrow(/not open for voting/u);
+    })).rejects.toThrow(/voteClusterAdmit preview rejected: request_not_open/u);
 
     expect(submitWithPrivacy).not.toHaveBeenCalled();
     expect(transactionCountReads).toBe(0);

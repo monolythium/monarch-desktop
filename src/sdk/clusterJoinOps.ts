@@ -1,9 +1,8 @@
 // CJ-1 cluster-admission ABI helpers.
 //
 // These keep Desktop's UI-facing CJ-1 shapes aligned with the published SDK
-// ABI semantics. Broadcast is guarded by a live
-// getClusterJoinRequest preflight so current chains that do not expose CJ-1
-// fail before signing or submitting.
+// ABI semantics. Broadcast is guarded by native lyth_* onboarding previews so
+// public RPC does not need to expose broad eth_call simulation.
 
 import {
   addressToTypedBech32,
@@ -17,7 +16,6 @@ import {
   encodeGetClusterJoinRequestCalldata as encodeSdkGetClusterJoinRequestCalldata,
   encodeRequestClusterJoinCalldata as encodeSdkRequestClusterJoinCalldata,
   encodeVoteClusterAdmitCalldata as encodeSdkVoteClusterAdmitCalldata,
-  nodeRegistryAddressHex,
   NODE_REGISTRY_SELECTORS,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
@@ -51,8 +49,9 @@ export type ClusterJoinRequestStatus =
   | "unknown";
 
 export interface ClusterJoinRequestView {
-  owner: string;
+  owner: string | null;
   requestEpoch: string;
+  requestNonce?: string;
   snapshotThreshold: number;
   snapshotN: number;
   voteCount: number;
@@ -66,6 +65,40 @@ export interface ClusterJoinRequestView {
 export type ClusterJoinReadClient = {
   call<T>(method: string, params?: unknown): Promise<T>;
 };
+
+export interface OperatorOnboardingPreview {
+  schemaVersion: number;
+  capability: string;
+  method: string;
+  ok: boolean;
+  status: "ok" | "rejected" | string;
+  reason?: string | null;
+  message?: string | null;
+  clusterId?: number;
+  operatorId?: string;
+  details?: Record<string, unknown>;
+}
+
+interface NativeClusterJoinRequestEnvelope {
+  schemaVersion: number;
+  capability: string;
+  method: "getClusterJoinRequest";
+  clusterId: number;
+  operatorId: string;
+  request: {
+    exists: boolean;
+    owner: string | null;
+    requestEpoch: string;
+    requestNonce?: string;
+    snapshotThreshold: number;
+    snapshotN: number;
+    voteCount: number;
+    status: ClusterJoinRequestStatus;
+    statusCode: number;
+    bondLythoshi: string;
+    sealRosterPending: boolean;
+  };
+}
 
 export interface RequestClusterJoinCalldataArgs {
   clusterId: bigint | number | string;
@@ -221,32 +254,91 @@ function adaptClusterJoinRequestView(view: SdkClusterJoinRequestView): ClusterJo
   };
 }
 
+function adaptNativeClusterJoinRequestView(
+  view: NativeClusterJoinRequestEnvelope["request"],
+): ClusterJoinRequestView {
+  return {
+    owner: view.owner,
+    requestEpoch: view.requestEpoch,
+    requestNonce: view.requestNonce,
+    snapshotThreshold: view.snapshotThreshold,
+    snapshotN: view.snapshotN,
+    voteCount: view.voteCount,
+    status: view.status,
+    statusCode: view.statusCode,
+    bondLythoshi: view.bondLythoshi,
+    sealRosterPending: view.sealRosterPending,
+    exists: view.exists,
+  };
+}
+
+function previewError(action: string, preview: OperatorOnboardingPreview): Error {
+  const reason = preview.reason ? `: ${preview.reason}` : "";
+  const message = preview.message ? ` (${preview.message})` : "";
+  return new Error(`${action} preview rejected${reason}${message}`);
+}
+
+function assertPreviewOk(action: string, preview: OperatorOnboardingPreview): void {
+  if (!preview.ok) throw previewError(action, preview);
+}
+
 export async function readClusterJoinRequest(
   client: ClusterJoinReadClient,
   args: ClusterJoinByOperatorIdCalldataArgs,
 ): Promise<ClusterJoinRequestView> {
-  const data = encodeGetClusterJoinRequestCalldata(args);
-  const output = await client.call<string>("eth_call", [
-    {
-      to: nodeRegistryAddressHex(),
-      data,
-    },
-    "latest",
+  const clusterId = parseUint32(args.clusterId, "clusterId");
+  const operatorIdHex = bytesToHex(hexToBytes(args.operatorIdHex, "operatorId", 32));
+  const envelope = await client.call<NativeClusterJoinRequestEnvelope>("lyth_getClusterJoinRequest", [
+    Number(clusterId),
+    operatorIdHex,
   ]);
-  return decodeClusterJoinRequestView(output);
+  return adaptNativeClusterJoinRequestView(envelope.request);
 }
 
-async function preflightClusterJoinView(
+export async function previewRequestClusterJoin(
   client: ClusterJoinReadClient,
-  args: ClusterJoinByOperatorIdCalldataArgs,
-): Promise<ClusterJoinRequestView> {
+  args: {
+    from: string;
+    clusterId: bigint | number | string;
+    operatorPubkeyHex: string;
+    bondLythoshi: bigint | number | string;
+  },
+): Promise<OperatorOnboardingPreview> {
+  const clusterId = parseUint32(args.clusterId, "clusterId");
   try {
-    return await readClusterJoinRequest(client, args);
+    return await client.call<OperatorOnboardingPreview>("lyth_previewRequestClusterJoin", [{
+      from: args.from,
+      clusterId: Number(clusterId),
+      operatorPubkey: args.operatorPubkeyHex,
+      bondLythoshi: args.bondLythoshi.toString(),
+    }]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `CJ-1 getClusterJoinRequest is not exposed or failed on the connected chain: ${message}`,
-    );
+    throw new Error(`CJ-1 request preview is not exposed or failed on the connected chain: ${message}`);
+  }
+}
+
+export async function previewVoteClusterAdmit(
+  client: ClusterJoinReadClient,
+  args: {
+    from: string;
+    clusterId: bigint | number | string;
+    operatorIdHex: string;
+    voterPubkeyHex: string;
+  },
+): Promise<OperatorOnboardingPreview> {
+  const clusterId = parseUint32(args.clusterId, "clusterId");
+  const operatorIdHex = bytesToHex(hexToBytes(args.operatorIdHex, "operatorId", 32));
+  try {
+    return await client.call<OperatorOnboardingPreview>("lyth_previewVoteClusterAdmit", [{
+      from: args.from,
+      clusterId: Number(clusterId),
+      operatorId: operatorIdHex,
+      voterPubkey: args.voterPubkeyHex,
+    }]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`CJ-1 admit-vote preview is not exposed or failed on the connected chain: ${message}`);
   }
 }
 
@@ -310,19 +402,16 @@ export async function submitRequestClusterJoin(
   const rpc = new RpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = deriveClusterJoinOperatorIdHex(args.operatorPubkeyHex);
-  const existing = await preflightClusterJoinView(rpc, {
-    clusterId,
-    operatorIdHex,
-  });
-  if (existing.status === "open") {
-    throw new Error("cluster join request is already open for this operator");
-  }
-  if (existing.status === "admitted") {
-    throw new Error("operator is already admitted for this cluster request");
-  }
-
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+  const preview = await previewRequestClusterJoin(rpc, {
+    from: senderAddress,
+    clusterId,
+    operatorPubkeyHex: args.operatorPubkeyHex,
+    bondLythoshi: args.bondLythoshi,
+  });
+  assertPreviewOk("requestClusterJoin", preview);
+
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
     rpc.lythGetTransactionCount(senderAddress),
@@ -359,16 +448,16 @@ export async function submitVoteClusterAdmit(
   const rpc = new RpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = bytesToHex(hexToBytes(args.operatorIdHex, "operatorId", 32));
-  const existing = await preflightClusterJoinView(rpc, {
-    clusterId,
-    operatorIdHex,
-  });
-  if (!existing.exists || existing.status !== "open") {
-    throw new Error("candidate cluster join request is not open for voting");
-  }
-
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+  const preview = await previewVoteClusterAdmit(rpc, {
+    from: senderAddress,
+    clusterId,
+    operatorIdHex,
+    voterPubkeyHex: args.voterPubkeyHex,
+  });
+  assertPreviewOk("voteClusterAdmit", preview);
+
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
     rpc.lythGetTransactionCount(senderAddress),

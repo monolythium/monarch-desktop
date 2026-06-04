@@ -151,17 +151,27 @@ describe("CJ-1 cluster-admission calldata", () => {
     );
   });
 
-  it("reads getClusterJoinRequest through eth_call against node-registry", async () => {
-    const response = "0x" + [
-      word("0x" + "88".repeat(20)),
-      word(12),
-      word(7),
-      word(10),
-      word(7),
-      word(2),
-      word(9000),
-      word(1),
-    ].join("");
+  it("reads getClusterJoinRequest through the native lyth_* view", async () => {
+    const response = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "getClusterJoinRequest",
+      clusterId: 7,
+      operatorId: operatorIdHex,
+      request: {
+        exists: true,
+        owner: "mono1candidateowner",
+        requestEpoch: "12",
+        requestNonce: "1",
+        snapshotThreshold: 7,
+        snapshotN: 10,
+        voteCount: 7,
+        status: "admitted" as const,
+        statusCode: 2,
+        bondLythoshi: "9000",
+        sealRosterPending: true,
+      },
+    };
     const call = vi.fn(async (_method: string, _params?: unknown) => response);
     const client = {
       call: async <T>(method: string, params?: unknown): Promise<T> => call(method, params) as Promise<T>,
@@ -169,15 +179,10 @@ describe("CJ-1 cluster-admission calldata", () => {
 
     const view = await readClusterJoinRequest(client, { clusterId: 7, operatorIdHex });
 
-    expect(call).toHaveBeenCalledWith("eth_call", [
-      {
-        to: "0x0000000000000000000000000000000000001005",
-        data: encodeGetClusterJoinRequestCalldata({ clusterId: 7, operatorIdHex }),
-      },
-      "latest",
-    ]);
+    expect(call).toHaveBeenCalledWith("lyth_getClusterJoinRequest", [7, operatorIdHex]);
     expect(view.status).toBe("admitted");
     expect(view.voteCount).toBe(7);
+    expect(view.owner).toBe("mono1candidateowner");
   });
 
   it("rejects malformed CJ-1 inputs before any signer path can use them", () => {

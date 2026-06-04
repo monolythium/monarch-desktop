@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FormClusterPreview } from "./clusterFormOps";
 
 type SubmitArg = {
   private: boolean;
@@ -17,7 +18,16 @@ const state = vi.hoisted(() => {
   const signPayloads: Uint8Array[] = [];
   return {
     submitWithPrivacy,
-    ethCallFailure: null as Error | null,
+    previewFailure: null as Error | null,
+    previewResponse: {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "formCluster",
+      ok: true,
+      status: "ok",
+      reason: null,
+      message: null,
+    } as FormClusterPreview,
     rpcCalls: [] as Array<{ method: string; params?: unknown }>,
     transactionCountReads: 0,
     transactionCountAddresses: [] as string[],
@@ -46,8 +56,8 @@ vi.mock("@monolythium/core-sdk", () => ({
     }
     call = vi.fn(async (method: string, params?: unknown) => {
       state.rpcCalls.push({ method, params });
-      if (state.ethCallFailure) throw state.ethCallFailure;
-      return "0x";
+      if (state.previewFailure) throw state.previewFailure;
+      return state.previewResponse;
     });
     ethChainId = vi.fn(async () => 69420n);
     lythGetTransactionCount = vi.fn(async (address: string) => {
@@ -137,7 +147,16 @@ function hexAt(calldata: string, byteOffset: number, byteLength: number): string
 describe("formCluster submit helpers", () => {
   beforeEach(() => {
     state.submitWithPrivacy.mockClear();
-    state.ethCallFailure = null;
+    state.previewFailure = null;
+    state.previewResponse = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "formCluster",
+      ok: true,
+      status: "ok",
+      reason: null,
+      message: null,
+    };
     state.rpcCalls.length = 0;
     state.transactionCountReads = 0;
     state.transactionCountAddresses.length = 0;
@@ -230,22 +249,26 @@ describe("formCluster submit helpers", () => {
     expect((tx.input as string).startsWith(FORM_CLUSTER_SELECTOR)).toBe(true);
   });
 
-  it("preflights formCluster before nonce reads and broadcasts plaintext", async () => {
+  it("previews formCluster before nonce reads and broadcasts plaintext", async () => {
     const res = await submitFormCluster({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
       ...validInput(),
     });
 
-    expect(state.rpcCalls[0]?.method).toBe("eth_call");
-    const params = state.rpcCalls[0]?.params as Array<Record<string, string> | string>;
+    expect(state.rpcCalls[0]?.method).toBe("lyth_previewFormCluster");
+    const params = state.rpcCalls[0]?.params as Array<{
+      from: string;
+      activePubkeys: string[];
+      standbyPubkeys: string[];
+      signatures: string[];
+    }>;
     expect(params[0]).toMatchObject({
-      from: "0x" + "44".repeat(20),
-      to: "0x0000000000000000000000000000000000001005",
+      from: "mono1typedoperator",
     });
-    const callParams = params[0] as Record<string, string>;
-    if (typeof callParams.data !== "string") throw new Error("eth_call data missing");
-    expect(callParams.data.startsWith(FORM_CLUSTER_SELECTOR)).toBe(true);
+    expect(params[0]?.activePubkeys).toHaveLength(FORM_CLUSTER_ACTIVE_COUNT);
+    expect(params[0]?.standbyPubkeys).toHaveLength(FORM_CLUSTER_STANDBY_COUNT);
+    expect(params[0]?.signatures).toHaveLength(FORM_CLUSTER_MEMBER_COUNT);
     expect(state.transactionCountAddresses).toEqual(["mono1typedoperator"]);
     expect(state.submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = state.submitWithPrivacy.mock.calls[0]![0];
@@ -260,14 +283,35 @@ describe("formCluster submit helpers", () => {
     expect(res.envelopeWireBytes).toBe(128);
   });
 
-  it("does not read nonce or broadcast when formCluster preflight fails", async () => {
-    state.ethCallFailure = new Error("unknown selector");
+  it("does not read nonce or broadcast when formCluster preview fails", async () => {
+    state.previewFailure = new Error("method not found");
 
     await expect(submitFormCluster({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
       ...validInput(),
-    })).rejects.toThrow(/formCluster preflight failed/u);
+    })).rejects.toThrow(/formCluster preview is not exposed/u);
+
+    expect(state.transactionCountReads).toBe(0);
+    expect(state.submitWithPrivacy).not.toHaveBeenCalled();
+  });
+
+  it("does not read nonce or broadcast when formCluster preview rejects", async () => {
+    state.previewResponse = {
+      schemaVersion: 1,
+      capability: "operatorOnboardingRpcV1",
+      method: "formCluster",
+      ok: false,
+      status: "rejected",
+      reason: "duplicate_member",
+      message: "cluster formation roster contains a duplicate operator",
+    };
+
+    await expect(submitFormCluster({
+      rpcUrl: "http://127.0.0.1:8545",
+      mnemonic: "test mnemonic",
+      ...validInput(),
+    })).rejects.toThrow(/formCluster preview rejected: duplicate_member/u);
 
     expect(state.transactionCountReads).toBe(0);
     expect(state.submitWithPrivacy).not.toHaveBeenCalled();

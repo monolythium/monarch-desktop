@@ -53,6 +53,23 @@ export interface SubmitFormClusterResult {
   envelopeWireBytes: number;
 }
 
+export interface FormClusterPreview {
+  schemaVersion: number;
+  capability: string;
+  method: "formCluster" | string;
+  ok: boolean;
+  status: "ok" | "rejected" | string;
+  reason?: string | null;
+  message?: string | null;
+  clusterId?: number;
+  operatorId?: string;
+  details?: Record<string, unknown>;
+}
+
+export type FormClusterReadClient = {
+  call<T>(method: string, params?: unknown): Promise<T>;
+};
+
 function stripHex(s: string): string {
   return s.startsWith("0x") || s.startsWith("0X") ? s.slice(2) : s;
 }
@@ -167,6 +184,16 @@ function parseRoster(args: Pick<FormClusterCalldataArgs, "activePubkeysHex" | "s
   };
 }
 
+function previewError(preview: FormClusterPreview): Error {
+  const reason = preview.reason ? `: ${preview.reason}` : "";
+  const message = preview.message ? ` (${preview.message})` : "";
+  return new Error(`formCluster preview rejected${reason}${message}`);
+}
+
+function assertPreviewOk(preview: FormClusterPreview): void {
+  if (!preview.ok) throw previewError(preview);
+}
+
 export function formClusterConsentMessage(args: {
   activePubkeysHex: string;
   standbyPubkeysHex: string;
@@ -259,6 +286,28 @@ export function buildFormClusterTxFields(args: {
   };
 }
 
+export async function previewFormCluster(
+  client: FormClusterReadClient,
+  args: FormClusterCalldataArgs & { from: string },
+): Promise<FormClusterPreview> {
+  const roster = parseRoster(args);
+  const signatures = parseHexList(args.signaturesHex, "signatures", FORM_CLUSTER_SIGNATURE_BYTES);
+  if (signatures.length !== FORM_CLUSTER_MEMBER_COUNT) {
+    throw new Error(`signatures: expected ${FORM_CLUSTER_MEMBER_COUNT} signatures`);
+  }
+  try {
+    return await client.call<FormClusterPreview>("lyth_previewFormCluster", [{
+      from: args.from,
+      activePubkeys: roster.activePubkeys.map(bytesToHex),
+      standbyPubkeys: roster.standbyPubkeys.map(bytesToHex),
+      signatures: signatures.map(bytesToHex),
+    }]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`formCluster preview is not exposed or failed on the connected chain: ${message}`);
+  }
+}
+
 export async function submitFormCluster(
   args: SubmitFormClusterArgs,
 ): Promise<SubmitFormClusterResult> {
@@ -270,22 +319,14 @@ export async function submitFormCluster(
 
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const calldataHex = encodeFormClusterCalldata(args);
-  try {
-    await rpc.call<string>("eth_call", [
-      {
-        from: bytesToHex(backend.addressBytes()),
-        to: nodeRegistryAddressHex(),
-        data: calldataHex,
-      },
-      "latest",
-    ]);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`formCluster preflight failed on the connected runtime: ${message}`);
-  }
-
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+  const preview = await previewFormCluster(rpc, {
+    from: senderAddress,
+    activePubkeysHex: args.activePubkeysHex,
+    standbyPubkeysHex: args.standbyPubkeysHex,
+    signaturesHex: args.signaturesHex,
+  });
+  assertPreviewOk(preview);
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
     rpc.lythGetTransactionCount(senderAddress),

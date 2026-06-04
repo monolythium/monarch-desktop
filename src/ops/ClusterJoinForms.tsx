@@ -297,7 +297,7 @@ function ClusterJoinStatusPanel({
             ? `Read failed: ${live.error}`
             : liveData
               ? liveData.exists
-                ? `${liveData.status} · owner ${compactHex(liveData.owner, 12, 8)}`
+                ? `${liveData.status} · owner ${liveData.owner ? compactHex(liveData.owner, 12, 8) : "unknown"}`
                 : "No request found for this cluster/operator pair."
               : preview.statusLabel;
   const liveVoteProgress =
