@@ -1,7 +1,7 @@
 // CJ-1 cluster-admission ABI helpers.
 //
-// These mirror the mono-core-sdk W1 helpers while Desktop still consumes the
-// last published SDK package. Broadcast is guarded by a live
+// These keep Desktop's UI-facing CJ-1 shapes aligned with the published SDK
+// ABI semantics. Broadcast is guarded by a live
 // getClusterJoinRequest preflight so current chains that do not expose CJ-1
 // fail before signing or submitting.
 

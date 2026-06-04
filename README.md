@@ -15,7 +15,7 @@
 Functional shell with substantive backend, but not yet production-grade. Set expectations before adopting:
 
 - **Chain target is testnet.** Monolythium mainnet has not launched. Anything you connect to here runs against the public testnet today; mainnet activation is gated on separate protocol milestones.
-- **SDK is consumed straight from npm.** `package.json` pins `@monolythium/core-sdk` to the exact published version `0.3.15` ([`monolythium/mono-core-sdk`](https://github.com/monolythium/mono-core-sdk)). `pnpm install` resolves it from the registry — no sibling checkout required.
+- **SDK is consumed straight from npm.** `package.json` pins `@monolythium/core-sdk` to the exact published version `0.4.1` ([`monolythium/mono-core-sdk`](https://github.com/monolythium/mono-core-sdk)). `pnpm install` resolves it from the registry; no sibling checkout is required.
 - **Production-looking fixtures were removed.** Views now use live RPC/Talos reads or render named blockers for missing `mono-core` endpoints. The readiness gap list in [`docs/final-product-readiness.md`](./docs/final-product-readiness.md) enumerates which screens are live vs blocked.
 - **Operator-targets are not bundled.** The Logs view dropdown is empty by default. To populate it locally, copy [`examples/operators.json.example`](./examples/operators.json.example) to `examples/operators.json` (gitignored) and edit — an in-app loader that reads this on launch is a later milestone.
 - **Signed-release pipeline exists, but no artifacts are published yet.** `.github/workflows/release.yml` defines a four-platform build matrix (macOS arm64/x64, Linux x64, Windows x64) with Azure Trusted Signing for Windows. No tagged release has run it end-to-end.
@@ -48,7 +48,7 @@ To inspect, audit, or develop:
 - **Rust** 1.77+
 - Tauri 2 platform prerequisites — see <https://v2.tauri.app/start/prerequisites/>
 
-`pnpm install` resolves all dependencies from npm — including `@monolythium/core-sdk@0.3.15` ([`monolythium/mono-core-sdk`](https://github.com/monolythium/mono-core-sdk)). No sibling checkout is required.
+`pnpm install` resolves all dependencies from npm, including `@monolythium/core-sdk@0.4.1` ([`monolythium/mono-core-sdk`](https://github.com/monolythium/mono-core-sdk)). No sibling checkout is required.
 
 ## Quick start
 
