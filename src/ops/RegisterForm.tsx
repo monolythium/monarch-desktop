@@ -7,8 +7,8 @@
 // Form discipline:
 // - Endpoint: free text, validated as non-empty.
 // - Capabilities: bitmask checkboxes mirroring NODE_REGISTRY_CAPABILITIES.
-// - BLS pubkey: 48 raw bytes hex (96 hex chars, optional `0x` prefix).
-// - BLS PoP: 96 raw bytes hex (192 hex chars, optional `0x` prefix).
+// - Consensus pubkey + possession proof: derived from the PQM-1 mnemonic
+//   at authorization time.
 // - Bond: LYTH (whole units) — translated to lythoshi via the SDK
 //   `parseLythToLythoshi` helper (1 LYTH = 1e18 lythoshi) before sign.
 
@@ -27,16 +27,6 @@ const CAPABILITY_OPTIONS: ReadonlyArray<{ label: string; mask: number; hint: str
   { label: "Bridge relay", mask: 0x0080, hint: "Approved route relayer" },
   { label: "Public API", mask: 0x0100, hint: "Public-facing read API" },
 ];
-
-function stripHexPrefix(s: string): string {
-  return s.startsWith("0x") || s.startsWith("0X") ? s.slice(2) : s;
-}
-
-function isValidHex(s: string, expectedBytes: number): boolean {
-  const clean = stripHexPrefix(s.trim());
-  if (clean.length !== expectedBytes * 2) return false;
-  return /^[0-9a-fA-F]+$/.test(clean);
-}
 
 function parseBondLyth(value: string): bigint | null {
   const trimmed = value.trim();
@@ -58,8 +48,6 @@ export function RegisterForm() {
   const validity = useMemo(() => {
     const endpointOk = !!input && input.endpoint.trim().length > 0;
     const capsOk = !!input && input.capabilities > 0;
-    const pubkeyOk = !!input && isValidHex(input.blsPubkeyHex, 48);
-    const popOk = !!input && isValidHex(input.blsPopHex, 96);
     const bondOk =
       !!input &&
       (() => {
@@ -69,7 +57,7 @@ export function RegisterForm() {
           return false;
         }
       })();
-    return { endpointOk, capsOk, pubkeyOk, popOk, bondOk };
+    return { endpointOk, capsOk, bondOk };
   }, [input]);
 
   if (!request || request.kind !== "operator-register") return null;
@@ -77,8 +65,6 @@ export function RegisterForm() {
   const current = input ?? {
     endpoint: "",
     capabilities: 0,
-    blsPubkeyHex: "",
-    blsPopHex: "",
     bondLythoshi: "0",
   };
 
@@ -152,53 +138,12 @@ export function RegisterForm() {
         ) : null}
       </div>
 
-      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
-        <span className="kv__k">BLS pubkey (96 hex chars = 48 bytes)</span>
-        <input
-          type="text"
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          placeholder="0x... (96 hex)"
-          value={current.blsPubkeyHex}
-          onChange={(e) => setRegisterInput({ blsPubkeyHex: e.target.value })}
-          style={{
-            background: "rgba(0,0,0,0.3)",
-            border: validity.pubkeyOk
-              ? "1px solid rgba(255,255,255,0.1)"
-              : "1px solid var(--err-500, #c53030)",
-            color: "var(--fg-200)",
-            padding: "6px 8px",
-            fontSize: 11,
-            borderRadius: 6,
-            fontFamily: "var(--font-mono, monospace)",
-          }}
-        />
-      </label>
-
-      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
-        <span className="kv__k">BLS proof-of-possession (192 hex chars = 96 bytes)</span>
-        <input
-          type="text"
-          spellCheck={false}
-          autoCorrect="off"
-          autoCapitalize="off"
-          placeholder="0x... (192 hex)"
-          value={current.blsPopHex}
-          onChange={(e) => setRegisterInput({ blsPopHex: e.target.value })}
-          style={{
-            background: "rgba(0,0,0,0.3)",
-            border: validity.popOk
-              ? "1px solid rgba(255,255,255,0.1)"
-              : "1px solid var(--err-500, #c53030)",
-            color: "var(--fg-200)",
-            padding: "6px 8px",
-            fontSize: 11,
-            borderRadius: 6,
-            fontFamily: "var(--font-mono, monospace)",
-          }}
-        />
-      </label>
+      <div className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Consensus key</span>
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          Derived from the operator PQM-1 mnemonic; Desktop signs the possession proof during authorization.
+        </span>
+      </div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
         <span className="kv__k">Bond (LYTH whole units, ≥ 5,000 on testnet)</span>
@@ -237,8 +182,6 @@ export function isRegisterInputComplete(
   if (!input) return false;
   if (input.endpoint.trim().length === 0) return false;
   if (input.capabilities <= 0) return false;
-  if (!isValidHex(input.blsPubkeyHex, 48)) return false;
-  if (!isValidHex(input.blsPopHex, 96)) return false;
   try {
     if (BigInt(input.bondLythoshi) <= 0n) return false;
   } catch {

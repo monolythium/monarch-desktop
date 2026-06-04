@@ -1,17 +1,10 @@
 // Node-registry register flow (MD-REG-01).
 //
 // Encodes `register(bytes32,string,bytes32,uint32,uint32,bytes,bytes,bytes)`
-// calldata, signs the inner ML-DSA-65 envelope, and submits it through the
-// SDK 0.3.11 PLAINTEXT path (`submitTransactionWithPrivacy({ private: false })`
-// -> `mesh_submitTx`). Plaintext is the working inclusion path on the live
-// optional-encryption testnet (the node runs with
-// `encrypted_mempool_required = false`): a plaintext tx confirms.
-//
-// Threshold-encrypted INCLUSION is NOT live yet (the Ferveo
-// threshold-decrypt pipeline is a fast-follow), so the encrypted submit
-// route (`private: true` -> `lyth_submitEncrypted`) is a PREVIEW that would
-// admit an envelope that never confirms. The operator register flow never
-// engages it — `private` defaults to `false` and the form has no toggle.
+// calldata, derives the ML-DSA-65 consensus key and possession signature
+// from the operator PQM-1 mnemonic, signs the inner ML-DSA-65 envelope, and
+// submits it through the plaintext native tx path
+// (`submitTransactionWithPrivacy({ private: false })` -> `mesh_submitTx`).
 //
 // Operator-self-signed: the register handler at
 // `crates/economics/node-registry/src/ops.rs::register_op_host` does
@@ -19,13 +12,18 @@
 // their own ML-DSA-65 pubkey; the bond is paid out of the same
 // account.
 
-import { RpcClient } from "@monolythium/core-sdk";
+import { addressToTypedBech32, RpcClient } from "@monolythium/core-sdk";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
 } from "@monolythium/core-sdk/crypto";
 import type { NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
-import { keccak_256 } from "@noble/hashes/sha3.js";
+import {
+  NODE_REGISTRY_CONSENSUS_POP_BYTES,
+  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  operatorPubkeyHash,
+  registerPopMessage,
+} from "./operatorKeys";
 
 // `keccak256("register(bytes32,string,bytes32,uint32,uint32,bytes,bytes,bytes)")[0..4]`
 // — mirrors `crates/economics/node-registry/src/abi.rs::sig::REGISTER`.
@@ -39,9 +37,9 @@ const NODE_REGISTRY_ADDRESS_HEX = "0x0000000000000000000000000000000000001005";
 // in `crates/core/sdk/src/operator.rs`).
 const DEFAULT_SOFTWARE_VERSION = 1 << 16;
 
-// Register is a heavy op (peer-id + endpoint + caps + bls-pop slot writes
-// plus the bond-escrow transfer). It measures ~151k execution units, so the
-// default limit is the SDK 0.3.11 sane register default of 200k — comfortably
+// Register is a heavy op (peer-id + endpoint + caps + possession proof slot
+// writes plus the bond-escrow transfer). It measures ~151k execution units,
+// so the default limit is the SDK sane register default of 200k — comfortably
 // above the metered cost without overpaying. Callers may override.
 export const DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT = 200_000n;
 
@@ -56,14 +54,10 @@ export interface RegisterArgs {
   endpoint: string;
   /** Capability bitmask — OR of `NODE_REGISTRY_CAPABILITIES`. */
   capabilities: number;
-  /** 48-byte BLS12-381 minPK pubkey, hex-encoded (with or without `0x`). */
-  blsPubkeyHex: string;
-  /** 96-byte BLS proof-of-possession, hex-encoded. */
-  blsPopHex: string;
   /** Bond in lythoshi (decimal string). Must be ≥ `MIN_BOND_LYTHOSHI`
    *  on a public-profile chain id. */
   bondLythoshi: string;
-  /** Optional 32-byte peer id. Defaults to `keccak256(blsPubkey)`. */
+  /** Optional 32-byte peer id. Defaults to `BLAKE3(consensus_pubkey)`. */
   peerIdHex?: string;
   /** Optional 32-byte SPP-K hash. Zero hash is acceptable on testnet. */
   sppkHashHex?: string;
@@ -84,6 +78,7 @@ export interface RegisterArgs {
 export interface RegisterResult {
   txHash: string;
   peerIdHex: string;
+  consensusPubkeyHex: string;
   innerSighashHex: string;
   envelopeWireBytes: number;
 }
@@ -138,6 +133,12 @@ function padTo32(buf: Uint8Array): Uint8Array {
   return out;
 }
 
+function assertBytesLen(bytes: Uint8Array, label: string, expectedLen: number): void {
+  if (bytes.length !== expectedLen) {
+    throw new Error(`${label}: expected ${expectedLen} bytes, got ${bytes.length}`);
+  }
+}
+
 /** ABI-encode the `register(...)` calldata in the layout the chain
  *  decoder (`register_op` in `node-registry/src/ops.rs`) expects.
  *  Mirrors `protocore_sdk::operator::encode_register_calldata`. */
@@ -148,8 +149,8 @@ function encodeRegisterCalldata(args: {
   capabilities: number;
   softwareVersion: number;
   tpmQuote: Uint8Array;
-  blsPubkey: Uint8Array;
-  blsPop: Uint8Array;
+  consensusPubkey: Uint8Array;
+  consensusPop: Uint8Array;
 }): Uint8Array {
   assertUint32(args.capabilities, "capabilities");
   assertUint32(args.softwareVersion, "softwareVersion");
@@ -159,9 +160,9 @@ function encodeRegisterCalldata(args: {
   const endpointPadded = BigInt(Math.ceil(args.endpoint.length / 32) * 32);
   const tpmOffset = endpointOffset + 32n + endpointPadded;
   const tpmPadded = BigInt(Math.ceil(args.tpmQuote.length / 32) * 32);
-  const blsPubkeyOffset = tpmOffset + 32n + tpmPadded;
-  const blsPubkeyPadded = BigInt(Math.ceil(args.blsPubkey.length / 32) * 32);
-  const blsPopOffset = blsPubkeyOffset + 32n + blsPubkeyPadded;
+  const consensusPubkeyOffset = tpmOffset + 32n + tpmPadded;
+  const consensusPubkeyPadded = BigInt(Math.ceil(args.consensusPubkey.length / 32) * 32);
+  const consensusPopOffset = consensusPubkeyOffset + 32n + consensusPubkeyPadded;
 
   const chunks: Uint8Array[] = [];
   chunks.push(hexToBytes(REGISTER_SELECTOR, "selector", 4));
@@ -178,20 +179,20 @@ function encodeRegisterCalldata(args: {
   chunks.push(u256BE(args.softwareVersion));
   // head[5]: tpm_quote offset
   chunks.push(u256BE(tpmOffset));
-  // head[6]: bls_pubkey offset
-  chunks.push(u256BE(blsPubkeyOffset));
-  // head[7]: bls_pop offset
-  chunks.push(u256BE(blsPopOffset));
+  // head[6]: consensus_pubkey offset
+  chunks.push(u256BE(consensusPubkeyOffset));
+  // head[7]: consensus possession proof offset
+  chunks.push(u256BE(consensusPopOffset));
 
   // tails: length-prefix + body padded to 32.
   chunks.push(u256BE(args.endpoint.length));
   chunks.push(padTo32(args.endpoint));
   chunks.push(u256BE(args.tpmQuote.length));
   chunks.push(padTo32(args.tpmQuote));
-  chunks.push(u256BE(args.blsPubkey.length));
-  chunks.push(padTo32(args.blsPubkey));
-  chunks.push(u256BE(args.blsPop.length));
-  chunks.push(padTo32(args.blsPop));
+  chunks.push(u256BE(args.consensusPubkey.length));
+  chunks.push(padTo32(args.consensusPubkey));
+  chunks.push(u256BE(args.consensusPop.length));
+  chunks.push(padTo32(args.consensusPop));
 
   // Total length sanity check — should be 32-aligned past the selector.
   const total = chunks.reduce((sum, c) => sum + c.length, 0);
@@ -208,19 +209,19 @@ function encodeRegisterCalldata(args: {
   return out;
 }
 
-function keccak256(input: Uint8Array): Uint8Array {
-  // Use @noble/hashes directly. The SDK already statically imports this
-  // package for its PQM-1 / ML-DSA derivation; the direct dep keeps tsc
-  // + the bundler resolving the import unambiguously (and in one chunk).
-  return keccak_256(input);
-}
-
 /** Clamp the priority tip so it never exceeds the per-execution-unit
- *  price ceiling the node reports. This mirrors the SDK 0.3.11 fee
+ *  price ceiling the node reports. This mirrors the SDK fee
  *  guard (`priority_tip <= max_execution_unit_price`): a tip above the
  *  cap is wasted, and on some node builds it bounces the tx outright. */
 export function clampPriorityTip(tip: bigint, maxPrice: bigint): bigint {
   return tip > maxPrice ? maxPrice : tip;
+}
+
+export function deriveOperatorConsensusPubkeyHex(mnemonic: string): string {
+  const backend = pqm1MnemonicToMlDsa65Backend(mnemonic);
+  const consensusPubkey = backend.publicKey();
+  assertBytesLen(consensusPubkey, "consensusPubkey", NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
+  return bytesToHex(consensusPubkey);
 }
 
 /** The on-chain fee quote the register submit uses, as returned by
@@ -233,7 +234,7 @@ export interface RegisterFeeQuote {
   priorityTipLythoshi: string;
 }
 
-/** Pure builder for the register `NativeEvmTxFields` — calldata + SDK 0.3.11
+/** Pure builder for the register `NativeEvmTxFields` — calldata + SDK
  *  sane fee defaults. Kept side-effect-free so the fee/limit/clamp logic is
  *  unit-testable without a live node. Returns the peer id alongside so the
  *  caller can echo it without re-deriving. */
@@ -243,8 +244,8 @@ export function buildRegisterTxFields(args: {
   fee: RegisterFeeQuote;
   endpoint: string;
   capabilities: number;
-  blsPubkey: Uint8Array;
-  blsPop: Uint8Array;
+  consensusPubkey: Uint8Array;
+  consensusPop: Uint8Array;
   bondLythoshi: string;
   peerId: Uint8Array;
   sppkHash: Uint8Array;
@@ -258,11 +259,11 @@ export function buildRegisterTxFields(args: {
     capabilities: args.capabilities,
     softwareVersion: DEFAULT_SOFTWARE_VERSION,
     tpmQuote: args.tpmQuote,
-    blsPubkey: args.blsPubkey,
-    blsPop: args.blsPop,
+    consensusPubkey: args.consensusPubkey,
+    consensusPop: args.consensusPop,
   });
 
-  // Sane fee defaults (SDK 0.3.11): `maxFeePerGas` is the per-execution-unit
+  // Sane fee defaults: `maxFeePerGas` is the per-execution-unit
   // price ceiling; the priority tip is clamped to that ceiling so a register
   // tx never carries a tip above what the chain will charge.
   const maxExecutionUnitPrice = BigInt(args.fee.executionUnitPriceLythoshi);
@@ -284,11 +285,13 @@ export function buildRegisterTxFields(args: {
 
 export async function submitRegister(args: RegisterArgs): Promise<RegisterResult> {
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
-  const blsPubkey = hexToBytes(args.blsPubkeyHex, "blsPubkey", 48);
-  const blsPop = hexToBytes(args.blsPopHex, "blsPop", 96);
+  const consensusPubkey = backend.publicKey();
+  assertBytesLen(consensusPubkey, "consensusPubkey", NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
+  const consensusPop = backend.sign(registerPopMessage(consensusPubkey));
+  assertBytesLen(consensusPop, "consensusPop", NODE_REGISTRY_CONSENSUS_POP_BYTES);
   const peerId = args.peerIdHex
     ? hexToBytes(args.peerIdHex, "peerId", 32)
-    : keccak256(blsPubkey);
+    : operatorPubkeyHash(consensusPubkey);
   const sppkHash = args.sppkHashHex
     ? hexToBytes(args.sppkHashHex, "sppkHash", 32)
     : new Uint8Array(32);
@@ -297,14 +300,14 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
     : new Uint8Array(0);
 
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
-  // Typed `lyth_*` reads via the SDK 0.3.11 RpcClient. `ethChainId`
+  // Typed `lyth_*` reads via the SDK RpcClient. `ethChainId`
   // reuses the eth-compat chain id; `lythGetTransactionCount` is the
   // native sender nonce; `lythExecutionUnitPrice` is the native fee.
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
 
@@ -314,8 +317,8 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
     fee,
     endpoint: args.endpoint,
     capabilities: args.capabilities,
-    blsPubkey,
-    blsPop,
+    consensusPubkey,
+    consensusPop,
     bondLythoshi: args.bondLythoshi,
     peerId,
     sppkHash,
@@ -341,6 +344,7 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
   return {
     txHash,
     peerIdHex: bytesToHex(peerId),
+    consensusPubkeyHex: bytesToHex(consensusPubkey),
     innerSighashHex: bytesToHex(signed.sighash),
     envelopeWireBytes: signed.wireBytes.length,
   };

@@ -3,6 +3,7 @@ import {
   isEmergencyKeyRotationInputComplete,
   isFreezeAdmissionInputComplete,
 } from "./IncidentExecutorForm";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "../sdk/operatorKeys";
 
 describe("incident executor forms", () => {
   it("validates freezeAdmission input", () => {
@@ -17,21 +18,21 @@ describe("incident executor forms", () => {
   it("validates emergencyKeyRotation input", () => {
     expect(
       isEmergencyKeyRotationInputComplete({
-        targetPubkeyHex: "0x" + "cd".repeat(48),
+        targetPubkeyHex: "0x" + "cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES),
         effectiveEpoch: "42",
         intentId: "7",
       }),
     ).toBe(true);
     expect(
       isEmergencyKeyRotationInputComplete({
-        targetPubkeyHex: "0x" + "cd".repeat(48),
+        targetPubkeyHex: "0x" + "cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES),
         effectiveEpoch: "0",
         intentId: "7",
       }),
     ).toBe(false);
     expect(
       isEmergencyKeyRotationInputComplete({
-        targetPubkeyHex: "0x" + "cd".repeat(47),
+        targetPubkeyHex: "0x" + "cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1),
         effectiveEpoch: "42",
         intentId: "7",
       }),

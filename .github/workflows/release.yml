@@ -182,7 +182,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: monarch-desktop-e2e-evidence
-          path: _out/monarch-desktop-e2e-evidence.json
+          path: |
+            _out/monarch-desktop-e2e-evidence.json
+            _out/monarch-desktop-e2e-screenshots/**
 
   build:
     needs: gui-e2e

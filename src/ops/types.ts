@@ -13,6 +13,9 @@ export const OP_KINDS = [
   "export-backup",
   "cluster-swap",
   "cluster-accept-invite",
+  "cluster-form",
+  "cluster-request-join",
+  "cluster-vote-admit",
   "freeze-admission",
   "emergency-key-rotation",
   "ota-apply",
@@ -27,8 +30,6 @@ export type OpKind = (typeof OP_KINDS)[number];
 export type RegisterInput = {
   endpoint: string;
   capabilities: number;
-  blsPubkeyHex: string;
-  blsPopHex: string;
   bondLythoshi: string;
   peerIdHex?: string;
   sppkHashHex?: string;
@@ -65,6 +66,31 @@ export type PendingChangeInput = {
   targetPubkeyHex: string;
   effectiveEpoch: string;
   intentId: string;
+};
+
+// Inputs for CJ-1 self-service cluster admission. `requestClusterJoin`
+// is signed by the joining operator and sends the bond as tx value once
+// the runtime precompile is live.
+export type ClusterJoinRequestInput = {
+  clusterId: string;
+  operatorPubkeyHex: string;
+  bondLythoshi: string;
+};
+
+// Inputs for CJ-1 cluster-member admission votes. The chain tallies
+// votes by the current cluster roster and admits once policy threshold is met.
+export type ClusterVoteAdmitInput = {
+  clusterId: string;
+  operatorIdHex: string;
+  voterPubkeyHex: string;
+};
+
+// Inputs for a self-service cluster-formation proposal. Formation
+// execution is intentionally blocked until the runtime defines the
+// primitive; Desktop still validates the roster topology and evidence.
+export type ClusterFormInput = {
+  activePubkeysHex: string;
+  standbyPubkeysHex: string;
 };
 
 // Inputs for the operator-callable `attestDkgReshare(uint64,bytes,bytes)`.
@@ -127,6 +153,12 @@ export type OpRequest = {
   chatBootstrapPeersInput?: ChatBootstrapPeersInput;
   /** Present only when `kind` maps to a foundation pending-change op. */
   pendingChangeInput?: PendingChangeInput;
+  /** Present only when `kind === "cluster-request-join"`. */
+  clusterJoinRequestInput?: ClusterJoinRequestInput;
+  /** Present only when `kind === "cluster-vote-admit"`. */
+  clusterVoteAdmitInput?: ClusterVoteAdmitInput;
+  /** Present only when `kind === "cluster-form"`. */
+  clusterFormInput?: ClusterFormInput;
   /** Present only when `kind === "rotate-keys"`. Carries the DKG re-share
    *  attestation payload produced by the external ceremony. */
   dkgReshareInput?: DkgReshareAttestationInput;

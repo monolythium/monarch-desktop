@@ -25,6 +25,7 @@ const fakeBackend = {
 };
 
 vi.mock("@monolythium/core-sdk", () => ({
+  addressToTypedBech32: () => "mono1typedoperator",
   RpcClient: class {
     endpoint: string;
     constructor(endpoint: string) {
@@ -53,7 +54,9 @@ import {
   ATTEST_DKG_RESHARE_SELECTOR,
   buildDkgReshareAttestationTxFields,
   DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT,
+  DKG_RESHARE_ATTESTATION_SIG_BYTES,
   DKG_RESHARE_ATTESTATION_SCHEMA,
+  DKG_RESHARE_CONSENSUS_PUBKEY_BYTES,
   DKG_RESHARE_MAX_SIGNERS,
   DKG_RESHARE_MIN_SIGNERS,
   encodeAttestDkgReshareCalldata,
@@ -64,11 +67,11 @@ import {
 } from "./dkgReshareOps";
 
 function key(byte: number): string {
-  return byte.toString(16).padStart(2, "0").repeat(48);
+  return byte.toString(16).padStart(2, "0").repeat(DKG_RESHARE_CONSENSUS_PUBKEY_BYTES);
 }
 
 const keysHex = "0x" + [1, 2, 3, 4, 5].map(key).join("");
-const sigHex = "0x" + "cc".repeat(96);
+const sigHex = "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES);
 const fee = {
   executionUnitPriceLythoshi: "900",
   priorityTipLythoshi: "1200",
@@ -82,8 +85,10 @@ describe("attestDkgReshare calldata", () => {
       thresholdSigHex: sigHex,
     });
 
-    const keysLength = 5 * 48;
+    const keysLength = 5 * DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
     const keysPaddedLength = Math.ceil(keysLength / 32) * 32;
+    const sigLength = 5 * DKG_RESHARE_ATTESTATION_SIG_BYTES;
+    const sigPaddedLength = Math.ceil(sigLength / 32) * 32;
     const offsetSig = 0x60 + 32 + keysPaddedLength;
 
     expect(ATTEST_DKG_RESHARE_SELECTOR).toBe("0x36e34030");
@@ -95,9 +100,14 @@ describe("attestDkgReshare calldata", () => {
     expect(calldata.slice(266, 266 + keysLength * 2)).toBe([1, 2, 3, 4, 5].map(key).join(""));
     const sigLenWordStart = 266 + keysPaddedLength * 2;
     expect(calldata.slice(sigLenWordStart, sigLenWordStart + 64)).toBe(
-      "60".padStart(64, "0"),
+      sigLength.toString(16).padStart(64, "0"),
     );
-    expect(calldata.slice(sigLenWordStart + 64)).toBe("cc".repeat(96));
+    expect(calldata.slice(sigLenWordStart + 64, sigLenWordStart + 64 + sigLength * 2)).toBe(
+      "cc".repeat(sigLength),
+    );
+    expect(calldata.slice(sigLenWordStart + 64 + sigLength * 2)).toBe(
+      "00".repeat(sigPaddedLength - sigLength),
+    );
   });
 
   it("validates signer count, duplicate keys, signature length, and intent cap", () => {
@@ -122,9 +132,9 @@ describe("attestDkgReshare calldata", () => {
       encodeAttestDkgReshareCalldata({
         intentId: 7,
         blsPublicKeysHex: keysHex,
-        thresholdSigHex: "0x" + "cc".repeat(95),
+        thresholdSigHex: "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES - 1),
       }),
-    ).toThrow(/expected 96 bytes/u);
+    ).toThrow(/expected 16545 bytes/u);
   });
 });
 
@@ -173,9 +183,9 @@ describe("parseDkgReshareAttestationArtifact", () => {
       parseDkgReshareAttestationArtifact({
         intent_id: "7",
         bls_public_keys_hex: keysHex,
-        threshold_sig_hex: "0x" + "cc".repeat(95),
+        threshold_sig_hex: "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES - 1),
       }),
-    ).toThrow(/expected 96 bytes/u);
+    ).toThrow(/expected 16545 bytes/u);
   });
 });
 

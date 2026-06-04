@@ -1,4 +1,4 @@
-// Full chrome + nine-route shell. Operations drawer mounted at
+// Full chrome + design-route shell. Operations drawer mounted at
 // the app root so any view can request operations through the shared
 // OpsProvider context. SDK-driven node status flows through the TopBar
 // (live round/block halo). ⌘K palette and `g+letter` nav are wired here
@@ -31,6 +31,19 @@ import { Hardware } from "./views/Hardware";
 import { Logs } from "./views/Logs";
 import { Install } from "./views/Install";
 import { Chat } from "./views/Chat";
+import {
+  Alerts,
+  Attestation,
+  Audit,
+  Governance,
+  Keys,
+  Marketplace,
+  Recovery,
+  Services,
+  SetupCluster,
+  SetupOperator,
+  Wallets,
+} from "./views/DesignRoutes";
 
 const VIEW_KEY = "monarch:view";
 
@@ -163,6 +176,17 @@ function ShellInner() {
               <Route path="/logs" element={<Logs />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/install" element={<Install />} />
+              <Route path="/marketplace" element={<Marketplace />} />
+              <Route path="/services" element={<Services />} />
+              <Route path="/audit" element={<Audit />} />
+              <Route path="/governance" element={<Governance />} />
+              <Route path="/alerts" element={<Alerts />} />
+              <Route path="/wallets" element={<Wallets />} />
+              <Route path="/setup-operator" element={<SetupOperator />} />
+              <Route path="/setup-cluster" element={<SetupCluster />} />
+              <Route path="/attestation" element={<Attestation />} />
+              <Route path="/keys" element={<Keys />} />
+              <Route path="/recovery" element={<Recovery />} />
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>
           </main>

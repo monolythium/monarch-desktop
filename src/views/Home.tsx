@@ -230,7 +230,7 @@ export function Home() {
               title: "Rotate signing share",
               sub: "Submit DKG re-share attestation",
               intro:
-                "After the key-share ceremony produces participant BLS pubkeys and the aggregate threshold signature, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
+                "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
               fields: [
                 {
                   key: "cluster",

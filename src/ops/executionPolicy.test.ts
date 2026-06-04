@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { browserExecutionBlocked, unsignedExecutionBlocked } from "./executionPolicy";
+import {
+  browserExecutionBlocked,
+  clusterFormExecutionBlocked,
+  clusterJoinExecutionBlocked,
+  unsignedExecutionBlocked,
+} from "./executionPolicy";
 import type { OpRequest } from "./types";
 
 const request: OpRequest = {
@@ -25,6 +30,30 @@ describe("operation execution policy", () => {
 
     expect(outcome.result.ok).toBe(false);
     expect(outcome.result.message).toContain("signed production path");
+    expect(outcome.meta.transport).toBe("blocked");
+  });
+
+  it("blocks CJ-1 cluster admission until the runtime method is live", () => {
+    const outcome = clusterJoinExecutionBlocked({
+      ...request,
+      kind: "cluster-request-join",
+      title: "Request cluster join",
+    });
+
+    expect(outcome.result.ok).toBe(false);
+    expect(outcome.result.message).toContain("CJ-1 cluster-vote admission is not live");
+    expect(outcome.meta.transport).toBe("blocked");
+  });
+
+  it("blocks cluster formation until the runtime primitive exists", () => {
+    const outcome = clusterFormExecutionBlocked({
+      ...request,
+      kind: "cluster-form",
+      title: "Form cluster",
+    });
+
+    expect(outcome.result.ok).toBe(false);
+    expect(outcome.result.message).toContain("Cluster formation still needs");
     expect(outcome.meta.transport).toBe("blocked");
   });
 });

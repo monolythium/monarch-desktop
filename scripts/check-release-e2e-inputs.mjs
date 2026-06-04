@@ -6,6 +6,9 @@ import process from "node:process";
 const REQUIRED_SECRET_WORDS = 24;
 const DKG_RESHARE_SCHEMA = "monarch-dkg-reshare-attestation/v1";
 const MAX_DKG_RESHARE_INTENT_ID = 72057594037927935n;
+const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = 1952;
+const DKG_RESHARE_ATTESTATION_SIG_BYTES = 3309;
+const DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 const blockers = checkReleaseE2eInputs(process.env);
 if (blockers.length > 0) {
@@ -155,16 +158,16 @@ function checkDkgReshareAttestation(artifact, out) {
   }
 
   const keysHex = normalizeHex(stringValue(value.bls_public_keys_hex));
-  if (!keysHex || keysHex.length % 96 !== 0) {
-    out.push(`${artifact.source}.bls_public_keys_hex must be concatenated 48-byte BLS pubkeys`);
+  if (!keysHex || keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0) {
+    out.push(`${artifact.source}.bls_public_keys_hex must be concatenated 1952-byte ML-DSA-65 pubkeys`);
   } else {
-    const signerCount = keysHex.length / 96;
+    const signerCount = keysHex.length / DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS;
     if (signerCount < 5 || signerCount > 7) {
       out.push(`${artifact.source}.bls_public_keys_hex must contain 5..7 signer pubkeys`);
     }
     const keys = [];
-    for (let offset = 0; offset < keysHex.length; offset += 96) {
-      keys.push(keysHex.slice(offset, offset + 96));
+    for (let offset = 0; offset < keysHex.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS) {
+      keys.push(keysHex.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS));
     }
     if (new Set(keys).size !== keys.length) {
       out.push(`${artifact.source}.bls_public_keys_hex must not contain duplicate signer pubkeys`);
@@ -175,8 +178,12 @@ function checkDkgReshareAttestation(artifact, out) {
   }
 
   const sigHex = normalizeHex(stringValue(value.threshold_sig_hex));
-  if (!sigHex || sigHex.length !== 192) {
-    out.push(`${artifact.source}.threshold_sig_hex must be a 96-byte BLS threshold signature`);
+  const signerCount = Number(value.signer_count);
+  const expectedSigHexChars = signerCount > 0
+    ? signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES * 2
+    : 0;
+  if (!sigHex || sigHex.length !== expectedSigHexChars) {
+    out.push(`${artifact.source}.threshold_sig_hex must contain one 3309-byte ML-DSA-65 signature per signer`);
   }
 }
 

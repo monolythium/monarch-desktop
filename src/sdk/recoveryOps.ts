@@ -7,6 +7,7 @@
 // Ordinary operator installs fail closed before broadcast.
 
 import {
+  addressToTypedBech32,
   nodeRegistryAddressHex,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
@@ -98,11 +99,11 @@ export async function submitRecoverOperatorNode(
   const peerId = peerIdHexToBytes(args.peerIdHex);
   const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
 

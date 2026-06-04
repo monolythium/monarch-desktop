@@ -23,6 +23,42 @@ describe("operation catalog", () => {
     );
   });
 
+  it("surfaces CJ-1 self-service cluster admission verbs", () => {
+    const form = OP_CATALOG.find((entry) => entry.kind === "cluster-form");
+    const request = OP_CATALOG.find((entry) => entry.kind === "cluster-request-join");
+    const vote = OP_CATALOG.find((entry) => entry.kind === "cluster-vote-admit");
+
+    expect(form).toMatchObject({
+      title: "Form cluster",
+      confirmLabel: "Prepare formation",
+      category: "cluster",
+    });
+    expect(form?.intro).toContain("7 active operators");
+    expect(form?.effects).toContain(
+      "Fails closed until node-registry exposes a signed cluster-formation primitive and Desktop has a submit helper.",
+    );
+
+    expect(request).toMatchObject({
+      title: "Request cluster join",
+      confirmLabel: "Sign join request",
+      category: "cluster",
+    });
+    expect(request?.intro).toContain("requestClusterJoin(uint32,bytes)");
+    expect(request?.effects).toContain(
+      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+    );
+
+    expect(vote).toMatchObject({
+      title: "Vote to admit operator",
+      confirmLabel: "Sign admit vote",
+      category: "cluster",
+    });
+    expect(vote?.intro).toContain("voteClusterAdmit(uint32,bytes32,bytes)");
+    expect(vote?.effects).toContain(
+      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+    );
+  });
+
   it("routes operator restore through the foundation operations signer", () => {
     const restore = OP_CATALOG.find((entry) => entry.kind === "operator-restore");
 
@@ -71,7 +107,7 @@ describe("operation catalog", () => {
     });
     expect(rotate?.intro).toContain("attestDkgReshare(uint64,bytes,bytes)");
     expect(rotate?.effects).toContain(
-      "Builds attestDkgReshare(intentId, blsPublicKeys, thresholdSig) calldata against node-registry 0x1005.",
+      "Builds attestDkgReshare(intentId, consensusPublicKeys, attestationSigs) calldata against node-registry 0x1005.",
     );
   });
 

@@ -14,7 +14,7 @@ function mnemonic(prefix: string): string {
 }
 
 function key(byte: number): string {
-  return byte.toString(16).padStart(2, "0").repeat(48);
+  return byte.toString(16).padStart(2, "0").repeat(1952);
 }
 
 function dkgAttestation(overrides: Record<string, unknown> = {}): string {
@@ -22,7 +22,7 @@ function dkgAttestation(overrides: Record<string, unknown> = {}): string {
     schema_version: "monarch-dkg-reshare-attestation/v1",
     intent_id: "7",
     bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
-    threshold_sig_hex: "0x" + "cc".repeat(96),
+    threshold_sig_hex: "0x" + "cc".repeat(5 * 3309),
     signer_count: 5,
     ...overrides,
   });

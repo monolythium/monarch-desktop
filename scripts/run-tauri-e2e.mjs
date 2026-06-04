@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import childProcess from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,7 @@ import process from "node:process";
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const DEFAULT_APP = path.join(ROOT, "src-tauri", "target", "debug", appBinaryName());
 const DEFAULT_SMOKE = path.resolve(ROOT, "..", "monarch-os-talos", "_out", "smoke-qemu", "result.json");
-const REQUIRED_ROUTES = ["/home", "/hardware", "/operations", "/chat"];
+const REQUIRED_ROUTES = readRequiredRoutes();
 
 const options = parseArgs(process.argv.slice(2));
 if (options.help) {
@@ -24,6 +25,11 @@ const readinessPath = options.readiness
     ? path.resolve(env("MONARCH_DESKTOP_READINESS_JSON"))
     : "";
 const outputPath = path.resolve(options.output ?? env("MONARCH_DESKTOP_E2E_OUTPUT") ?? path.join(ROOT, "_out", "monarch-desktop-e2e-evidence.json"));
+const screenshotsDir = path.resolve(
+  options.screenshotsDir ??
+    env("MONARCH_DESKTOP_E2E_SCREENSHOTS_DIR") ??
+    path.join(path.dirname(outputPath), "monarch-desktop-e2e-screenshots"),
+);
 const driverUrl = new URL(options.driverUrl ?? env("MONARCH_TAURI_DRIVER_URL") ?? "http://127.0.0.1:4444");
 const driverBin = options.driver ?? env("MONARCH_TAURI_DRIVER") ?? "tauri-driver";
 const externalDriver = options.externalDriver || env("MONARCH_TAURI_DRIVER_EXTERNAL") === "true";
@@ -118,7 +124,9 @@ async function main() {
     await setWindowsObserved(primary, windowsObserved);
     if (secondary) await setWindowsObserved(secondary, windowsObserved);
 
-    await visitRoutes(primary, REQUIRED_ROUTES);
+    fs.rmSync(screenshotsDir, { recursive: true, force: true });
+    fs.mkdirSync(screenshotsDir, { recursive: true });
+    const routeScreenshots = await visitRoutes(primary, REQUIRED_ROUTES, screenshotsDir, path.dirname(outputPath));
     if (!readinessPath && peerOperatorMnemonic) {
       if (!secondary) throw new Error("peer chat evidence requires two Tauri windows");
       if (typeof readinessOptions.clusterId !== "number") {
@@ -154,6 +162,7 @@ async function main() {
         commit,
         windows_observed: merged.windowsObserved,
         routes_visited: merged.routesVisited,
+        route_screenshots: routeScreenshots,
         commands_observed: merged.commandsObserved,
       },
       os_smoke: pickOsSmoke(osSmoke),
@@ -183,6 +192,7 @@ function parseArgs(args) {
     else if (arg === "--os-smoke") out.osSmoke = needArg(args, ++i, arg);
     else if (arg === "--readiness") out.readiness = needArg(args, ++i, arg);
     else if (arg === "--output") out.output = needArg(args, ++i, arg);
+    else if (arg === "--screenshots-dir") out.screenshotsDir = needArg(args, ++i, arg);
     else if (arg === "--driver") out.driver = needArg(args, ++i, arg);
     else if (arg === "--driver-url") out.driverUrl = needArg(args, ++i, arg);
     else if (arg === "--app-version") out.appVersion = needArg(args, ++i, arg);
@@ -231,6 +241,8 @@ Options:
   --os-smoke <path>     Monarch OS smoke result JSON. Default: ${path.relative(ROOT, DEFAULT_SMOKE)}
   --readiness <path>    Existing Desktop readiness JSON. If omitted, collect it from the Tauri app.
   --output <path>       Evidence JSON output path.
+  --screenshots-dir <path>
+                         Directory for per-route PNG screenshots.
   --driver <path>       tauri-driver binary. Default: tauri-driver
   --driver-url <url>    WebDriver URL. Default: http://127.0.0.1:4444
   --external-driver     Use an already-running tauri-driver.
@@ -325,13 +337,17 @@ async function setWindowsObserved(session, count) {
   await execute(session, "window.__MONARCH_E2E__.setWindowsObserved(arguments[0]); return true;", [count]);
 }
 
-async function visitRoutes(session, routes) {
+async function visitRoutes(session, routes, screenshotDir, evidenceDir) {
+  const screenshots = [];
   for (const route of routes) {
     const href = route.replace(/"/gu, '\\"');
     const element = await findElement(session, `a[href="${href}"]`);
     await clickElement(session, element);
     await waitForPath(session, route);
+    await delay(200);
+    screenshots.push(await captureRouteScreenshot(session, route, screenshotDir, evidenceDir));
   }
+  return screenshots;
 }
 
 async function waitForPath(session, route) {
@@ -366,6 +382,36 @@ async function execute(session, script, args = []) {
 
 async function snapshot(session) {
   return await execute(session, "return window.__MONARCH_E2E__.snapshot();");
+}
+
+async function captureRouteScreenshot(session, route, screenshotDir, evidenceDir) {
+  const response = await sessionRequest(session, "GET", "/screenshot", undefined);
+  const encoded = typeof response.value === "string" ? response.value : "";
+  if (!encoded) {
+    throw new Error(`screenshot response for ${route} did not include a base64 PNG`);
+  }
+
+  const bytes = Buffer.from(encoded, "base64");
+  const dimensions = pngDimensions(bytes);
+  if (!dimensions) {
+    throw new Error(`screenshot response for ${route} is not a PNG`);
+  }
+
+  const file = path.join(screenshotDir, `${routeSlug(route)}.png`);
+  fs.writeFileSync(file, bytes);
+  const relative = slashPath(path.relative(evidenceDir, file));
+  if (!isSafeRelativePngPath(relative)) {
+    throw new Error(`screenshot path for ${route} must stay under the evidence directory`);
+  }
+
+  return {
+    route,
+    path: relative,
+    sha256: sha256Hex(bytes),
+    bytes: bytes.length,
+    width: dimensions.width,
+    height: dimensions.height,
+  };
 }
 
 async function collectReadiness(session, options) {
@@ -468,6 +514,47 @@ function emptySnapshot() {
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readRequiredRoutes() {
+  const file = path.join(ROOT, "src", "nav", "e2eRequiredRoutes.json");
+  const routes = readJson(file);
+  if (!Array.isArray(routes) || routes.some((route) => typeof route !== "string" || !route.startsWith("/"))) {
+    throw new Error(`required route manifest is invalid: ${file}`);
+  }
+  return routes;
+}
+
+function routeSlug(route) {
+  const slug = route === "/" ? "root" : route.slice(1);
+  return slug.replace(/[^a-z0-9._-]+/giu, "_") || "route";
+}
+
+function slashPath(value) {
+  return value.split(path.sep).join("/");
+}
+
+function isSafeRelativePngPath(value) {
+  if (!value.endsWith(".png")) return false;
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value)) return false;
+  return !value.split(/[\\/]+/u).includes("..");
+}
+
+function sha256Hex(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+function pngDimensions(bytes) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (!Buffer.isBuffer(bytes) || bytes.length < 33) return null;
+  for (let i = 0; i < signature.length; i += 1) {
+    if (bytes[i] !== signature[i]) return null;
+  }
+  if (bytes.toString("ascii", 12, 16) !== "IHDR") return null;
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
 }
 
 function readJsonInput(file, rawJson, label) {

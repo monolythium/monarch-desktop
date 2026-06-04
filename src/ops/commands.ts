@@ -50,6 +50,9 @@ export function commandFor(op: OpRequest): string | null {
     case "export-backup":
     case "cluster-swap":
     case "cluster-accept-invite":
+    case "cluster-form":
+    case "cluster-request-join":
+    case "cluster-vote-admit":
     case "freeze-admission":
     case "emergency-key-rotation":
     case "ota-apply":

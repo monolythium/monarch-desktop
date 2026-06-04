@@ -12,6 +12,8 @@ export type OperationReceiptTransport =
   | "chat-bootstrap-peers-tx"
   | "foundation-recovery-tx"
   | "foundation-pending-change-tx"
+  | "cluster-join-request-tx"
+  | "cluster-vote-admit-tx"
   | "dkg-reshare-tx"
   | "incident-freeze-admission-tx"
   | "incident-emergency-key-rotation-tx"

@@ -22,12 +22,17 @@ import type {
   OperatorSigningActivityResponse,
   OracleSignersResponse,
   ProverMarketStatusResponse,
+  RegistryRecord,
   RoundInfo,
   RuntimeProvenanceResponse,
   UpcomingDutiesResponse,
 } from "@monolythium/core-sdk";
 import { addressToTypedBech32, deriveClusterAnchorAddress, formatLyth } from "@monolythium/core-sdk";
 import { rpc } from "./client";
+import {
+  readClusterJoinRequest,
+  type ClusterJoinRequestView,
+} from "./clusterJoinOps";
 
 const POLL_MS = 5000;
 const RPC_METHOD_NOT_FOUND = -32601;
@@ -71,6 +76,17 @@ function isNotFound(err: unknown): boolean {
 function isAddressError(err: unknown): boolean {
   const msg = ((err as { message?: string } | null)?.message ?? "").toLowerCase();
   return msg.includes("bech32") || msg.includes("addresses are retired") || msg.includes("malformed address");
+}
+
+function isClusterJoinViewUnavailable(err: unknown): boolean {
+  if (isMethodNotFound(err) || isNotFound(err)) return true;
+  const msg = ((err as { message?: string } | null)?.message ?? "").toLowerCase();
+  return (
+    msg.includes("unknown selector") ||
+    msg.includes("unsupported selector") ||
+    msg.includes("selector not") ||
+    msg.includes("execution reverted")
+  );
 }
 
 function shortOperatorId(operatorId: string): string {
@@ -132,6 +148,18 @@ export function useClusterDirectory(page = 0, limit = 100): RpcSlice<ClusterDire
   }, [page, limit]);
 
   return slice;
+}
+
+export function useProviderDirectory(
+  capabilityMask = 0,
+  cursor: string | null = null,
+  limit = 50,
+): RpcSlice<RegistryRecord[]> {
+  return usePolledRpc(
+    () => rpc.lythListProviders(capabilityMask, cursor, limit),
+    [capabilityMask, cursor, limit],
+    (err) => isMethodNotFound(err) || isNotFound(err),
+  );
 }
 
 export function useIndexerStatus(): RpcSlice<IndexerStatus | null> {
@@ -277,13 +305,27 @@ function usePolledRpc<T>(
 // same UX state as a gated surface: nothing to show, but not an error.
 const NO_TARGET = { code: RPC_METHOD_NOT_FOUND, message: "method not found: no target selected" };
 
+export function useClusterJoinRequestView(
+  clusterId: number | string | null,
+  operatorIdHex: string | null,
+): RpcSlice<ClusterJoinRequestView> {
+  return usePolledRpc(
+    () =>
+      clusterId !== null && operatorIdHex
+        ? readClusterJoinRequest(rpc, { clusterId, operatorIdHex })
+        : Promise.reject(NO_TARGET),
+    [clusterId, operatorIdHex],
+    isClusterJoinViewUnavailable,
+  );
+}
+
 export function useOperatorRouterConfig(): RpcSlice<OperatorRouterConfig> {
   return usePolledRpc(() => rpc.lythOperatorRouterConfig(), []);
 }
 
 // `operator` MUST be the operator's bech32m USER (wallet) address — the
 // fee registration is keyed by `parse_user_address` on-chain. It is NOT
-// the cluster-member operatorId (that is keccak256(bls_pubkey)); there is
+// the cluster-member operatorId; there is
 // no client-side derivation between the two. Feed `OperatorInfoResponse.
 // chainAddress`, guarded to a `mono1…` form by the caller.
 export function useOperatorFeeConfig(operator: string | null): RpcSlice<OperatorFeeConfig> {
@@ -494,14 +536,13 @@ export type ClusterStatus = {
   state: ClusterMemberState;
   members: { id: number; operatorId: string; handle: string; state: ClusterMemberState }[];
   epoch: number;
-  /** Cluster anchor (bech32m `monok1…`), derived from the BLS roster + threshold; null if the roster isn't a full 48-byte set yet. */
+  /** Cluster anchor (bech32m `monok1…`), derived from the roster + threshold; null if the roster key set is incomplete. */
   anchorAddress: string | null;
 };
 
-// The cluster anchor is BLAKE3(domain ‖ threshold ‖ sorted 48-byte BLS
-// roster)[..20] (deriveClusterAnchorAddress), displayed under the `monok`
-// HRP (the cluster address kind). Returns null if any member's blsPubkey isn't a full
-// 48-byte compressed key yet (the SDK throws on a short roster member).
+// The cluster anchor is derived by the SDK from the roster and threshold,
+// displayed under the `monok` HRP. Returns null if any member's roster key
+// is incomplete.
 function deriveAnchor(members: { blsPubkey: string }[], threshold: number): string | null {
   try {
     const hex = deriveClusterAnchorAddress(members.map((m) => m.blsPubkey), threshold);
@@ -598,7 +639,7 @@ export function useOperatorInfo(operatorId: string | null): RpcSlice<OperatorInf
   return slice;
 }
 
-export function useClusterStatus(id: number): RpcSlice<ClusterStatus> {
+export function useClusterStatus(id: number | null): RpcSlice<ClusterStatus> {
   const [slice, setSlice] = useState<RpcSlice<ClusterStatus>>(empty);
   const aliveRef = useRef(true);
 
@@ -606,6 +647,10 @@ export function useClusterStatus(id: number): RpcSlice<ClusterStatus> {
     aliveRef.current = true;
 
     const fetchOnce = async () => {
+      if (id === null) {
+        setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
+        return;
+      }
       try {
         const data = await rpc.lythClusterStatus(id);
         if (!aliveRef.current) return;

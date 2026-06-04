@@ -2,11 +2,16 @@
 // `attestDkgReshare(uint64,bytes,bytes)` node-registry path.
 
 import { useMemo, useState, type CSSProperties } from "react";
-import { parseDkgReshareAttestationArtifact } from "../sdk/dkgReshareOps";
+import {
+  DKG_RESHARE_ATTESTATION_SIG_BYTES,
+  DKG_RESHARE_CONSENSUS_PUBKEY_BYTES,
+  parseDkgReshareAttestationArtifact,
+} from "../sdk/dkgReshareOps";
 import { useOps } from "./OpsContext";
 import type { DkgReshareAttestationInput } from "./types";
 
 const MAX_INTENT_ID = (1n << 56n) - 1n;
+const CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 function normalizeHex(value: string): string {
   const clean = value.trim().replace(/^0x/iu, "");
@@ -27,29 +32,34 @@ function isHexBytes(value: string | undefined, expectedBytes: number): boolean {
   return !!value && new RegExp(`^0x[0-9a-fA-F]{${expectedBytes * 2}}$`, "u").test(value.trim());
 }
 
-function blsSignerCount(value: string | undefined): number | null {
+function consensusSignerCount(value: string | undefined): number | null {
   if (!value || !/^0x[0-9a-fA-F]+$/u.test(value.trim())) return null;
   const bytes = (value.trim().length - 2) / 2;
-  if (!Number.isInteger(bytes) || bytes % 48 !== 0) return null;
-  return bytes / 48;
+  if (!Number.isInteger(bytes) || bytes % DKG_RESHARE_CONSENSUS_PUBKEY_BYTES !== 0) return null;
+  return bytes / DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
 }
 
 function hasDuplicatePubkey(value: string | undefined): boolean {
   if (!value || !/^0x[0-9a-fA-F]+$/u.test(value.trim())) return false;
   const clean = value.trim().slice(2).toLowerCase();
   const seen = new Set<string>();
-  for (let offset = 0; offset < clean.length; offset += 96) {
-    const key = clean.slice(offset, offset + 96);
-    if (key.length !== 96) return false;
+  for (let offset = 0; offset < clean.length; offset += CONSENSUS_PUBKEY_HEX_CHARS) {
+    const key = clean.slice(offset, offset + CONSENSUS_PUBKEY_HEX_CHARS);
+    if (key.length !== CONSENSUS_PUBKEY_HEX_CHARS) return false;
     if (seen.has(key)) return true;
     seen.add(key);
   }
   return false;
 }
 
-function isBlsPublicKeys(value: string | undefined): boolean {
-  const count = blsSignerCount(value);
+function isConsensusPublicKeys(value: string | undefined): boolean {
+  const count = consensusSignerCount(value);
   return count !== null && count >= 5 && count <= 7 && !hasDuplicatePubkey(value);
+}
+
+function isAttestationSigs(value: string | undefined, signerCount: number | null): boolean {
+  if (signerCount === null) return false;
+  return isHexBytes(value, signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES);
 }
 
 function inputStyle(valid: boolean): CSSProperties {
@@ -72,16 +82,17 @@ export function DkgReshareAttestationForm() {
   const [artifactStatus, setArtifactStatus] = useState<string | null>(null);
   const input = request?.dkgReshareInput;
   const validity = useMemo(() => {
+    const signerCount = consensusSignerCount(input?.blsPublicKeysHex);
     const intentOk = isIntentId(input?.intentId);
-    const keysOk = isBlsPublicKeys(input?.blsPublicKeysHex);
-    const sigOk = isHexBytes(input?.thresholdSigHex, 96);
+    const keysOk = isConsensusPublicKeys(input?.blsPublicKeysHex);
+    const sigOk = isAttestationSigs(input?.thresholdSigHex, signerCount);
     return { intentOk, keysOk, sigOk };
   }, [input?.blsPublicKeysHex, input?.intentId, input?.thresholdSigHex]);
 
   if (!request || request.kind !== "rotate-keys") return null;
 
   const current: Partial<DkgReshareAttestationInput> = input ?? {};
-  const signerCount = blsSignerCount(current.blsPublicKeysHex);
+  const signerCount = consensusSignerCount(current.blsPublicKeysHex);
   const importArtifact = () => {
     try {
       const parsed = parseDkgReshareAttestationArtifact(artifactText);
@@ -154,9 +165,9 @@ export function DkgReshareAttestationForm() {
         className="kv"
         style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
       >
-        <span className="kv__k">Participant BLS pubkeys</span>
+        <span className="kv__k">Participant consensus pubkeys</span>
         <textarea
-          placeholder={`0x${"00".repeat(48 * 5)}`}
+          placeholder="0x..."
           value={current.blsPublicKeysHex ?? ""}
           onChange={(e) => setDkgReshareInput({ blsPublicKeysHex: normalizeHex(e.target.value) })}
           spellCheck={false}
@@ -167,7 +178,7 @@ export function DkgReshareAttestationForm() {
           style={{ ...inputStyle(validity.keysOk), resize: "vertical" }}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          Concatenated 48-byte BLS pubkeys; 5 to 7 unique signers required.
+          Concatenated {DKG_RESHARE_CONSENSUS_PUBKEY_BYTES}-byte ML-DSA-65 pubkeys; 5 to 7 unique signers required.
           {signerCount !== null ? ` Parsed ${signerCount} signer${signerCount === 1 ? "" : "s"}.` : ""}
         </span>
       </label>
@@ -176,9 +187,9 @@ export function DkgReshareAttestationForm() {
         className="kv"
         style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
       >
-        <span className="kv__k">Threshold signature</span>
+        <span className="kv__k">Attestation signatures</span>
         <textarea
-          placeholder={`0x${"00".repeat(96)}`}
+          placeholder="0x..."
           value={current.thresholdSigHex ?? ""}
           onChange={(e) => setDkgReshareInput({ thresholdSigHex: normalizeHex(e.target.value) })}
           spellCheck={false}
@@ -189,7 +200,7 @@ export function DkgReshareAttestationForm() {
           style={{ ...inputStyle(validity.sigOk), resize: "vertical" }}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          96-byte aggregate BLS-G2 signature over the DKG attestation message.
+          One {DKG_RESHARE_ATTESTATION_SIG_BYTES}-byte ML-DSA-65 signature per signer.
         </span>
       </label>
     </div>
@@ -202,7 +213,7 @@ export function isDkgReshareAttestationInputComplete(
   return (
     !!input &&
     isIntentId(input.intentId) &&
-    isBlsPublicKeys(input.blsPublicKeysHex) &&
-    isHexBytes(input.thresholdSigHex, 96)
+    isConsensusPublicKeys(input.blsPublicKeysHex) &&
+    isAttestationSigs(input.thresholdSigHex, consensusSignerCount(input.blsPublicKeysHex))
   );
 }

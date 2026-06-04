@@ -3,18 +3,25 @@
 // calldata fields and stores them on the active OpRequest.
 
 import { useMemo, type CSSProperties } from "react";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "../sdk/operatorKeys";
 import { useOps } from "./OpsContext";
 import type { OpKind, PendingChangeInput } from "./types";
 
 const MAX_PENDING_CHANGE_INTENT_ID = (1n << 56n) - 1n;
+const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
 
 function normalizeHex(value: string): string {
   const clean = value.trim().replace(/^0x/iu, "");
   return clean ? `0x${clean.toLowerCase()}` : "";
 }
 
-function isBlsPubkeyHex(value: string | undefined): boolean {
-  return !!value && /^0x[0-9a-fA-F]{96}$/u.test(value.trim());
+function isConsensusPubkeyHex(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return (
+    trimmed.length === CONSENSUS_PUBKEY_HEX_CHARS + 2 &&
+    /^0x[0-9a-fA-F]+$/u.test(trimmed)
+  );
 }
 
 function parseDecimal(value: string | undefined): bigint | null {
@@ -67,13 +74,13 @@ export function ClusterPendingChangeForm() {
   const pendingKind = request ? pendingChangeKindForOp(request.kind) : null;
   const input = request?.pendingChangeInput;
   const validity = useMemo(() => {
-    const blsPubkeyOk = isBlsPubkeyHex(input?.targetPubkeyHex);
+    const consensusPubkeyOk = isConsensusPubkeyHex(input?.targetPubkeyHex);
     const effectiveEpochOk = isPositiveUint64(input?.effectiveEpoch);
     const intentIdOk =
       pendingKind === "rotate"
         ? isRotateIntentId(input?.intentId)
         : isZeroIntentId(input?.intentId ?? "0");
-    return { blsPubkeyOk, effectiveEpochOk, intentIdOk };
+    return { consensusPubkeyOk, effectiveEpochOk, intentIdOk };
   }, [input?.effectiveEpoch, input?.intentId, input?.targetPubkeyHex, pendingKind]);
 
   if (!request || !pendingKind) return null;
@@ -96,21 +103,21 @@ export function ClusterPendingChangeForm() {
       </div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-        <span className="kv__k">Target BLS pubkey</span>
+        <span className="kv__k">Target consensus pubkey</span>
         <input
           type="text"
           inputMode="text"
-          placeholder={`0x${"00".repeat(48)}`}
+          placeholder="0x..."
           value={current.targetPubkeyHex}
           onChange={(e) => setField({ targetPubkeyHex: normalizeHex(e.target.value) })}
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
-          style={inputStyle(validity.blsPubkeyOk)}
+          style={inputStyle(validity.consensusPubkeyOk)}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          48-byte compressed BLS-G1 pubkey carried in submitPendingChange.
+          {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES}-byte ML-DSA-65 pubkey carried in submitPendingChange.
         </span>
       </label>
 
@@ -167,7 +174,7 @@ export function isPendingChangeInputComplete(
   const pendingKind = pendingChangeKindForOp(opKind);
   if (!pendingKind || input.kind !== pendingKind) return false;
   return (
-    isBlsPubkeyHex(input.targetPubkeyHex) &&
+    isConsensusPubkeyHex(input.targetPubkeyHex) &&
     isPositiveUint64(input.effectiveEpoch) &&
     (pendingKind === "rotate"
       ? isRotateIntentId(input.intentId)

@@ -35,6 +35,9 @@ describe("operation command mapping", () => {
     expect(commandFor(req("export-backup"))).toBeNull();
     expect(commandFor(req("cluster-swap"))).toBeNull();
     expect(commandFor(req("cluster-accept-invite"))).toBeNull();
+    expect(commandFor(req("cluster-form"))).toBeNull();
+    expect(commandFor(req("cluster-request-join"))).toBeNull();
+    expect(commandFor(req("cluster-vote-admit"))).toBeNull();
     expect(commandFor(req("freeze-admission"))).toBeNull();
     expect(commandFor(req("emergency-key-rotation"))).toBeNull();
     expect(commandFor(req("ota-apply"))).toBeNull();

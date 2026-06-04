@@ -7,6 +7,7 @@
 // signer is present in the OS keychain.
 
 import {
+  addressToTypedBech32,
   nodeRegistryAddressHex,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
@@ -17,6 +18,7 @@ import {
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "./operatorKeys";
 
 export const SUBMIT_PENDING_CHANGE_SELECTOR = "0x7d09426c";
 export const DEFAULT_PENDING_CHANGE_EXECUTION_UNIT_LIMIT =
@@ -128,6 +130,14 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+function padTo32(buf: Uint8Array): Uint8Array {
+  const paddedLength = Math.ceil(buf.length / 32) * 32;
+  if (paddedLength === buf.length) return buf;
+  const out = new Uint8Array(paddedLength);
+  out.set(buf);
+  return out;
+}
+
 export function normalizePendingChangeKind(
   kind: PendingChangeKind | number,
 ): { kind: PendingChangeKind; kindCode: number } {
@@ -148,7 +158,11 @@ export function encodeSubmitPendingChangeCalldata(args: {
   intentId?: bigint | number | string;
 }): string {
   const { kind, kindCode } = normalizePendingChangeKind(args.kind);
-  const targetPubkey = hexToBytes(args.targetPubkeyHex, "targetPubkey", 48);
+  const targetPubkey = hexToBytes(
+    args.targetPubkeyHex,
+    "targetPubkey",
+    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   if (effectiveEpoch === 0n) {
     throw new Error("effectiveEpoch: must be greater than zero");
@@ -162,8 +176,7 @@ export function encodeSubmitPendingChangeCalldata(args: {
   }
 
   const selector = hexToBytes(SUBMIT_PENDING_CHANGE_SELECTOR, "selector", 4);
-  const pubkeyTail = new Uint8Array(32);
-  pubkeyTail.set(targetPubkey.slice(32, 48), 0);
+  const pubkeyPadded = padTo32(targetPubkey);
 
   const calldata = concat([
     selector,
@@ -171,9 +184,8 @@ export function encodeSubmitPendingChangeCalldata(args: {
     u256BE(0x80n),
     u256BE(effectiveEpoch),
     u256BE(intentId),
-    u256BE(48n),
-    targetPubkey.slice(0, 32),
-    pubkeyTail,
+    u256BE(targetPubkey.length),
+    pubkeyPadded,
   ]);
   if ((calldata.length - 4) % 32 !== 0) {
     throw new Error(`submitPendingChange calldata not 32-aligned (len=${calldata.length - 4})`);
@@ -216,16 +228,20 @@ export async function submitPendingChange(
   args: SubmitPendingChangeArgs,
 ): Promise<SubmitPendingChangeResult> {
   const { kind, kindCode } = normalizePendingChangeKind(args.kind);
-  const targetPubkey = hexToBytes(args.targetPubkeyHex, "targetPubkey", 48);
+  const targetPubkey = hexToBytes(
+    args.targetPubkeyHex,
+    "targetPubkey",
+    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId ?? 0n, "intentId");
   const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 const SCHEMA = "monarch-desktop-e2e-evidence/v1";
 const DKG_RESHARE_SCHEMA = "monarch-dkg-reshare-attestation/v1";
-const REQUIRED_ROUTES = ["/home", "/hardware", "/operations", "/chat"];
+const REQUIRED_ROUTES = readRequiredRoutes();
 const REQUIRED_COMMANDS = [
   "talos_config_info",
   "talos_protocore_readiness",
@@ -14,19 +15,26 @@ const REQUIRED_COMMANDS = [
   "chat_send_message",
 ];
 const TALOSCTL_PROBES = new Set(["talosctl_ok", "talosctl_secure_ok"]);
+const MIN_ROUTE_SCREENSHOT_BYTES = 1024;
+const MIN_ROUTE_SCREENSHOT_WIDTH = 320;
+const MIN_ROUTE_SCREENSHOT_HEIGHT = 240;
 const OPERATION_RECEIPT_AUDIT_SCHEMA = "monarch-desktop-operation-receipt/v1";
 const HASH32_RE = /^[0-9a-f]{64}$/u;
 const TALOS_CERT_MIN_VALIDITY_DAYS = 14;
 const MAX_DKG_RESHARE_INTENT_ID = 72057594037927935n;
+const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = 1952;
+const DKG_RESHARE_ATTESTATION_SIG_BYTES = 3309;
+const DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 const file = process.argv.slice(2).find((arg) => arg !== "--") ?? process.env.MONARCH_DESKTOP_E2E_EVIDENCE;
 if (!file) {
   fail(["usage: verify-release-e2e-evidence.mjs <evidence.json>"]);
 }
+const evidencePath = path.resolve(file);
 
 let evidence;
 try {
-  evidence = JSON.parse(fs.readFileSync(file, "utf8"));
+  evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
 } catch (err) {
   fail([`failed to read evidence JSON: ${errorMessage(err)}`]);
 }
@@ -39,6 +47,15 @@ if (blockers.length > 0) {
 const resolved = path.relative(process.cwd(), path.resolve(file));
 console.log(JSON.stringify({ ok: true, evidence: resolved || file }));
 
+function readRequiredRoutes() {
+  const manifest = path.resolve(new URL("..", import.meta.url).pathname, "src", "nav", "e2eRequiredRoutes.json");
+  const routes = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  if (!Array.isArray(routes) || routes.some((route) => typeof route !== "string" || !route.startsWith("/"))) {
+    throw new Error(`required route manifest is invalid: ${manifest}`);
+  }
+  return routes;
+}
+
 function verify(root) {
   const out = [];
   if (!isRecord(root)) return ["Evidence root must be an object."];
@@ -50,7 +67,7 @@ function verify(root) {
   if (!isRecord(root.source)) {
     out.push("Evidence source is missing.");
   } else {
-    checkSource(root.source, out);
+    checkSource(root.source, out, path.dirname(evidencePath));
   }
 
   if (!isRecord(root.os_smoke)) {
@@ -76,7 +93,7 @@ function verify(root) {
   return out;
 }
 
-function checkSource(source, out) {
+function checkSource(source, out, evidenceDir) {
   if (source.kind !== "tauri-gui-e2e") {
     out.push("Evidence must be collected by the Tauri GUI e2e harness.");
   }
@@ -94,10 +111,102 @@ function checkSource(source, out) {
   for (const route of REQUIRED_ROUTES) {
     if (!routes.includes(route)) out.push(`Evidence did not visit required route: ${route}.`);
   }
+  checkRouteScreenshots(source, out, evidenceDir);
   const commands = stringArray(source.commands_observed);
   for (const command of REQUIRED_COMMANDS) {
     if (!commands.includes(command)) {
       out.push(`Evidence did not observe required Tauri command: ${command}.`);
+    }
+  }
+}
+
+function checkRouteScreenshots(source, out, evidenceDir) {
+  if (!Array.isArray(source.route_screenshots)) {
+    out.push("Evidence source.route_screenshots is required.");
+    return;
+  }
+
+  const screenshotsByRoute = new Map();
+  for (const item of source.route_screenshots) {
+    if (!isRecord(item)) {
+      out.push("Evidence route screenshot metadata must be an object.");
+      continue;
+    }
+    const route = stringValue(item.route);
+    if (!REQUIRED_ROUTES.includes(route)) {
+      out.push(`Evidence route screenshot references an unknown route: ${route || "missing"}.`);
+      continue;
+    }
+    if (screenshotsByRoute.has(route)) {
+      out.push(`Evidence contains duplicate route screenshot metadata: ${route}.`);
+      continue;
+    }
+    screenshotsByRoute.set(route, item);
+  }
+
+  for (const route of REQUIRED_ROUTES) {
+    const screenshot = screenshotsByRoute.get(route);
+    if (!screenshot) {
+      out.push(`Evidence did not capture required route screenshot: ${route}.`);
+      continue;
+    }
+    const relativePath = stringValue(screenshot.path);
+    const digest = normalizeDigest(stringValue(screenshot.sha256));
+    const expectedBytes = numberValue(screenshot.bytes);
+    const expectedWidth = numberValue(screenshot.width);
+    const expectedHeight = numberValue(screenshot.height);
+
+    if (!isSafeRelativePngPath(relativePath)) {
+      out.push(`Evidence route screenshot for ${route} is missing a safe relative PNG path.`);
+      continue;
+    }
+    if (!digest) {
+      out.push(`Evidence route screenshot for ${route} is missing a valid sha256 digest.`);
+    }
+    if (expectedBytes < MIN_ROUTE_SCREENSHOT_BYTES) {
+      out.push(`Evidence route screenshot for ${route} is too small.`);
+    }
+    if (expectedWidth < MIN_ROUTE_SCREENSHOT_WIDTH) {
+      out.push(`Evidence route screenshot for ${route} is narrower than ${MIN_ROUTE_SCREENSHOT_WIDTH}px.`);
+    }
+    if (expectedHeight < MIN_ROUTE_SCREENSHOT_HEIGHT) {
+      out.push(`Evidence route screenshot for ${route} is shorter than ${MIN_ROUTE_SCREENSHOT_HEIGHT}px.`);
+    }
+
+    const screenshotPath = path.resolve(evidenceDir, relativePath);
+    if (!screenshotPath.startsWith(`${evidenceDir}${path.sep}`)) {
+      out.push(`Evidence route screenshot for ${route} resolves outside the evidence directory.`);
+      continue;
+    }
+
+    let bytes;
+    try {
+      bytes = fs.readFileSync(screenshotPath);
+    } catch (err) {
+      out.push(`Evidence route screenshot for ${route} could not be read: ${errorMessage(err)}.`);
+      continue;
+    }
+
+    if (bytes.length !== expectedBytes) {
+      out.push(`Evidence route screenshot for ${route} byte count does not match metadata.`);
+    }
+    if (digest && sha256Hex(bytes) !== digest) {
+      out.push(`Evidence route screenshot for ${route} sha256 does not match metadata.`);
+    }
+
+    const dimensions = pngDimensions(bytes);
+    if (!dimensions) {
+      out.push(`Evidence route screenshot for ${route} is not a PNG screenshot.`);
+      continue;
+    }
+    if (dimensions.width !== expectedWidth || dimensions.height !== expectedHeight) {
+      out.push(`Evidence route screenshot for ${route} dimensions do not match metadata.`);
+    }
+    if (dimensions.width < MIN_ROUTE_SCREENSHOT_WIDTH) {
+      out.push(`Evidence route screenshot for ${route} PNG width is below ${MIN_ROUTE_SCREENSHOT_WIDTH}px.`);
+    }
+    if (dimensions.height < MIN_ROUTE_SCREENSHOT_HEIGHT) {
+      out.push(`Evidence route screenshot for ${route} PNG height is below ${MIN_ROUTE_SCREENSHOT_HEIGHT}px.`);
     }
   }
 }
@@ -161,16 +270,19 @@ function checkDkgReshareAttestation(dkg, out) {
   }
 
   const keysHex = normalizeHex(stringValue(dkg.bls_public_keys_hex));
-  if (!/^[0-9a-f]+$/u.test(keysHex) || keysHex.length % 96 !== 0) {
-    out.push("DKG re-share attestation BLS pubkeys must be concatenated 48-byte values.");
+  if (
+    !/^[0-9a-f]+$/u.test(keysHex) ||
+    keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0
+  ) {
+    out.push("DKG re-share attestation pubkeys must be concatenated 1952-byte ML-DSA-65 values.");
   } else {
-    const signerCount = keysHex.length / 96;
+    const signerCount = keysHex.length / DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS;
     if (signerCount < 5 || signerCount > 7) {
       out.push("DKG re-share attestation must include 5..7 signer pubkeys.");
     }
     const keys = [];
-    for (let offset = 0; offset < keysHex.length; offset += 96) {
-      keys.push(keysHex.slice(offset, offset + 96));
+    for (let offset = 0; offset < keysHex.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS) {
+      keys.push(keysHex.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS));
     }
     if (new Set(keys).size !== keys.length) {
       out.push("DKG re-share attestation signer pubkeys must be unique.");
@@ -181,8 +293,12 @@ function checkDkgReshareAttestation(dkg, out) {
   }
 
   const sigHex = normalizeHex(stringValue(dkg.threshold_sig_hex));
-  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== 192) {
-    out.push("DKG re-share attestation threshold_sig_hex must be 96 bytes.");
+  const signerCount = numberValue(dkg.signer_count);
+  const expectedSigHexChars = signerCount > 0
+    ? signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES * 2
+    : 0;
+  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== expectedSigHexChars) {
+    out.push("DKG re-share attestation threshold_sig_hex must contain one 3309-byte ML-DSA-65 signature per signer.");
   }
 }
 
@@ -472,6 +588,29 @@ function numberValue(value) {
 
 function boolish(value) {
   return value === true || value === "true" || value === "1";
+}
+
+function isSafeRelativePngPath(value) {
+  if (!value.endsWith(".png")) return false;
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value)) return false;
+  return !value.split(/[\\/]+/u).includes("..");
+}
+
+function sha256Hex(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+function pngDimensions(bytes) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (!Buffer.isBuffer(bytes) || bytes.length < 33) return null;
+  for (let i = 0; i < signature.length; i += 1) {
+    if (bytes[i] !== signature[i]) return null;
+  }
+  if (bytes.toString("ascii", 12, 16) !== "IHDR") return null;
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
 }
 
 function trimEndpoint(value) {

@@ -3,8 +3,9 @@ import {
   isPendingChangeInputComplete,
   pendingChangeKindForOp,
 } from "./ClusterPendingChangeForm";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "../sdk/operatorKeys";
 
-const pubkeyHex = "0x" + "ab".repeat(48);
+const pubkeyHex = "0x" + "ab".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
 
 describe("cluster pending-change input validation", () => {
   it("maps cluster verbs to node-registry pending-change kinds", () => {
@@ -18,7 +19,7 @@ describe("cluster pending-change input validation", () => {
     expect(
       isPendingChangeInputComplete("cluster-accept-invite", {
         kind: "add",
-        targetPubkeyHex: "0x" + "ab".repeat(47),
+        targetPubkeyHex: "0x" + "ab".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1),
         effectiveEpoch: "12",
         intentId: "0",
       }),

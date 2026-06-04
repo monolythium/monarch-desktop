@@ -25,6 +25,7 @@ const fakeBackend = {
 };
 
 vi.mock("@monolythium/core-sdk", () => ({
+  addressToTypedBech32: () => "mono1typedoperator",
   RpcClient: class {
     endpoint: string;
     constructor(endpoint: string) {
@@ -61,9 +62,10 @@ import {
   submitEmergencyKeyRotation,
   submitFreezeAdmission,
 } from "./incidentOps";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "./operatorKeys";
 
 const reasonHashHex = "0x" + "ab".repeat(32);
-const targetPubkeyHex = "0x" + "cd".repeat(48);
+const targetPubkeyHex = "0x" + "cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
 const fee = {
   executionUnitPriceLythoshi: "900",
   priorityTipLythoshi: "1100",
@@ -85,14 +87,15 @@ describe("incident executor calldata", () => {
     });
 
     expect(EMERGENCY_KEY_ROTATION_SELECTOR).toBe("0x0aeeafbf");
-    expect(calldata).toHaveLength(2 + 2 * (4 + 6 * 32));
+    expect(calldata).toHaveLength(2 + 2 * (4 + 3 * 32 + 32 + NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES));
     expect(calldata.slice(0, 10)).toBe("0x0aeeafbf");
     expect(calldata.slice(10, 74)).toBe("0".repeat(62) + "60");
     expect(calldata.slice(74, 138)).toBe("0".repeat(62) + "2a");
     expect(calldata.slice(138, 202)).toBe("0".repeat(63) + "7");
-    expect(calldata.slice(202, 266)).toBe("0".repeat(62) + "30");
-    expect(calldata.slice(266, 330)).toBe("cd".repeat(32));
-    expect(calldata.slice(330)).toBe("cd".repeat(16) + "00".repeat(16));
+    expect(calldata.slice(202, 266)).toBe(
+      NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES.toString(16).padStart(64, "0"),
+    );
+    expect(calldata.slice(266)).toBe("cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES));
   });
 
   it("rejects malformed incident inputs before signing", () => {
@@ -101,11 +104,11 @@ describe("incident executor calldata", () => {
     );
     expect(() =>
       encodeEmergencyKeyRotationCalldata({
-        targetPubkeyHex: "0x" + "cd".repeat(47),
+        targetPubkeyHex: "0x" + "cd".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1),
         effectiveEpoch: 1,
         intentId: 1,
       }),
-    ).toThrow(/expected 48 bytes/u);
+    ).toThrow(/expected 1952 bytes/u);
     expect(() =>
       encodeEmergencyKeyRotationCalldata({
         targetPubkeyHex,

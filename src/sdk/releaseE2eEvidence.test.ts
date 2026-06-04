@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import type { ChatChannel, ChatInitResult, ChatMessage } from "./chat";
 import type {
   ProtocoreReadiness,
@@ -21,16 +23,20 @@ import {
   type DesktopReleaseE2eEvidence,
   verifyDesktopReleaseE2eEvidence,
 } from "./releaseE2eEvidence";
+import requiredE2eRoutes from "../nav/e2eRequiredRoutes.json";
 
 const rpcEndpoint = "http://127.0.0.1:8545";
 const releaseDigest = "a".repeat(64);
+const screenshotWidth = 1280;
+const screenshotHeight = 800;
+const screenshotLength = 2048;
 
 function hex(ch: string, bytes: number): string {
   return `0x${ch.repeat(bytes * 2)}`;
 }
 
 function blsKey(byte: number): string {
-  return byte.toString(16).padStart(2, "0").repeat(48);
+  return byte.toString(16).padStart(2, "0").repeat(1952);
 }
 
 function certificate(overrides: Partial<TalosCertificateInfo> = {}): TalosCertificateInfo {
@@ -216,9 +222,82 @@ function dkgReshareAttestation(): DesktopReleaseE2eEvidence["dkg_reshare_attesta
     created_at: "2026-06-01T00:00:00Z",
     intent_id: "7",
     bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(blsKey).join(""),
-    threshold_sig_hex: "0x" + "c".repeat(96 * 2),
+    threshold_sig_hex: "0x" + "c".repeat(5 * 3309 * 2),
     signer_count: 5,
   };
+}
+
+function routeSlug(route: string): string {
+  const slug = route === "/" ? "root" : route.slice(1);
+  return slug.replace(/[^a-z0-9._-]+/giu, "_") || "route";
+}
+
+function screenshotBytes(route: string): Uint8Array {
+  const bytes = new Uint8Array(screenshotLength);
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10], 0);
+  bytes.set([0, 0, 0, 13, 73, 72, 68, 82], 8);
+  writeU32(bytes, 16, screenshotWidth);
+  writeU32(bytes, 20, screenshotHeight);
+  bytes.set([8, 2, 0, 0, 0], 24);
+  for (let i = 33; i < bytes.length; i += 1) {
+    bytes[i] = (route.charCodeAt(i % route.length) + i) & 0xff;
+  }
+  return bytes;
+}
+
+function writeU32(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = (value >>> 24) & 0xff;
+  bytes[offset + 1] = (value >>> 16) & 0xff;
+  bytes[offset + 2] = (value >>> 8) & 0xff;
+  bytes[offset + 3] = value & 0xff;
+}
+
+function routeScreenshot(route: string): DesktopReleaseE2eEvidence["source"]["route_screenshots"][number] {
+  const bytes = screenshotBytes(route);
+  return {
+    route,
+    path: `${routeSlug(route)}.png`,
+    sha256: bytesToHex(sha256(bytes)),
+    bytes: bytes.length,
+    width: screenshotWidth,
+    height: screenshotHeight,
+  };
+}
+
+function routeScreenshots(): DesktopReleaseE2eEvidence["source"]["route_screenshots"] {
+  return requiredE2eRoutes.map(routeScreenshot);
+}
+
+function writeRouteScreenshotFiles(dir: string, value: DesktopReleaseE2eEvidence): void {
+  for (const screenshot of value.source.route_screenshots) {
+    writeBinaryFile(join(dir, screenshot.path), screenshotBytes(screenshot.route));
+  }
+}
+
+function writeBinaryFile(file: string, bytes: Uint8Array): void {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "require('fs').writeFileSync(process.argv[1], Buffer.from(process.argv[2], 'base64'))",
+      file,
+      btoa(binaryString(bytes)),
+    ],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(result.stderr || `failed to write binary fixture ${file}`);
+  }
+}
+
+function binaryString(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) out += String.fromCharCode(byte);
+  return out;
 }
 
 function evidence(overrides: Partial<DesktopReleaseE2eEvidence> = {}): DesktopReleaseE2eEvidence {
@@ -231,7 +310,8 @@ function evidence(overrides: Partial<DesktopReleaseE2eEvidence> = {}): DesktopRe
       app_version: "0.0.1",
       commit: "abcdef123456",
       windows_observed: 2,
-      routes_visited: ["/home", "/hardware", "/operations", "/chat"],
+      routes_visited: requiredE2eRoutes,
+      route_screenshots: routeScreenshots(),
       commands_observed: [
         "talos_config_info",
         "talos_protocore_readiness",
@@ -306,8 +386,20 @@ describe("Desktop release e2e evidence", () => {
 
     expect(report.ok).toBe(false);
     expect(report.blockers).toContain("Evidence must observe two Tauri windows for the chat exchange.");
-    expect(report.blockers).toContain("Evidence did not visit required route: /chat.");
+    expect(report.blockers).toContain("Evidence did not visit required route: /operator.");
     expect(report.blockers).toContain("Evidence did not observe required Tauri command: chat_send_message.");
+  });
+
+  it("requires screenshot evidence for every required route", () => {
+    const report = verifyDesktopReleaseE2eEvidence(evidence({
+      source: {
+        ...evidence().source,
+        route_screenshots: routeScreenshots().filter((item) => item.route !== "/operator"),
+      },
+    }));
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContain("Evidence did not capture required route screenshot: /operator.");
   });
 
   it("rejects incomplete Monarch OS smoke evidence", () => {
@@ -442,6 +534,27 @@ describe("Desktop release e2e evidence", () => {
     );
   });
 
+  it("standalone verifier accepts route screenshot artifacts", () => {
+    const valid = evidence();
+    const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-evidence-"));
+    try {
+      const file = join(dir, "evidence.json");
+      writeRouteScreenshotFiles(dir, valid);
+      writeFileSync(file, JSON.stringify(valid), "utf8");
+      const result = spawnSync(process.execPath, ["scripts/verify-release-e2e-evidence.mjs", file], {
+        cwd: process.cwd(),
+        env: process.env,
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("\"ok\":true");
+      expect(result.stderr).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("standalone verifier rejects chat messages missing signed-envelope fields", () => {
     const bad = evidence();
     const chat = bad.desktop_readiness.chat;
@@ -453,6 +566,7 @@ describe("Desktop release e2e evidence", () => {
     const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-evidence-"));
     try {
       const file = join(dir, "evidence.json");
+      writeRouteScreenshotFiles(dir, bad);
       writeFileSync(file, JSON.stringify(bad), "utf8");
       const result = spawnSync(process.execPath, ["scripts/verify-release-e2e-evidence.mjs", file], {
         cwd: process.cwd(),
@@ -476,6 +590,7 @@ describe("Desktop release e2e evidence", () => {
     const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-evidence-"));
     try {
       const file = join(dir, "evidence.json");
+      writeRouteScreenshotFiles(dir, bad as DesktopReleaseE2eEvidence);
       writeFileSync(file, JSON.stringify(bad), "utf8");
       const result = spawnSync(process.execPath, ["scripts/verify-release-e2e-evidence.mjs", file], {
         cwd: process.cwd(),

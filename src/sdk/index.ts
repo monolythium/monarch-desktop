@@ -34,6 +34,7 @@ export {
   useChainStatus,
   useClusterDirectory,
   useClusterDiversity,
+  useClusterJoinRequestView,
   useClusterResignations,
   useClusterStatus,
   useCurrentRound,
@@ -45,6 +46,7 @@ export {
   useOperatorInfo,
   useOperatorNetworkMetadataMap,
   useOperatorNetworkMetadata,
+  useProviderDirectory,
   useOperatorRisk,
   useOperatorSigningActivity,
   useOperatorRouterConfig,
@@ -91,6 +93,16 @@ export type {
   OperatorRiskView,
   SigningActivityView,
 } from "./operatorTelemetry";
+export {
+  NODE_REGISTRY_CONSENSUS_POP_BYTES,
+  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  NODE_REGISTRY_DKG_ATTESTATION_SIG_BYTES,
+  operatorPubkeyHash,
+  registerPopMessage,
+} from "./operatorKeys";
+export {
+  deriveOperatorConsensusPubkeyHex,
+} from "./register";
 export {
   buildRecoverOperatorNodeTxFields,
   encodeRecoverOperatorNodeCalldata,
@@ -152,11 +164,45 @@ export type {
   SubmitPendingChangeResult,
 } from "./pendingChangeOps";
 export {
+  buildRequestClusterJoinTxFields,
+  buildVoteClusterAdmitTxFields,
+  CANCEL_CLUSTER_JOIN_SELECTOR,
+  CLUSTER_JOIN_REQUEST_TTL_EPOCHS,
+  DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT,
+  decodeClusterJoinRequestView,
+  deriveClusterJoinOperatorIdHex,
+  encodeCancelClusterJoinCalldata,
+  encodeExpireClusterJoinCalldata,
+  encodeGetClusterJoinRequestCalldata,
+  encodeRequestClusterJoinCalldata,
+  encodeVoteClusterAdmitCalldata,
+  EXPIRE_CLUSTER_JOIN_SELECTOR,
+  GET_CLUSTER_JOIN_REQUEST_SELECTOR,
+  readClusterJoinRequest,
+  REQUEST_CLUSTER_JOIN_SELECTOR,
+  submitRequestClusterJoin,
+  submitVoteClusterAdmit,
+  VOTE_CLUSTER_ADMIT_SELECTOR,
+} from "./clusterJoinOps";
+export type {
+  ClusterJoinByOperatorIdCalldataArgs,
+  ClusterJoinReadClient,
+  ClusterJoinRequestStatus,
+  ClusterJoinRequestView,
+  ClusterJoinSubmitResult,
+  RequestClusterJoinCalldataArgs,
+  SubmitRequestClusterJoinArgs,
+  SubmitVoteClusterAdmitArgs,
+  VoteClusterAdmitCalldataArgs,
+} from "./clusterJoinOps";
+export {
   ATTEST_DKG_RESHARE_SELECTOR,
   buildDkgReshareAttestationTxFields,
   DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT,
   DKG_RESHARE_ATTESTATION_SCHEMA,
+  DKG_RESHARE_ATTESTATION_SIG_BYTES,
   DKG_RESHARE_BLS_PUBKEY_BYTES,
+  DKG_RESHARE_CONSENSUS_PUBKEY_BYTES,
   DKG_RESHARE_MAX_SIGNERS,
   DKG_RESHARE_MIN_SIGNERS,
   DKG_RESHARE_THRESHOLD_SIG_BYTES,

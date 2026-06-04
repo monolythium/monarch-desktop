@@ -7,7 +7,7 @@ import { NavLink } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { rpcEndpoint, useChainStatus, useNodeStatus } from "../sdk";
 
-const GROUP_ORDER = ["Operations", "Observability", "Setup"] as const;
+const GROUP_ORDER = ["Operator", "Cluster", "Node service", "Chain", "Setup"] as const;
 
 export function SideNav() {
   const status = useNodeStatus();

@@ -35,6 +35,10 @@ import {
   talosUpgrade,
 } from "../sdk";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
+import {
+  submitRequestClusterJoin,
+  submitVoteClusterAdmit,
+} from "../sdk/clusterJoinOps";
 import { submitRedelegate } from "../sdk/delegationOps";
 import { submitDkgReshareAttestation } from "../sdk/dkgReshareOps";
 import {
@@ -45,7 +49,12 @@ import { submitPendingChange } from "../sdk/pendingChangeOps";
 import { submitRegister } from "../sdk/register";
 import { submitRecoverOperatorNode } from "../sdk/recoveryOps";
 import { commandFor, talosActionFor } from "./commands";
-import { browserExecutionBlocked, unsignedExecutionBlocked } from "./executionPolicy";
+import {
+  browserExecutionBlocked,
+  clusterFormExecutionBlocked,
+  clusterJoinExecutionBlocked,
+  unsignedExecutionBlocked,
+} from "./executionPolicy";
 import {
   appendOperationReceipt,
   clearOperationReceipts,
@@ -62,6 +71,9 @@ import type {
   EmergencyKeyRotationInput,
   FreezeAdmissionInput,
   ChatBootstrapPeersInput,
+  ClusterFormInput,
+  ClusterJoinRequestInput,
+  ClusterVoteAdmitInput,
   OtaApplyInput,
   PendingChangeInput,
   RedelegateInput,
@@ -97,6 +109,12 @@ type OpsContextValue = OpsState & {
   setChatBootstrapPeersInput: (patch: Partial<ChatBootstrapPeersInput>) => void;
   /** Update the pending-change request payload for cluster invite/swap. */
   setPendingChangeInput: (patch: Partial<PendingChangeInput>) => void;
+  /** Update the CJ-1 join request payload. */
+  setClusterJoinRequestInput: (patch: Partial<ClusterJoinRequestInput>) => void;
+  /** Update the CJ-1 admit vote payload. */
+  setClusterVoteAdmitInput: (patch: Partial<ClusterVoteAdmitInput>) => void;
+  /** Update the cluster-formation roster proposal payload. */
+  setClusterFormInput: (patch: Partial<ClusterFormInput>) => void;
   /** Update the DKG re-share attestation payload for rotate-keys. */
   setDkgReshareInput: (patch: Partial<DkgReshareAttestationInput>) => void;
   /** Update the freezeAdmission incident executor payload. */
@@ -192,6 +210,16 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     settleOperation(req, result, meta);
   }, [settleOperation]);
 
+  const blockClusterJoinExecution = useCallback((req: OpRequest) => {
+    const { result, meta } = clusterJoinExecutionBlocked(req);
+    settleOperation(req, result, meta);
+  }, [settleOperation]);
+
+  const blockClusterFormExecution = useCallback((req: OpRequest) => {
+    const { result, meta } = clusterFormExecutionBlocked(req);
+    settleOperation(req, result, meta);
+  }, [settleOperation]);
+
   const runSshFlow = useCallback(async (req: OpRequest, cmd: string) => {
     try {
       const output = await sshExec(cmd);
@@ -250,8 +278,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           mnemonic,
           endpoint: input.endpoint,
           capabilities: input.capabilities,
-          blsPubkeyHex: input.blsPubkeyHex,
-          blsPopHex: input.blsPopHex,
           bondLythoshi: input.bondLythoshi,
           peerIdHex: input.peerIdHex,
           sppkHashHex: input.sppkHashHex,
@@ -474,6 +500,112 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           req,
           { ok: false, message },
           { transport: "foundation-pending-change-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runClusterJoinRequestFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterJoinRequestInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "CJ-1 join request form is missing required fields." },
+          { transport: "cluster-join-request-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting requestClusterJoin.",
+            },
+            { transport: "cluster-join-request-tx" },
+          );
+          return;
+        }
+        const res = await submitRequestClusterJoin({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          operatorPubkeyHex: input.operatorPubkeyHex,
+          bondLythoshi: input.bondLythoshi,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Submitted requestClusterJoin for cluster ${res.clusterId}, operator ${res.operatorIdHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-join-request-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "cluster-join-request-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runClusterVoteAdmitFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterVoteAdmitInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "CJ-1 admit vote form is missing required fields." },
+          { transport: "cluster-vote-admit-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting voteClusterAdmit.",
+            },
+            { transport: "cluster-vote-admit-tx" },
+          );
+          return;
+        }
+        const res = await submitVoteClusterAdmit({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          operatorIdHex: input.operatorIdHex,
+          voterPubkeyHex: input.voterPubkeyHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Submitted voteClusterAdmit for cluster ${res.clusterId}, operator ${res.operatorIdHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-vote-admit-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "cluster-vote-admit-tx" },
         );
       }
     },
@@ -771,6 +903,26 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "cluster-request-join") {
+      if (inTauri()) {
+        await runClusterJoinRequestFlow(req);
+      } else {
+        blockClusterJoinExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "cluster-vote-admit") {
+      if (inTauri()) {
+        await runClusterVoteAdmitFlow(req);
+      } else {
+        blockClusterJoinExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "cluster-form") {
+      blockClusterFormExecution(req);
+      return;
+    }
     if (req.kind === "rotate-keys") {
       if (inTauri()) {
         await runDkgReshareFlow(req);
@@ -870,7 +1022,11 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     }
   }, [
     blockBrowserExecution,
+    blockClusterFormExecution,
+    blockClusterJoinExecution,
     runChatBootstrapPeersFlow,
+    runClusterJoinRequestFlow,
+    runClusterVoteAdmitFlow,
     runDkgReshareFlow,
     runEmergencyKeyRotationFlow,
     runExportBackupFlow,
@@ -913,8 +1069,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         const base: RegisterInput = s.request.registerInput ?? {
           endpoint: "",
           capabilities: 0,
-          blsPubkeyHex: "",
-          blsPopHex: "",
           bondLythoshi: "0",
         };
         const next = { ...base, ...patch };
@@ -1001,6 +1155,62 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           request: { ...s.request, pendingChangeInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setClusterJoinRequestInput = useCallback(
+    (patch: Partial<ClusterJoinRequestInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "cluster-request-join") return s;
+        const base: ClusterJoinRequestInput = s.request.clusterJoinRequestInput ?? {
+          clusterId: "",
+          operatorPubkeyHex: "",
+          bondLythoshi: "0",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, clusterJoinRequestInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setClusterVoteAdmitInput = useCallback(
+    (patch: Partial<ClusterVoteAdmitInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "cluster-vote-admit") return s;
+        const base: ClusterVoteAdmitInput = s.request.clusterVoteAdmitInput ?? {
+          clusterId: "",
+          operatorIdHex: "",
+          voterPubkeyHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, clusterVoteAdmitInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setClusterFormInput = useCallback(
+    (patch: Partial<ClusterFormInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "cluster-form") return s;
+        const base: ClusterFormInput = s.request.clusterFormInput ?? {
+          activePubkeysHex: "",
+          standbyPubkeysHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, clusterFormInput: next },
         };
       });
     },
@@ -1094,6 +1304,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setPendingChangeInput,
+      setClusterJoinRequestInput,
+      setClusterVoteAdmitInput,
+      setClusterFormInput,
       setDkgReshareInput,
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,
@@ -1111,6 +1324,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setPendingChangeInput,
+      setClusterJoinRequestInput,
+      setClusterVoteAdmitInput,
+      setClusterFormInput,
       setDkgReshareInput,
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,

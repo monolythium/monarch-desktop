@@ -13,17 +13,20 @@ import {
   clusterResignationSummary,
   clusterLabel,
   evaluateClusterModel,
+  formatLythHex,
   formatResignationHeight,
   hostingClassLabel,
   resignationStatusTone,
   useBridgeHealth,
   useChainStatus,
+  useClusterDirectory,
   useClusterDiversity,
   useClusterResignations,
   useClusterStatus,
   useCurrentRound,
   useOperatorNetworkMetadataMap,
   useOracleSigners,
+  useProviderDirectory,
 } from "../sdk";
 
 const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
@@ -36,6 +39,8 @@ export function Cluster() {
   const resignations = useClusterResignations(null, "all");
   const oracle = useOracleSigners();
   const bridge = useBridgeHealth();
+  const clusters = useClusterDirectory(0, 100);
+  const providers = useProviderDirectory(0, null, 50);
   const memberMetadata = useOperatorNetworkMetadataMap(
     cluster.data?.members.map((member) => member.operatorId) ?? [],
   );
@@ -49,10 +54,12 @@ export function Cluster() {
   const lag = members.find((m) => m.state === "lag");
   const leadMemberId = members[0]?.operatorId ?? null;
   const leadMeta = leadMemberId ? memberMetadata.data?.[leadMemberId] ?? null : null;
+  const clusterRows = clusters.data ?? [];
   const resignationRows = resignations.data?.rows ?? [];
   const resignationSummary = clusterResignationSummary(resignationRows);
   const clusterModel = evaluateClusterModel(c, chain.data?.clusterCount ?? null);
   const activeClusterLabel = clusterLabel(c?.id ?? ACTIVE_CLUSTER_ID);
+  const activeClusterId = c?.id ?? ACTIVE_CLUSTER_ID;
   const modelTone =
     clusterModel.state === "aligned" ? "halo--ok"
     : clusterModel.state === "degraded" ? "halo--err"
@@ -65,7 +72,7 @@ export function Cluster() {
           Cluster {activeClusterLabel}
         </h1>
         <p className="view__subtitle">
-          distributed validator cluster · {c ? `${c.threshold}-of-${c.size} quorum` : clusterModel.thresholdSummary}
+          distributed operator cluster · {c ? `${c.threshold}-of-${c.size} quorum` : clusterModel.thresholdSummary}
           {round.data ? ` · round ${round.data.height.toLocaleString()}` : null}
         </p>
       </header>
@@ -97,6 +104,199 @@ export function Cluster() {
         {clusterModel.blockers.length > 0 ? (
           <div className="stat__sub mono" style={{ marginTop: 12 }}>
             {clusterModel.blockers.join(" · ")}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card card--flush">
+        <div className="card__head" style={{ padding: "16px 20px 0" }}>
+          <div>
+            <h3>Cluster directory</h3>
+            <div className="sub">
+              {clusters.notExposed
+                ? "lyth_clusterDirectory unavailable"
+                : clusterRows.length > 0
+                  ? `${clusterRows.length} clusters visible`
+                  : "loading"}
+            </div>
+          </div>
+          {clusters.notExposed ? (
+            <span className="halo halo--warn">
+              <span className="dot" /> directory read unavailable
+            </span>
+          ) : (
+            <span className="halo halo--ok">
+              <span className="dot" /> live
+            </span>
+          )}
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>cluster</th>
+              <th>quorum</th>
+              <th>health</th>
+              <th>regions</th>
+              <th>active</th>
+              <th>admission</th>
+            </tr>
+          </thead>
+          <tbody>
+            {clusterRows.slice(0, 12).map((row) => {
+              const label = clusterLabel(row.clusterId);
+              return (
+                <tr key={row.clusterId}>
+                  <td>{label}</td>
+                  <td className="mono">{row.threshold}-of-{row.size}</td>
+                  <td>{row.aggregateHealth}</td>
+                  <td>{row.regionDiversity?.join(", ") ?? "-"}</td>
+                  <td>
+                    <span className={row.active ? "halo halo--ok" : "halo halo--warn"}>
+                      <span className="dot" /> {row.active ? "active" : "inactive"}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={() =>
+                        ops.requestOp({
+                          kind: "cluster-request-join",
+                          title: `Request join for ${label}`,
+                          sub: "Prepare CJ-1 join request",
+                          intro:
+                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id and derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available; execution stays blocked until CJ-1 is live on the connected chain.",
+                          fields: [
+                            { key: "cluster", label: "Cluster", value: label },
+                            { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; blocked until runtime is live" },
+                            { key: "seal-roster", label: "Seal roster", value: "consensus-only until the decrypt roster updates" },
+                          ],
+                          clusterJoinRequestInput: {
+                            clusterId: String(row.clusterId),
+                            operatorPubkeyHex: "",
+                            bondLythoshi: "0",
+                          },
+                          icon: "RJ",
+                          risk: "high",
+                          destructive: true,
+                          needsPasskey: true,
+                          confirmLabel: "Prepare join request",
+                        })
+                      }
+                    >
+                      Request seat
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {clusterRows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="mono" style={{ color: "var(--fg-500)" }}>
+                  {clusters.notExposed
+                    ? "Cluster directory RPC is not exposed by this endpoint."
+                    : "No clusters returned by the connected endpoint."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+        {clusterRows.length > 12 ? (
+          <div className="stat__sub mono" style={{ padding: "0 20px 16px" }}>
+            Showing 12 of {clusterRows.length} clusters.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card card--flush">
+        <div className="card__head" style={{ padding: "16px 20px 0" }}>
+          <div>
+            <h3>Provider directory</h3>
+            <div className="sub">
+              {providers.notExposed
+                ? "lyth_listProviders unavailable"
+                : providers.data
+                  ? `${providers.data.length} registered providers`
+                  : "loading"}
+            </div>
+          </div>
+          {providers.notExposed ? (
+            <span className="halo halo--warn">
+              <span className="dot" /> registry read unavailable
+            </span>
+          ) : null}
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>peer</th>
+              <th>endpoint</th>
+              <th>capabilities</th>
+              <th>uptime</th>
+              <th>bond</th>
+              <th>admission</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(providers.data ?? []).slice(0, 12).map((provider) => (
+              <tr key={provider.peerId}>
+                <td className="mono">{compactHex(provider.peerId)}</td>
+                <td className="mono" title={provider.endpoint}>
+                  {provider.endpoint.length > 42
+                    ? `${provider.endpoint.slice(0, 30)}…${provider.endpoint.slice(-8)}`
+                    : provider.endpoint}
+                </td>
+                <td className="mono">0x{provider.capabilities.toString(16).padStart(4, "0")}</td>
+                <td className="mono">{bpsToPercent(provider.uptimeBps)}</td>
+                <td className="mono">{formatLythHex(provider.bond)}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--sm"
+                    onClick={() =>
+                      ops.requestOp({
+                        kind: "cluster-vote-admit",
+                        title: `Vote admit ${compactHex(provider.peerId)} to ${activeClusterLabel}`,
+                        sub: "Prepare CJ-1 admit vote",
+                        intro:
+                          "Prepares voteClusterAdmit(uint32,bytes32,bytes) for the connected cluster. Desktop signs only from a current cluster member key once CJ-1 is live; current chains fail closed before signing.",
+                        fields: [
+                          { key: "cluster", label: "Cluster", value: activeClusterLabel },
+                          { key: "candidate", label: "Candidate", value: compactHex(provider.peerId) },
+                          { key: "flow", label: "Flow", value: "CJ-1 voteClusterAdmit; blocked until runtime is live" },
+                        ],
+                        clusterVoteAdmitInput: {
+                          clusterId: String(activeClusterId),
+                          operatorIdHex: provider.peerId,
+                          voterPubkeyHex: "",
+                        },
+                        icon: "VA",
+                        risk: "high",
+                        destructive: true,
+                        needsPasskey: true,
+                        confirmLabel: "Prepare admit vote",
+                      })
+                    }
+                  >
+                    Vote admit
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {(providers.data ?? []).length === 0 ? (
+              <tr>
+                <td colSpan={6} className="mono" style={{ color: "var(--fg-500)" }}>
+                  {providers.notExposed
+                    ? "Provider directory RPC is not exposed by this endpoint."
+                    : "No providers returned by the connected endpoint."}
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+        {(providers.data ?? []).length > 12 ? (
+          <div className="stat__sub mono" style={{ padding: "0 20px 16px" }}>
+            Showing 12 of {providers.data?.length ?? 0} providers.
           </div>
         ) : null}
       </div>
@@ -237,7 +437,7 @@ export function Cluster() {
         <table className="tbl">
           <thead>
             <tr>
-              <th>operator BLS key</th>
+              <th>operator key</th>
               <th>status</th>
               <th>effective height</th>
               <th>nonce</th>
@@ -290,9 +490,9 @@ export function Cluster() {
             </span>
           ) : null}
         </div>
-        <div className="cap" style={{ marginBottom: 4 }}>cluster anchor · derived from BLS roster + threshold</div>
+        <div className="cap" style={{ marginBottom: 4 }}>cluster anchor · derived from roster + threshold</div>
         <div className="mono" style={{ wordBreak: "break-all", marginBottom: 16, color: "var(--fg-500)" }}>
-          {c?.anchorAddress ?? "— (resolves once members expose full 48-byte BLS keys)"}
+          {c?.anchorAddress ?? "— (resolves once members expose full roster keys)"}
         </div>
         <div className="grid-2">
           <div>

@@ -8,11 +8,15 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 type SubmitArg = {
   private: boolean;
-  tx: { gasLimit: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
+  tx: { gasLimit: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; input?: string };
 };
 const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ab".repeat(32));
+const consensusPubkey = new Uint8Array(1952).fill(0xaa);
+const consensusPop = new Uint8Array(3309).fill(0xbb);
 
 const fakeBackend = {
+  publicKey: () => consensusPubkey,
+  sign: () => consensusPop,
   addressBytes: () => new Uint8Array(20).fill(0x11),
   signEvmTx: () => ({
     wireHex: "0x00",
@@ -23,6 +27,7 @@ const fakeBackend = {
 };
 
 vi.mock("@monolythium/core-sdk", () => ({
+  addressToTypedBech32: () => "mono1typedoperator",
   RpcClient: class {
     endpoint: string;
     constructor(endpoint: string) {
@@ -48,12 +53,15 @@ vi.mock("@monolythium/core-sdk/crypto", () => ({
 import {
   buildRegisterTxFields,
   clampPriorityTip,
+  deriveOperatorConsensusPubkeyHex,
   submitRegister,
   DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT,
 } from "./register";
+import {
+  NODE_REGISTRY_CONSENSUS_POP_BYTES,
+  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+} from "./operatorKeys";
 
-const blsPubkey = new Uint8Array(48).fill(0xaa);
-const blsPop = new Uint8Array(96).fill(0xbb);
 const peerId = new Uint8Array(32).fill(0xcc);
 
 describe("clampPriorityTip", () => {
@@ -66,7 +74,13 @@ describe("clampPriorityTip", () => {
   });
 });
 
-describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
+describe("deriveOperatorConsensusPubkeyHex", () => {
+  it("returns the ML-DSA-65 consensus pubkey derived from the PQM-1 mnemonic", () => {
+    expect(deriveOperatorConsensusPubkeyHex("test mnemonic")).toBe("0x" + "aa".repeat(1952));
+  });
+});
+
+describe("buildRegisterTxFields — SDK sane fee defaults", () => {
   const fee = {
     executionUnitPriceLythoshi: "1000",
     priorityTipLythoshi: "5000",
@@ -79,8 +93,8 @@ describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
       fee,
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkey,
-      blsPop,
+      consensusPubkey,
+      consensusPop,
       bondLythoshi: "500000000000",
       peerId,
       sppkHash: new Uint8Array(32),
@@ -99,8 +113,8 @@ describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
       fee,
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkey,
-      blsPop,
+      consensusPubkey,
+      consensusPop,
       bondLythoshi: "500000000000",
       peerId,
       sppkHash: new Uint8Array(32),
@@ -118,8 +132,8 @@ describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
       fee,
       endpoint: "https://node.example",
       capabilities: 0x0011,
-      blsPubkey,
-      blsPop,
+      consensusPubkey,
+      consensusPop,
       bondLythoshi: "500000000000",
       peerId,
       sppkHash: new Uint8Array(32),
@@ -139,8 +153,8 @@ describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
       fee,
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkey,
-      blsPop,
+      consensusPubkey,
+      consensusPop,
       bondLythoshi: "1",
       peerId,
       sppkHash: new Uint8Array(32),
@@ -157,8 +171,8 @@ describe("buildRegisterTxFields — SDK 0.3.11 sane fee defaults", () => {
       fee,
       endpoint: "https://node.example",
       capabilities: 0x1_0000_0000,
-      blsPubkey,
-      blsPop,
+      consensusPubkey,
+      consensusPop,
       bondLythoshi: "1",
       peerId,
       sppkHash: new Uint8Array(32),
@@ -178,8 +192,6 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
       mnemonic: "test mnemonic",
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkeyHex: "0x" + "aa".repeat(48),
-      blsPopHex: "0x" + "bb".repeat(96),
       bondLythoshi: "500000000000",
       peerIdHex: "0x" + "cc".repeat(32),
     });
@@ -192,7 +204,14 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
     expect(call.tx.gasLimit).toBe(200_000n);
     expect(call.tx.maxFeePerGas).toBe(1000n);
     expect(call.tx.maxPriorityFeePerGas).toBe(1000n);
+    expect(call.tx.input).toContain(
+      NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES.toString(16).padStart(64, "0"),
+    );
+    expect(call.tx.input).toContain(
+      NODE_REGISTRY_CONSENSUS_POP_BYTES.toString(16).padStart(64, "0"),
+    );
     expect(res.txHash).toBe("0x" + "ab".repeat(32));
+    expect(res.consensusPubkeyHex).toBe("0x" + "aa".repeat(1952));
   });
 
   it("only engages the encrypted PREVIEW path when privatePreview is explicitly true", async () => {
@@ -201,8 +220,6 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
       mnemonic: "test mnemonic",
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkeyHex: "0x" + "aa".repeat(48),
-      blsPopHex: "0x" + "bb".repeat(96),
       bondLythoshi: "1",
       peerIdHex: "0x" + "cc".repeat(32),
       privatePreview: true,
@@ -217,11 +234,9 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
       mnemonic: "test mnemonic",
       endpoint: "https://node.example",
       capabilities: 0x0001,
-      blsPubkeyHex: "0x" + "aa".repeat(47) + "zz",
-      blsPopHex: "0x" + "bb".repeat(96),
       bondLythoshi: "1",
-      peerIdHex: "0x" + "cc".repeat(32),
-    })).rejects.toThrow(/blsPubkey: invalid hex/u);
+      peerIdHex: "0x" + "cc".repeat(31) + "zz",
+    })).rejects.toThrow(/peerId: invalid hex/u);
     expect(submitWithPrivacy).not.toHaveBeenCalled();
   });
 });

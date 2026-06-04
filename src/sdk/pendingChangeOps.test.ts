@@ -25,6 +25,7 @@ const fakeBackend = {
 };
 
 vi.mock("@monolythium/core-sdk", () => ({
+  addressToTypedBech32: () => "mono1typedoperator",
   RpcClient: class {
     endpoint: string;
     constructor(endpoint: string) {
@@ -59,8 +60,9 @@ import {
   submitPendingChange,
   SUBMIT_PENDING_CHANGE_SELECTOR,
 } from "./pendingChangeOps";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "./operatorKeys";
 
-const pubkeyHex = "0x" + "aa".repeat(48);
+const pubkeyHex = "0x" + "aa".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
 const fee = {
   executionUnitPriceLythoshi: "800",
   priorityTipLythoshi: "950",
@@ -77,15 +79,16 @@ describe("submitPendingChange calldata", () => {
 
     expect(SUBMIT_PENDING_CHANGE_SELECTOR).toBe("0x7d09426c");
     expect(PENDING_CHANGE_KIND_CODES).toEqual({ add: 1, remove: 2, rotate: 3 });
-    expect(calldata).toHaveLength(2 + 2 * (4 + 7 * 32));
+    expect(calldata).toHaveLength(2 + 2 * (4 + 4 * 32 + 32 + NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES));
     expect(calldata.slice(0, 10)).toBe("0x7d09426c");
     expect(calldata.slice(10, 74)).toBe("0".repeat(63) + "1");
     expect(calldata.slice(74, 138)).toBe("0".repeat(62) + "80");
     expect(calldata.slice(138, 202)).toBe("0".repeat(62) + "2a");
     expect(calldata.slice(202, 266)).toBe("0".repeat(64));
-    expect(calldata.slice(266, 330)).toBe("0".repeat(62) + "30");
-    expect(calldata.slice(330, 394)).toBe("aa".repeat(32));
-    expect(calldata.slice(394)).toBe("aa".repeat(16) + "00".repeat(16));
+    expect(calldata.slice(266, 330)).toBe(
+      NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES.toString(16).padStart(64, "0"),
+    );
+    expect(calldata.slice(330)).toBe("aa".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES));
   });
 
   it("encodes Rotate with a non-zero intent id under the 56-bit cap", () => {
@@ -114,10 +117,10 @@ describe("submitPendingChange calldata", () => {
     expect(() =>
       encodeSubmitPendingChangeCalldata({
         kind: "add",
-        targetPubkeyHex: "0x" + "aa".repeat(47),
+        targetPubkeyHex: "0x" + "aa".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1),
         effectiveEpoch: 1,
       }),
-    ).toThrow(/expected 48 bytes/u);
+    ).toThrow(/expected 1952 bytes/u);
     expect(() =>
       encodeSubmitPendingChangeCalldata({
         kind: "add",

@@ -1,0 +1,290 @@
+import { useMemo, type CSSProperties } from "react";
+import {
+  MONARCH_ACTIVE_OPERATOR_SEATS,
+  MONARCH_CLUSTER_SIZE,
+  MONARCH_CLUSTER_THRESHOLD,
+  MONARCH_STANDBY_OPERATOR_SEATS,
+  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  operatorPubkeyHash,
+} from "../sdk";
+import { useOps } from "./OpsContext";
+import type { ClusterFormInput } from "./types";
+
+const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
+
+export const CLUSTER_FORM_RUNTIME_NOTICE =
+  "Execution remains fail-closed until the runtime exposes a cluster-formation primitive and Desktop has a matching SDK submit helper.";
+
+export type ClusterFormRosterRole = "active" | "standby";
+
+export type ClusterFormRosterEntry = {
+  role: ClusterFormRosterRole;
+  index: number;
+  pubkeyHex: string;
+  operatorIdHex: string;
+};
+
+export type ClusterFormProposalSummary = {
+  activeCount: number;
+  standbyCount: number;
+  totalCount: number;
+  invalidActiveCount: number;
+  invalidStandbyCount: number;
+  duplicateCount: number;
+  ready: boolean;
+  blockers: string[];
+  roster: ClusterFormRosterEntry[];
+};
+
+function normalizeHex(value: string): string {
+  const clean = value.trim().replace(/^0x/iu, "");
+  return clean ? `0x${clean.toLowerCase()}` : "";
+}
+
+function isFixedConsensusPubkeyHex(value: string): boolean {
+  return (
+    value.length === CONSENSUS_PUBKEY_HEX_CHARS + 2 &&
+    /^0x[0-9a-f]+$/u.test(value)
+  );
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.slice(2);
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+function compactHex(value: string, head = 14, tail = 10): string {
+  if (!value || value.length <= head + tail + 1) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+export function parseClusterFormPubkeys(value: string): string[] {
+  return value
+    .split(/[\s,]+/u)
+    .map(normalizeHex)
+    .filter(Boolean);
+}
+
+function operatorIdForPubkeyHex(pubkeyHex: string): string {
+  return bytesToHex(operatorPubkeyHash(hexToBytes(pubkeyHex)));
+}
+
+function duplicateOverflowCount(values: string[]): number {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  let duplicates = 0;
+  for (const count of counts.values()) {
+    if (count > 1) duplicates += count - 1;
+  }
+  return duplicates;
+}
+
+function rosterEntries(
+  role: ClusterFormRosterRole,
+  values: string[],
+): ClusterFormRosterEntry[] {
+  return values
+    .filter(isFixedConsensusPubkeyHex)
+    .map((pubkeyHex, index) => ({
+      role,
+      index,
+      pubkeyHex,
+      operatorIdHex: operatorIdForPubkeyHex(pubkeyHex),
+    }));
+}
+
+export function clusterFormProposalSummary(
+  input: ClusterFormInput | undefined,
+): ClusterFormProposalSummary {
+  const active = parseClusterFormPubkeys(input?.activePubkeysHex ?? "");
+  const standby = parseClusterFormPubkeys(input?.standbyPubkeysHex ?? "");
+  const invalidActiveCount = active.filter((value) => !isFixedConsensusPubkeyHex(value)).length;
+  const invalidStandbyCount = standby.filter((value) => !isFixedConsensusPubkeyHex(value)).length;
+  const duplicateCount = duplicateOverflowCount([...active, ...standby]);
+  const blockers: string[] = [];
+
+  if (active.length !== MONARCH_ACTIVE_OPERATOR_SEATS) {
+    blockers.push(`expected ${MONARCH_ACTIVE_OPERATOR_SEATS} active operator pubkeys`);
+  }
+  if (standby.length !== MONARCH_STANDBY_OPERATOR_SEATS) {
+    blockers.push(`expected ${MONARCH_STANDBY_OPERATOR_SEATS} standby operator pubkeys`);
+  }
+  if (invalidActiveCount + invalidStandbyCount > 0) {
+    blockers.push(`all pubkeys must be ${NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES} byte ML-DSA-65 consensus keys`);
+  }
+  if (duplicateCount > 0) {
+    blockers.push("active and standby rosters must not reuse a consensus pubkey");
+  }
+
+  return {
+    activeCount: active.length,
+    standbyCount: standby.length,
+    totalCount: active.length + standby.length,
+    invalidActiveCount,
+    invalidStandbyCount,
+    duplicateCount,
+    ready: blockers.length === 0,
+    blockers,
+    roster: [
+      ...rosterEntries("active", active),
+      ...rosterEntries("standby", standby),
+    ],
+  };
+}
+
+export function isClusterFormInputComplete(input: ClusterFormInput | undefined): boolean {
+  return clusterFormProposalSummary(input).ready;
+}
+
+function inputStyle(valid: boolean): CSSProperties {
+  return {
+    background: "rgba(0,0,0,0.3)",
+    border: valid
+      ? "1px solid rgba(255,255,255,0.1)"
+      : "1px solid var(--err-500, #c53030)",
+    color: "var(--fg-200)",
+    padding: "8px 9px",
+    fontSize: 11,
+    borderRadius: 6,
+    fontFamily: "var(--font-mono, monospace)",
+    lineHeight: 1.45,
+    minHeight: 128,
+    resize: "vertical",
+  };
+}
+
+function summaryTone(ok: boolean): string {
+  return ok ? "halo halo--ok" : "halo halo--warn";
+}
+
+export function ClusterFormProposalForm() {
+  const { request, setClusterFormInput } = useOps();
+  const input = request?.clusterFormInput;
+  const current: ClusterFormInput = request?.kind === "cluster-form" && input
+    ? input
+    : { activePubkeysHex: "", standbyPubkeysHex: "" };
+  const summary = useMemo(() => clusterFormProposalSummary(current), [current]);
+  const activeOk =
+    summary.activeCount === MONARCH_ACTIVE_OPERATOR_SEATS &&
+    summary.invalidActiveCount === 0 &&
+    summary.duplicateCount === 0;
+  const standbyOk =
+    summary.standbyCount === MONARCH_STANDBY_OPERATOR_SEATS &&
+    summary.invalidStandbyCount === 0 &&
+    summary.duplicateCount === 0;
+
+  if (!request || request.kind !== "cluster-form") return null;
+
+  return (
+    <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
+      <div className="cap" style={{ marginBottom: 8 }}>Cluster formation roster</div>
+      <div className="halo halo--warn" style={{ alignSelf: "flex-start", alignItems: "flex-start", lineHeight: 1.35, marginBottom: 12 }}>
+        <span className="dot" style={{ flex: "0 0 auto", marginTop: 4 }} />
+        <span>{CLUSTER_FORM_RUNTIME_NOTICE}</span>
+      </div>
+
+      <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+        <div className={summaryTone(summary.ready)} style={{ alignSelf: "flex-start" }}>
+          <span className="dot" /> {summary.ready ? "Roster proposal is structurally valid." : "Roster proposal needs attention."}
+        </div>
+        <div className="kv">
+          <span className="kv__k">Topology</span>
+          <span className="kv__v mono">
+            {MONARCH_CLUSTER_THRESHOLD}-of-{MONARCH_CLUSTER_SIZE} · {MONARCH_ACTIVE_OPERATOR_SEATS} active + {MONARCH_STANDBY_OPERATOR_SEATS} standby
+          </span>
+        </div>
+        <div className="kv">
+          <span className="kv__k">Provided</span>
+          <span className="kv__v mono">
+            {summary.activeCount} active · {summary.standbyCount} standby · {summary.totalCount} total
+          </span>
+        </div>
+        {summary.blockers.length > 0 ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {summary.blockers.map((blocker) => (
+              <div className="drawer__effect" key={blocker}>
+                <span className="dot" />
+                <span>{blocker}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="kv__k">Active operator consensus pubkeys</span>
+        <textarea
+          placeholder="0x..."
+          value={current.activePubkeysHex}
+          onChange={(event) => setClusterFormInput({ activePubkeysHex: event.target.value })}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          style={inputStyle(activeOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          One {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES} byte ML-DSA-65 consensus pubkey per line; exactly {MONARCH_ACTIVE_OPERATOR_SEATS} active seats.
+        </span>
+      </label>
+
+      <label
+        className="kv"
+        style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
+      >
+        <span className="kv__k">Standby operator consensus pubkeys</span>
+        <textarea
+          placeholder="0x..."
+          value={current.standbyPubkeysHex}
+          onChange={(event) => setClusterFormInput({ standbyPubkeysHex: event.target.value })}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          style={inputStyle(standbyOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          Exactly {MONARCH_STANDBY_OPERATOR_SEATS} standby pubkeys; duplicates across active and standby are rejected.
+        </span>
+      </label>
+
+      {summary.roster.length > 0 ? (
+        <div
+          style={{
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.025)",
+            padding: 12,
+            marginTop: 12,
+          }}
+        >
+          <div className="cap" style={{ marginBottom: 8 }}>Derived operator ids</div>
+          <div style={{ display: "grid", gap: 7 }}>
+            {summary.roster.slice(0, MONARCH_CLUSTER_SIZE).map((entry) => (
+              <div className="kv" key={`${entry.role}-${entry.index}`}>
+                <span className="kv__k">{entry.role} {entry.index + 1}</span>
+                <span className="mono" style={{ color: "var(--fg-300)", fontSize: 11 }}>
+                  {compactHex(entry.operatorIdHex)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export const CLUSTER_FORM_HEX_LENGTHS = {
+  consensusPubkey: CONSENSUS_PUBKEY_HEX_CHARS + 2,
+} as const;

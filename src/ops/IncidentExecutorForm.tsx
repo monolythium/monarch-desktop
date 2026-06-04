@@ -1,11 +1,13 @@
 // Inline forms for foundation incident-response executors.
 
 import { useMemo, type CSSProperties } from "react";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "../sdk/operatorKeys";
 import { useOps } from "./OpsContext";
 import type { EmergencyKeyRotationInput, FreezeAdmissionInput } from "./types";
 
 const MAX_INCIDENT_INTENT_ID = (1n << 56n) - 1n;
 const MAX_UINT64 = (1n << 64n) - 1n;
+const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
 
 function normalizeHex(value: string): string {
   const clean = value.trim().replace(/^0x/iu, "");
@@ -16,8 +18,13 @@ function isHash32(value: string | undefined): boolean {
   return !!value && /^0x[0-9a-fA-F]{64}$/u.test(value.trim());
 }
 
-function isBlsPubkey(value: string | undefined): boolean {
-  return !!value && /^0x[0-9a-fA-F]{96}$/u.test(value.trim());
+function isConsensusPubkey(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return (
+    trimmed.length === CONSENSUS_PUBKEY_HEX_CHARS + 2 &&
+    /^0x[0-9a-fA-F]+$/u.test(trimmed)
+  );
 }
 
 function parseDecimal(value: string | undefined): bigint | null {
@@ -92,7 +99,7 @@ export function EmergencyKeyRotationForm() {
   const input = request?.emergencyKeyRotationInput;
   const validity = useMemo(
     () => ({
-      pubkey: isBlsPubkey(input?.targetPubkeyHex),
+      pubkey: isConsensusPubkey(input?.targetPubkeyHex),
       epoch: isPositiveUint64(input?.effectiveEpoch),
       intent: isIntentId(input?.intentId),
     }),
@@ -107,11 +114,11 @@ export function EmergencyKeyRotationForm() {
       <div className="cap" style={{ marginBottom: 8 }}>emergency key rotation input</div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-        <span className="kv__k">Target BLS pubkey</span>
+        <span className="kv__k">Target consensus pubkey</span>
         <input
           type="text"
           inputMode="text"
-          placeholder={`0x${"00".repeat(48)}`}
+          placeholder="0x..."
           value={current.targetPubkeyHex ?? ""}
           onChange={(e) =>
             setEmergencyKeyRotationInput({ targetPubkeyHex: normalizeHex(e.target.value) })
@@ -123,7 +130,7 @@ export function EmergencyKeyRotationForm() {
           style={inputStyle(validity.pubkey)}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          48-byte compressed BLS-G1 pubkey queued as a Rotate pending change.
+          {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES}-byte ML-DSA-65 pubkey queued as a Rotate pending change.
         </span>
       </label>
 
@@ -181,7 +188,7 @@ export function isEmergencyKeyRotationInputComplete(
   input: EmergencyKeyRotationInput | undefined,
 ): boolean {
   return (
-    isBlsPubkey(input?.targetPubkeyHex) &&
+    isConsensusPubkey(input?.targetPubkeyHex) &&
     isPositiveUint64(input?.effectiveEpoch) &&
     isIntentId(input?.intentId)
   );

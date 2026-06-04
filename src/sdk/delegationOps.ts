@@ -7,6 +7,7 @@
 // still a later protocol milestone.
 
 import {
+  addressToTypedBech32,
   delegationAddressHex,
   encodeRedelegateCalldata,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
@@ -98,11 +99,11 @@ export async function submitRedelegate(args: RedelegateArgs): Promise<Redelegate
   assertRedelegateInput(args);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
 

@@ -6,6 +6,7 @@
 // signer stored in the OS keychain.
 
 import {
+  addressToTypedBech32,
   nodeRegistryAddressHex,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
@@ -16,6 +17,7 @@ import {
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
+import { NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES } from "./operatorKeys";
 
 export const FREEZE_ADMISSION_SELECTOR = "0x7a2605cd";
 export const EMERGENCY_KEY_ROTATION_SELECTOR = "0x0aeeafbf";
@@ -124,6 +126,14 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+function padTo32(buf: Uint8Array): Uint8Array {
+  const paddedLength = Math.ceil(buf.length / 32) * 32;
+  if (paddedLength === buf.length) return buf;
+  const out = new Uint8Array(paddedLength);
+  out.set(buf);
+  return out;
+}
+
 export function encodeFreezeAdmissionCalldata(reasonHashHex: string): string {
   const selector = hexToBytes(FREEZE_ADMISSION_SELECTOR, "selector", 4);
   const reasonHash = hexToBytes(reasonHashHex, "reasonHashHex", 32);
@@ -136,7 +146,11 @@ export function encodeEmergencyKeyRotationCalldata(args: {
   intentId: bigint | number | string;
 }): string {
   const selector = hexToBytes(EMERGENCY_KEY_ROTATION_SELECTOR, "selector", 4);
-  const targetPubkey = hexToBytes(args.targetPubkeyHex, "targetPubkeyHex", 48);
+  const targetPubkey = hexToBytes(
+    args.targetPubkeyHex,
+    "targetPubkeyHex",
+    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   if (effectiveEpoch === 0n) {
     throw new Error("effectiveEpoch: must be greater than zero");
@@ -145,16 +159,14 @@ export function encodeEmergencyKeyRotationCalldata(args: {
   if (intentId > MAX_INCIDENT_INTENT_ID) {
     throw new Error("intentId: exceeds 2^56-1");
   }
-  const pubkeyTail = new Uint8Array(32);
-  pubkeyTail.set(targetPubkey.slice(32, 48), 0);
+  const pubkeyPadded = padTo32(targetPubkey);
   const calldata = concat([
     selector,
     u256BE(0x60n),
     u256BE(effectiveEpoch),
     u256BE(intentId),
-    u256BE(48n),
-    targetPubkey.slice(0, 32),
-    pubkeyTail,
+    u256BE(targetPubkey.length),
+    pubkeyPadded,
   ]);
   if ((calldata.length - 4) % 32 !== 0) {
     throw new Error(`emergencyKeyRotation calldata not 32-aligned (len=${calldata.length - 4})`);
@@ -218,10 +230,10 @@ export async function submitFreezeAdmission(
   const reasonHash = hexToBytes(args.reasonHashHex, "reasonHashHex", 32);
   const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
   const tx = buildFreezeAdmissionTxFields({
@@ -251,15 +263,19 @@ export async function submitFreezeAdmission(
 export async function submitEmergencyKeyRotation(
   args: SubmitEmergencyKeyRotationArgs,
 ): Promise<SubmitEmergencyKeyRotationResult> {
-  const targetPubkey = hexToBytes(args.targetPubkeyHex, "targetPubkeyHex", 48);
+  const targetPubkey = hexToBytes(
+    args.targetPubkeyHex,
+    "targetPubkeyHex",
+    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId, "intentId");
   const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
   const tx = buildEmergencyKeyRotationTxFields({

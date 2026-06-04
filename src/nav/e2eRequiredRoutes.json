@@ -1,0 +1,22 @@
+[
+  "/home",
+  "/operator",
+  "/hardware",
+  "/operations",
+  "/wallets",
+  "/audit",
+  "/cluster",
+  "/chat",
+  "/marketplace",
+  "/services",
+  "/metrics",
+  "/logs",
+  "/governance",
+  "/alerts",
+  "/install",
+  "/setup-operator",
+  "/setup-cluster",
+  "/attestation",
+  "/keys",
+  "/recovery"
+]

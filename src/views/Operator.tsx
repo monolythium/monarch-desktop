@@ -41,6 +41,7 @@ export function Operator() {
   const setSize = clusterData?.members.length ?? null;
   const moniker = v?.moniker ?? (operatorId ? shortId(operatorId) : "—");
   const activeClusterLabel = clusterLabel(clusterData?.id ?? ACTIVE_CLUSTER_ID);
+  const activeClusterId = String(clusterData?.id ?? ACTIVE_CLUSTER_ID);
   const jailed = v?.jailed ?? false;
   const riskSummary = operatorRiskView(risk.data, jailed);
   const signingSummary = signingActivityView(signing.data);
@@ -50,12 +51,12 @@ export function Operator() {
   const keyRows = [
     { label: "Operator account", algo: "node-registry", value: v?.address ?? "—" },
     { label: "Operator id", algo: "cluster member", value: operatorId ?? "—" },
-    { label: "BLS/key fingerprint", algo: "registry", value: v?.pubkey ?? "—" },
+    { label: "Consensus key fingerprint", algo: "registry", value: v?.pubkey ?? "—" },
     { label: "Cluster anchor", algo: "derived", value: clusterData?.anchorAddress ?? "—" },
   ];
 
   // The order-routing fee is keyed by the operator's bech32m wallet address,
-  // not the cluster-member operatorId (which is a BLS-key hash). Feed the
+  // not the cluster-member operatorId. Feed the
   // resolved chainAddress, guarded to a `mono1…` form; null until identity
   // resolves so the read degrades to notExposed rather than erroring.
   const operatorAddress =
@@ -95,30 +96,70 @@ export function Operator() {
             <span className="halo halo--gold">{formatLythoshi(v?.bondedStake)}</span>
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn--primary"
-          onClick={() =>
-            ops.requestOp({
-              kind: "rotate-keys",
-              title: "Rotate signing share",
-              sub: "Submit DKG re-share attestation",
-              intro:
-                "After the key-share ceremony produces participant BLS pubkeys and the aggregate threshold signature, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
-              fields: [
-                { key: "cluster", label: "Cluster", value: activeClusterLabel },
-                { key: "operators", label: "Operators", value: clusterData ? `${clusterData.threshold}-of-${clusterData.size} quorum` : "cluster unavailable" },
-              ],
-              icon: "KY",
-              risk: "high",
-              destructive: true,
-              needsPasskey: true,
-              confirmLabel: "Sign DKG attestation",
-            })
-          }
-        >
-          Rotate keys →
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() =>
+              ops.requestOp({
+                kind: "cluster-request-join",
+                title: `Request join for ${activeClusterLabel}`,
+                sub: "Prepare CJ-1 join request",
+                intro:
+                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id and derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available; execution stays blocked until CJ-1 is live on the connected chain.",
+                fields: [
+                  { key: "cluster", label: "Cluster", value: activeClusterLabel },
+                  {
+                    key: "flow",
+                    label: "Flow",
+                    value: "cluster vote admission; blocked until runtime is live",
+                  },
+                  {
+                    key: "seal-roster",
+                    label: "Seal roster",
+                    value: "consensus-only until the decrypt roster updates",
+                  },
+                ],
+                clusterJoinRequestInput: {
+                  clusterId: activeClusterId,
+                  operatorPubkeyHex: "",
+                  bondLythoshi: "0",
+                },
+                icon: "RJ",
+                risk: "high",
+                destructive: true,
+                needsPasskey: true,
+                confirmLabel: "Prepare join request",
+              })
+            }
+          >
+            Request seat
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={() =>
+              ops.requestOp({
+                kind: "rotate-keys",
+                title: "Rotate signing share",
+                sub: "Submit DKG re-share attestation",
+                intro:
+                  "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
+                fields: [
+                  { key: "cluster", label: "Cluster", value: activeClusterLabel },
+                  { key: "operators", label: "Operators", value: clusterData ? `${clusterData.threshold}-of-${clusterData.size} quorum` : "cluster unavailable" },
+                ],
+                icon: "KY",
+                risk: "high",
+                destructive: true,
+                needsPasskey: true,
+                confirmLabel: "Sign DKG attestation",
+              })
+            }
+          >
+            Rotate keys →
+          </button>
+        </div>
       </div>
 
       <div className="grid-2">
@@ -235,7 +276,7 @@ export function Operator() {
                   title: "Rotate signing share",
                   sub: "Submit DKG re-share attestation",
                   intro:
-                    "After the key-share ceremony produces participant BLS pubkeys and the aggregate threshold signature, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
+                    "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
                   fields: [{ key: "cluster", label: "Cluster", value: clusterData ? activeClusterLabel : "cluster unavailable" }],
                   icon: "KY",
                   risk: "high",

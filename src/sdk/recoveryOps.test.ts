@@ -25,6 +25,7 @@ const fakeBackend = {
 };
 
 vi.mock("@monolythium/core-sdk", () => ({
+  addressToTypedBech32: () => "mono1typedoperator",
   RpcClient: class {
     endpoint: string;
     constructor(endpoint: string) {

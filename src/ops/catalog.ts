@@ -31,7 +31,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Register operator",
     sub: "Submit register tx with bond",
     intro:
-      "Posts a signed register tx to precompile 0x1005 from the operator's PQM-1 mnemonic. Locks the bond (sourced from the same wallet's native balance), publishes the endpoint + capabilities, and binds the BLS pubkey/PoP into the node-registry. Operator self-signed; no foundation multisig required.",
+      "Posts a signed register tx to precompile 0x1005 from the operator's PQM-1 mnemonic. Locks the bond (sourced from the same wallet's native balance), publishes the endpoint + capabilities, and binds the derived ML-DSA-65 consensus pubkey plus possession proof into the node-registry. Operator self-signed; no foundation multisig required.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign register tx",
@@ -39,7 +39,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Bond locked from the operator's wallet for the registration epoch.",
       "Endpoint + capabilities published to the on-chain registry.",
-      "BLS pubkey + PoP committed; the cluster can attest to this operator from the next round.",
+      "ML-DSA-65 consensus pubkey + possession proof committed; the cluster can attest to this operator from the next round.",
     ],
     diff: [
       { key: "status", label: "Status", value: "+ registered" },
@@ -115,13 +115,13 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Rotate signing share",
     sub: "Submit DKG re-share attestation",
     intro:
-      "After the key-share ceremony produces the participant BLS pubkeys and aggregate threshold signature, Desktop submits the operator-signed attestDkgReshare(uint64,bytes,bytes) transaction that marks the Rotate intent as DKG-attested on node-registry 0x1005.",
+      "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits the operator-signed attestDkgReshare(uint64,bytes,bytes) transaction that marks the Rotate intent as DKG-attested on node-registry 0x1005.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign DKG attestation",
     keywords: ["dkg", "rotate", "rotation", "share", "key", "rekey"],
     effects: [
-      "Builds attestDkgReshare(intentId, blsPublicKeys, thresholdSig) calldata against node-registry 0x1005.",
+      "Builds attestDkgReshare(intentId, consensusPublicKeys, attestationSigs) calldata against node-registry 0x1005.",
       "Signs the zero-value native tx from the operator keychain mnemonic.",
       "Records the submitted DKG attestation transaction hash in the local audit trail.",
     ],
@@ -131,8 +131,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
     fields: [
       { key: "intent", label: "Intent", value: "Rotate intent id" },
-      { key: "pubkeys", label: "BLS pubkeys", value: "5..7 unique 48-byte keys" },
-      { key: "signature", label: "Threshold sig", value: "96-byte aggregate BLS-G2" },
+      { key: "pubkeys", label: "Consensus pubkeys", value: "5..7 unique ML-DSA-65 keys" },
+      { key: "signature", label: "Attestation sigs", value: "one ML-DSA-65 sig per signer" },
     ],
   },
   {
@@ -308,6 +308,90 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "cluster-form",
+    category: "cluster",
+    icon: "FC",
+    risk: "high",
+    title: "Form cluster",
+    sub: "Prepare 7 active + 3 standby roster",
+    intro:
+      "Prepares a self-service cluster-formation roster proposal using the whitepaper topology: 10 operator seats, 7-of-10 threshold, 7 active operators, and 3 standby operators. Desktop validates the ML-DSA-65 consensus pubkeys and derives operator ids, but execution stays blocked until the chain exposes a formation primitive.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Prepare formation",
+    keywords: ["cluster", "form", "create", "roster", "standby", "active", "topology"],
+    effects: [
+      "Validates exactly 7 active and 3 standby ML-DSA-65 consensus pubkeys.",
+      "Rejects malformed or duplicate consensus pubkeys before authorization.",
+      "Fails closed until node-registry exposes a signed cluster-formation primitive and Desktop has a submit helper.",
+    ],
+    diff: [
+      { key: "cluster", label: "Cluster", value: "+ roster proposal" },
+      { key: "topology", label: "Topology", value: "7 active + 3 standby, 7-of-10" },
+    ],
+    fields: [
+      { key: "active", label: "Active seats", value: "7 ML-DSA-65 consensus pubkeys" },
+      { key: "standby", label: "Standby seats", value: "3 ML-DSA-65 consensus pubkeys" },
+      { key: "executor", label: "Executor", value: "blocked until runtime primitive exists" },
+    ],
+  },
+  {
+    kind: "cluster-request-join",
+    category: "cluster",
+    icon: "RJ",
+    risk: "high",
+    title: "Request cluster join",
+    sub: "Prepare CJ-1 join request",
+    intro:
+      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Once CJ-1 is live on the connected chain, Desktop will sign this from the operator PQM-1 mnemonic, attach the bond as native value, and publish the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign join request",
+    keywords: ["cluster", "join", "request", "admission", "cj-1", "self-service"],
+    effects: [
+      "Builds requestClusterJoin(clusterId, operatorPubkey) calldata against node-registry 0x1005.",
+      "Preflights getClusterJoinRequest, then signs with the joining operator's PQM-1 mnemonic and attaches the configured bond on CJ-1 runtimes.",
+      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+    ],
+    diff: [
+      { key: "request", label: "Join request", value: "+ pending cluster vote" },
+      { key: "executor", label: "Executor", value: "requestClusterJoin(uint32,bytes)" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "operator-supplied uint32" },
+      { key: "pubkey", label: "Operator consensus", value: "1952-byte ML-DSA-65 pubkey" },
+      { key: "bond", label: "Bond", value: "native tx value" },
+    ],
+  },
+  {
+    kind: "cluster-vote-admit",
+    category: "cluster",
+    icon: "VA",
+    risk: "high",
+    title: "Vote to admit operator",
+    sub: "Prepare CJ-1 admit vote",
+    intro:
+      "Prepares a voteClusterAdmit(uint32,bytes32,bytes) admission vote from a current cluster member. Once CJ-1 is live on the connected chain, Desktop will sign the vote from the member operator key and the chain will tally admission by the cluster policy threshold.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign admit vote",
+    keywords: ["cluster", "vote", "admit", "join", "candidate", "cj-1"],
+    effects: [
+      "Builds voteClusterAdmit(clusterId, operatorId, voterPubkey) calldata against node-registry 0x1005.",
+      "Preflights that the candidate request is open, then signs with a current cluster member's PQM-1 mnemonic on CJ-1 runtimes.",
+      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+    ],
+    diff: [
+      { key: "vote", label: "Admission vote", value: "+ one member vote" },
+      { key: "threshold", label: "Policy", value: "2f+1 cluster approval" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "operator-supplied uint32" },
+      { key: "candidate", label: "Candidate id", value: "32-byte operator id" },
+      { key: "voter", label: "Voter consensus", value: "1952-byte ML-DSA-65 pubkey" },
+    ],
+  },
+  {
     kind: "cluster-accept-invite",
     category: "cluster",
     icon: "IN",
@@ -315,7 +399,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Accept cluster invite",
     sub: "Submit foundation Add pending-change",
     intro:
-      "Cluster invite acceptance queues a foundation-signed submitPendingChange(Add) transaction against node-registry 0x1005. Desktop collects the target BLS pubkey and future effective epoch, signs with the foundation operations signer, and records the tx hash locally.",
+      "Cluster invite acceptance queues a foundation-signed submitPendingChange(Add) transaction against node-registry 0x1005. Desktop collects the target ML-DSA-65 consensus pubkey and future effective epoch, signs with the foundation operations signer, and records the tx hash locally.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign Add pending-change",
@@ -330,7 +414,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
       { key: "roster", label: "Roster", value: "activates at effective epoch" },
     ],
     fields: [
-      { key: "pubkey", label: "Target BLS", value: "48-byte compressed pubkey" },
+      { key: "pubkey", label: "Target consensus", value: "1952-byte ML-DSA-65 pubkey" },
       { key: "epoch", label: "Effective", value: "future epoch" },
       { key: "executor", label: "Executor", value: "submitPendingChange(Add)" },
     ],
@@ -358,7 +442,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
       { key: "dkg", label: "DKG attestation", value: "required before activation" },
     ],
     fields: [
-      { key: "pubkey", label: "Target BLS", value: "48-byte compressed pubkey" },
+      { key: "pubkey", label: "Target consensus", value: "1952-byte ML-DSA-65 pubkey" },
       { key: "epoch", label: "Effective", value: "future epoch" },
       { key: "intent", label: "Intent", value: "non-zero uint56" },
       { key: "executor", label: "Executor", value: "submitPendingChange(Rotate)" },
@@ -415,7 +499,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
       { key: "dkg", label: "DKG attestation", value: "required before activation" },
     ],
     fields: [
-      { key: "pubkey", label: "Target BLS", value: "48-byte compressed pubkey" },
+      { key: "pubkey", label: "Target consensus", value: "1952-byte ML-DSA-65 pubkey" },
       { key: "epoch", label: "Effective", value: "future epoch" },
       { key: "intent", label: "Intent", value: "non-zero uint56" },
       { key: "executor", label: "Executor", value: "emergencyKeyRotation(bytes,uint64,uint64)" },

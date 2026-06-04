@@ -2,12 +2,13 @@
 //
 // `attestDkgReshare(uint64,bytes,bytes)` flips the node-registry
 // `dkg_attested` flag for a queued Rotate pending-change intent. The
-// off-chain DKG ceremony still produces the participant pubkeys and
-// aggregate BLS signature; Desktop validates their wire shape, signs the
-// native tx with the operator mnemonic, and submits it through the live
-// plaintext native transaction path.
+// off-chain DKG ceremony produces participant ML-DSA-65 consensus pubkeys
+// and one ML-DSA-65 attestation signature per signer; Desktop validates
+// their wire shape, signs the native tx with the operator mnemonic, and
+// submits it through the live plaintext native transaction path.
 
 import {
+  addressToTypedBech32,
   nodeRegistryAddressHex,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
@@ -18,12 +19,18 @@ import {
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
+import {
+  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  NODE_REGISTRY_DKG_ATTESTATION_SIG_BYTES,
+} from "./operatorKeys";
 
 export const ATTEST_DKG_RESHARE_SELECTOR = "0x36e34030";
 export const DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT =
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT;
-export const DKG_RESHARE_BLS_PUBKEY_BYTES = 48;
-export const DKG_RESHARE_THRESHOLD_SIG_BYTES = 96;
+export const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES;
+export const DKG_RESHARE_ATTESTATION_SIG_BYTES = NODE_REGISTRY_DKG_ATTESTATION_SIG_BYTES;
+export const DKG_RESHARE_BLS_PUBKEY_BYTES = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
+export const DKG_RESHARE_THRESHOLD_SIG_BYTES = DKG_RESHARE_ATTESTATION_SIG_BYTES;
 export const DKG_RESHARE_MIN_SIGNERS = 5;
 export const DKG_RESHARE_MAX_SIGNERS = 7;
 export const MAX_DKG_RESHARE_INTENT_ID = (1n << 56n) - 1n;
@@ -166,10 +173,12 @@ function concat(chunks: Uint8Array[]): Uint8Array {
 
 export function parseDkgResharePublicKeys(blsPublicKeysHex: string): Uint8Array[] {
   const keys = hexToBytes(blsPublicKeysHex, "blsPublicKeys");
-  if (keys.length % DKG_RESHARE_BLS_PUBKEY_BYTES !== 0) {
-    throw new Error("blsPublicKeys: length must be a multiple of 48 bytes");
+  if (keys.length % DKG_RESHARE_CONSENSUS_PUBKEY_BYTES !== 0) {
+    throw new Error(
+      `blsPublicKeys: length must be a multiple of ${DKG_RESHARE_CONSENSUS_PUBKEY_BYTES} bytes`,
+    );
   }
-  const signerCount = keys.length / DKG_RESHARE_BLS_PUBKEY_BYTES;
+  const signerCount = keys.length / DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
   if (signerCount < DKG_RESHARE_MIN_SIGNERS || signerCount > DKG_RESHARE_MAX_SIGNERS) {
     throw new Error(
       `blsPublicKeys: expected ${DKG_RESHARE_MIN_SIGNERS}..${DKG_RESHARE_MAX_SIGNERS} signers`,
@@ -177,8 +186,8 @@ export function parseDkgResharePublicKeys(blsPublicKeysHex: string): Uint8Array[
   }
   const out: Uint8Array[] = [];
   const seen = new Set<string>();
-  for (let offset = 0; offset < keys.length; offset += DKG_RESHARE_BLS_PUBKEY_BYTES) {
-    const key = keys.slice(offset, offset + DKG_RESHARE_BLS_PUBKEY_BYTES);
+  for (let offset = 0; offset < keys.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_BYTES) {
+    const key = keys.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_BYTES);
     const keyHex = bytesToHex(key);
     if (seen.has(keyHex)) {
       throw new Error("blsPublicKeys: duplicate signer pubkey");
@@ -244,7 +253,12 @@ export function parseDkgReshareAttestationArtifact(
     ),
     "thresholdSig",
   );
-  hexToBytes(thresholdSigHex, "thresholdSig", DKG_RESHARE_THRESHOLD_SIG_BYTES);
+  const thresholdSig = hexToBytes(thresholdSigHex, "thresholdSig");
+  if (thresholdSig.length !== publicKeys.length * DKG_RESHARE_ATTESTATION_SIG_BYTES) {
+    throw new Error(
+      `thresholdSig: expected ${publicKeys.length * DKG_RESHARE_ATTESTATION_SIG_BYTES} bytes, got ${thresholdSig.length}`,
+    );
+  }
 
   return {
     schemaVersion,
@@ -269,11 +283,12 @@ export function encodeAttestDkgReshareCalldata(args: {
   }
   const publicKeys = parseDkgResharePublicKeys(args.blsPublicKeysHex);
   const publicKeysBytes = concat(publicKeys);
-  const thresholdSig = hexToBytes(
-    args.thresholdSigHex,
-    "thresholdSig",
-    DKG_RESHARE_THRESHOLD_SIG_BYTES,
-  );
+  const thresholdSig = hexToBytes(args.thresholdSigHex, "thresholdSig");
+  if (thresholdSig.length !== publicKeys.length * DKG_RESHARE_ATTESTATION_SIG_BYTES) {
+    throw new Error(
+      `thresholdSig: expected ${publicKeys.length * DKG_RESHARE_ATTESTATION_SIG_BYTES} bytes, got ${thresholdSig.length}`,
+    );
+  }
 
   const selector = hexToBytes(ATTEST_DKG_RESHARE_SELECTOR, "selector", 4);
   const keysPadded = padTo32(publicKeysBytes);
@@ -333,11 +348,11 @@ export async function submitDkgReshareAttestation(
   const publicKeys = parseDkgResharePublicKeys(args.blsPublicKeysHex);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = new RpcClient(args.rpcUrl);
-  const senderHex = bytesToHex(backend.addressBytes());
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),
-    rpc.lythGetTransactionCount(senderHex),
+    rpc.lythGetTransactionCount(senderAddress),
     rpc.lythExecutionUnitPrice(),
   ]);
 

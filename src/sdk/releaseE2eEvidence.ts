@@ -3,12 +3,13 @@ import {
   type DesktopReleaseReadinessInput,
   type DesktopReleaseReadinessReport,
 } from "./releaseReadiness";
+import requiredE2eRoutes from "../nav/e2eRequiredRoutes.json";
 
 export const DESKTOP_E2E_EVIDENCE_SCHEMA = "monarch-desktop-e2e-evidence/v1";
 export const DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA =
   "monarch-dkg-reshare-attestation/v1";
 
-const REQUIRED_ROUTES = ["/home", "/hardware", "/operations", "/chat"] as const;
+const REQUIRED_ROUTES = requiredE2eRoutes;
 const REQUIRED_COMMANDS = [
   "talos_config_info",
   "talos_protocore_readiness",
@@ -18,7 +19,13 @@ const REQUIRED_COMMANDS = [
   "chat_send_message",
 ] as const;
 const TALOSCTL_PROBES = new Set(["talosctl_ok", "talosctl_secure_ok"]);
+const MIN_ROUTE_SCREENSHOT_BYTES = 1024;
+const MIN_ROUTE_SCREENSHOT_WIDTH = 320;
+const MIN_ROUTE_SCREENSHOT_HEIGHT = 240;
 const MAX_DKG_RESHARE_INTENT_ID = (1n << 56n) - 1n;
+const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = 1952;
+const DKG_RESHARE_ATTESTATION_SIG_BYTES = 3309;
+const DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 export type DesktopReleaseE2eEvidence = {
   schema_version: typeof DESKTOP_E2E_EVIDENCE_SCHEMA;
@@ -30,6 +37,14 @@ export type DesktopReleaseE2eEvidence = {
     commit: string;
     windows_observed: number;
     routes_visited: string[];
+    route_screenshots: Array<{
+      route: string;
+      path: string;
+      sha256: string;
+      bytes: number;
+      width: number;
+      height: number;
+    }>;
     commands_observed: string[];
   };
   os_smoke: {
@@ -148,16 +163,19 @@ function checkDkgReshareAttestation(
   }
 
   const keysHex = normalizeHex(stringValue(dkg.bls_public_keys_hex));
-  if (!/^[0-9a-f]+$/u.test(keysHex) || keysHex.length % 96 !== 0) {
-    blockers.push("DKG re-share attestation BLS pubkeys must be concatenated 48-byte values.");
+  if (
+    !/^[0-9a-f]+$/u.test(keysHex) ||
+    keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0
+  ) {
+    blockers.push("DKG re-share attestation pubkeys must be concatenated 1952-byte ML-DSA-65 values.");
   } else {
-    const signerCount = keysHex.length / 96;
+    const signerCount = keysHex.length / DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS;
     if (signerCount < 5 || signerCount > 7) {
       blockers.push("DKG re-share attestation must include 5..7 signer pubkeys.");
     }
     const keys: string[] = [];
-    for (let offset = 0; offset < keysHex.length; offset += 96) {
-      keys.push(keysHex.slice(offset, offset + 96));
+    for (let offset = 0; offset < keysHex.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS) {
+      keys.push(keysHex.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS));
     }
     if (new Set(keys).size !== keys.length) {
       blockers.push("DKG re-share attestation signer pubkeys must be unique.");
@@ -168,8 +186,12 @@ function checkDkgReshareAttestation(
   }
 
   const sigHex = normalizeHex(stringValue(dkg.threshold_sig_hex));
-  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== 192) {
-    blockers.push("DKG re-share attestation threshold_sig_hex must be 96 bytes.");
+  const signerCount = numberValue(dkg.signer_count);
+  const expectedSigHexChars = signerCount > 0
+    ? signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES * 2
+    : 0;
+  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== expectedSigHexChars) {
+    blockers.push("DKG re-share attestation threshold_sig_hex must contain one 3309-byte ML-DSA-65 signature per signer.");
   }
 }
 
@@ -199,11 +221,60 @@ function checkSource(source: Record<string, unknown>, blockers: string[]) {
       blockers.push(`Evidence did not visit required route: ${route}.`);
     }
   }
+  checkRouteScreenshots(source, blockers);
 
   const commands = stringArray(source.commands_observed);
   for (const command of REQUIRED_COMMANDS) {
     if (!commands.includes(command)) {
       blockers.push(`Evidence did not observe required Tauri command: ${command}.`);
+    }
+  }
+}
+
+function checkRouteScreenshots(source: Record<string, unknown>, blockers: string[]) {
+  if (!Array.isArray(source.route_screenshots)) {
+    blockers.push("Evidence source.route_screenshots is required.");
+    return;
+  }
+
+  const screenshotsByRoute = new Map<string, Record<string, unknown>>();
+  for (const item of source.route_screenshots) {
+    if (!isRecord(item)) {
+      blockers.push("Evidence route screenshot metadata must be an object.");
+      continue;
+    }
+    const route = stringValue(item.route);
+    if (!REQUIRED_ROUTES.includes(route)) {
+      blockers.push(`Evidence route screenshot references an unknown route: ${route || "missing"}.`);
+      continue;
+    }
+    if (screenshotsByRoute.has(route)) {
+      blockers.push(`Evidence contains duplicate route screenshot metadata: ${route}.`);
+      continue;
+    }
+    screenshotsByRoute.set(route, item);
+  }
+
+  for (const route of REQUIRED_ROUTES) {
+    const screenshot = screenshotsByRoute.get(route);
+    if (!screenshot) {
+      blockers.push(`Evidence did not capture required route screenshot: ${route}.`);
+      continue;
+    }
+    if (!isSafeRelativePngPath(stringValue(screenshot.path))) {
+      blockers.push(`Evidence route screenshot for ${route} is missing a safe relative PNG path.`);
+    }
+    if (!normalizeDigest(stringValue(screenshot.sha256))) {
+      blockers.push(`Evidence route screenshot for ${route} is missing a valid sha256 digest.`);
+    }
+    if (numberValue(screenshot.bytes) < MIN_ROUTE_SCREENSHOT_BYTES) {
+      blockers.push(`Evidence route screenshot for ${route} is too small.`);
+    }
+    if (numberValue(screenshot.width) < MIN_ROUTE_SCREENSHOT_WIDTH) {
+      blockers.push(`Evidence route screenshot for ${route} is narrower than ${MIN_ROUTE_SCREENSHOT_WIDTH}px.`);
+    }
+    if (numberValue(screenshot.height) < MIN_ROUTE_SCREENSHOT_HEIGHT) {
+      blockers.push(`Evidence route screenshot for ${route} is shorter than ${MIN_ROUTE_SCREENSHOT_HEIGHT}px.`);
     }
   }
 }
@@ -297,6 +368,12 @@ function numberValue(value: unknown): number {
 
 function boolish(value: unknown): boolean {
   return value === true || value === "true" || value === "1";
+}
+
+function isSafeRelativePngPath(value: string): boolean {
+  if (!value.endsWith(".png")) return false;
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value)) return false;
+  return !value.split(/[\\/]+/u).includes("..");
 }
 
 function normalizeHex(value: string): string {
