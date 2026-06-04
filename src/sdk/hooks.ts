@@ -540,12 +540,33 @@ export type ClusterStatus = {
   anchorAddress: string | null;
 };
 
+type OperatorInfoWireAliases = OperatorInfoResponse & {
+  consensusKeyFingerprint?: string | null;
+  blsKeyFingerprint?: string | null;
+};
+
+type ClusterMemberWireAliases = {
+  consensusPubkey?: string | null;
+  blsPubkey?: string | null;
+};
+
+function operatorConsensusKeyFingerprint(data: OperatorInfoResponse): string | null {
+  const row = data as OperatorInfoWireAliases;
+  return row.consensusKeyFingerprint ?? row.blsKeyFingerprint ?? null;
+}
+
 // The cluster anchor is derived by the SDK from the roster and threshold,
 // displayed under the `monok` HRP. Returns null if any member's roster key
 // is incomplete.
-function deriveAnchor(members: { blsPubkey: string }[], threshold: number): string | null {
+function deriveAnchor(members: readonly ClusterMemberWireAliases[], threshold: number): string | null {
   try {
-    const hex = deriveClusterAnchorAddress(members.map((m) => m.blsPubkey), threshold);
+    const rosterKeys: string[] = [];
+    for (const member of members) {
+      const key = member.consensusPubkey ?? member.blsPubkey;
+      if (!key) return null;
+      rosterKeys.push(key);
+    }
+    const hex = deriveClusterAnchorAddress(rosterKeys, threshold);
     return addressToTypedBech32("cluster", hex);
   } catch {
     return null;
@@ -562,13 +583,13 @@ export type ChainStatus = {
   reachable: boolean;
 };
 
-function mapOperatorInfo(data: OperatorInfoResponse): OperatorInfo {
+export function mapOperatorInfo(data: OperatorInfoResponse): OperatorInfo {
   return {
     id: data.operatorId,
     moniker: data.moniker ?? data.alias ?? shortOperatorId(data.operatorId),
     jailed: data.lifecycleState === "jailed" || data.lifecycleState === "tombstoned",
     bondedStake: data.bondedAmount,
-    pubkey: data.blsKeyFingerprint ?? data.operatorKeyFingerprint ?? data.chainAddress,
+    pubkey: operatorConsensusKeyFingerprint(data) ?? data.operatorKeyFingerprint ?? data.chainAddress,
     address: data.chainAddress,
     active: data.activeClusterIds.length > 0 && data.lifecycleState !== "tombstoned",
   };
@@ -582,7 +603,7 @@ function normalizeMemberState(raw: string): ClusterMemberState {
   return "nominal";
 }
 
-function mapClusterStatus(data: ClusterStatusResponse): ClusterStatus {
+export function mapClusterStatus(data: ClusterStatusResponse): ClusterStatus {
   const members = data.members.map((m, i) => ({
     id: i + 1,
     operatorId: m.operatorId,
