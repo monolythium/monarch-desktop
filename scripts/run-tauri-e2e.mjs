@@ -40,7 +40,9 @@ const timeoutMs = Number(options.timeoutMs ?? env("MONARCH_DESKTOP_E2E_TIMEOUT_M
 const skipChatSend = options.skipChatSend || env("MONARCH_E2E_SKIP_CHAT_SEND") === "true";
 const skipRestart = options.skipRestart || env("MONARCH_E2E_SKIP_RESTART") === "true";
 const allowMissingBootstrapPeers =
-  options.allowMissingBootstrapPeers || env("MONARCH_E2E_ALLOW_MISSING_BOOTSTRAP_PEERS") === "true";
+  options.allowMissingBootstrapPeers ||
+  truthyEnv("MONARCH_E2E_ALLOW_MISSING_BOOTSTRAP_PEERS") ||
+  truthyEnv("MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS");
 const operatorMnemonic = secretOption(
   options.operatorMnemonic,
   options.operatorMnemonicFile,
@@ -277,6 +279,7 @@ Options:
   --skip-chat-send      Do not send a chat message during readiness collection.
   --allow-missing-bootstrap-peers
                          Do not fail Desktop readiness solely on empty chat bootstrap peers.
+                         Also enabled by MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS=true.
 `);
 }
 
@@ -602,6 +605,10 @@ function arrayField(value, key) {
 
 function env(name) {
   return process.env[name] || "";
+}
+
+function truthyEnv(name) {
+  return /^(1|true|yes)$/iu.test(env(name).trim());
 }
 
 function secretOption(value, file, envValue, envFile) {

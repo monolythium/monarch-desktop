@@ -84,7 +84,13 @@ async function main() {
     appendOptionalArg(e2eArgs, "--chat-bootstrap-peers", options.chatBootstrapPeers ?? env("MONARCH_E2E_CHAT_BOOTSTRAP_PEERS"));
     appendOptionalArg(e2eArgs, "--dkg-reshare-attestation", options.dkgReshareAttestation ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE"));
     appendOptionalArg(e2eArgs, "--dkg-reshare-attestation-json", options.dkgReshareAttestationJson ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION"));
-    if (options.allowMissingBootstrapPeers) e2eArgs.push("--allow-missing-bootstrap-peers");
+    if (
+      options.allowMissingBootstrapPeers ||
+      truthyEnv("MONARCH_E2E_ALLOW_MISSING_BOOTSTRAP_PEERS") ||
+      truthyEnv("MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS")
+    ) {
+      e2eArgs.push("--allow-missing-bootstrap-peers");
+    }
 
     await runChecked("pnpm", e2eArgs, {
       cwd: ROOT,
@@ -209,6 +215,7 @@ Options:
                          Inline monarch-dkg-reshare-attestation/v1 JSON.
   --allow-missing-bootstrap-peers
                          Do not fail solely on empty chat bootstrap peers.
+                         Also enabled by MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS=true.
 `);
 }
 
@@ -301,6 +308,10 @@ function assertDir(dir, label) {
 
 function env(name) {
   return process.env[name] || "";
+}
+
+function truthyEnv(name) {
+  return /^(1|true|yes)$/iu.test(env(name).trim());
 }
 
 function delay(ms) {
