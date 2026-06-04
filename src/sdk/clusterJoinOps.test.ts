@@ -107,7 +107,7 @@ describe("CJ-1 cluster-admission calldata", () => {
     );
     expect(() =>
       deriveClusterJoinOperatorIdHex("0x" + "44".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1)),
-    ).toThrow(/expected 1952 bytes/u);
+    ).toThrow(/1952 bytes/u);
   });
 
   it("decodes the eight-word getClusterJoinRequest view tuple", () => {
@@ -147,7 +147,7 @@ describe("CJ-1 cluster-admission calldata", () => {
 
   it("rejects malformed request view tuples", () => {
     expect(() => decodeClusterJoinRequestView("0x" + "00".repeat(7 * 32))).toThrow(
-      /expected 8 ABI words/u,
+      /256 bytes/u,
     );
   });
 
@@ -186,20 +186,20 @@ describe("CJ-1 cluster-admission calldata", () => {
         clusterId: 1,
         operatorPubkeyHex: "0x" + "44".repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES - 1),
       }),
-    ).toThrow(/expected 1952 bytes/u);
+    ).toThrow(/1952 bytes/u);
     expect(() =>
       encodeRequestClusterJoinCalldata({
         clusterId: "4294967296",
         operatorPubkeyHex,
       }),
-    ).toThrow(/uint32 range/u);
+    ).toThrow(/uint32/u);
     expect(() =>
       encodeVoteClusterAdmitCalldata({
         clusterId: 1,
         operatorIdHex: "0x1234",
         voterPubkeyHex,
       }),
-    ).toThrow(/operatorId: expected 32 bytes/u);
+    ).toThrow(/operatorId.*32 bytes/u);
     expect(() =>
       encodeVoteClusterAdmitCalldata({
         clusterId: 1,
@@ -242,7 +242,7 @@ describe("CJ-1 cluster-admission tx field builders", () => {
         operatorPubkeyHex,
         bondLythoshi: "-1",
       }),
-    ).toThrow(/bondLythoshi: expected decimal uint256/u);
+    ).toThrow(/256-bit range/u);
   });
 
   it("builds voteClusterAdmit as a zero-value node-registry tx", () => {

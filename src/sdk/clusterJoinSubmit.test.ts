@@ -29,35 +29,39 @@ const fakeBackend = {
   }),
 };
 
-vi.mock("@monolythium/core-sdk", () => ({
-  RpcClient: class {
-    endpoint: string;
-    constructor(endpoint: string) {
-      this.endpoint = endpoint;
-    }
-    call = vi.fn(async (method: string, params?: unknown) => {
-      rpcCalls.push({ method, params });
-      if (ethCallFailure) throw ethCallFailure;
-      return ethCallResponse;
-    });
-    ethChainId = vi.fn(async () => 69420n);
-    lythGetTransactionCount = vi.fn(async (address: string) => {
-      transactionCountReads += 1;
-      transactionCountAddresses.push(address);
-      return 18n;
-    });
-    lythExecutionUnitPrice = vi.fn(async () => ({
-      executionUnitPriceLythoshi: "800",
-      basePricePerExecutionUnitLythoshi: "800",
-      priorityTipLythoshi: "950",
-      blockNumber: 1,
-      source: "test",
-    }));
-  },
-  REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT: 250_000n,
-  addressToTypedBech32: () => "mono1typedoperator",
-  nodeRegistryAddressHex: () => "0x0000000000000000000000000000000000001005",
-}));
+vi.mock("@monolythium/core-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@monolythium/core-sdk")>();
+  return {
+    ...actual,
+    RpcClient: class {
+      endpoint: string;
+      constructor(endpoint: string) {
+        this.endpoint = endpoint;
+      }
+      call = vi.fn(async (method: string, params?: unknown) => {
+        rpcCalls.push({ method, params });
+        if (ethCallFailure) throw ethCallFailure;
+        return ethCallResponse;
+      });
+      ethChainId = vi.fn(async () => 69420n);
+      lythGetTransactionCount = vi.fn(async (address: string) => {
+        transactionCountReads += 1;
+        transactionCountAddresses.push(address);
+        return 18n;
+      });
+      lythExecutionUnitPrice = vi.fn(async () => ({
+        executionUnitPriceLythoshi: "800",
+        basePricePerExecutionUnitLythoshi: "800",
+        priorityTipLythoshi: "950",
+        blockNumber: 1,
+        source: "test",
+      }));
+    },
+    REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT: 250_000n,
+    addressToTypedBech32: () => "mono1typedoperator",
+    nodeRegistryAddressHex: () => "0x0000000000000000000000000000000000001005",
+  };
+});
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
   pqm1MnemonicToMlDsa65Backend: () => fakeBackend,

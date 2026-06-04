@@ -7,41 +7,48 @@
 
 import {
   addressToTypedBech32,
+  buildRequestClusterJoinTxFields as buildSdkRequestClusterJoinTxFields,
+  buildVoteClusterAdmitTxFields as buildSdkVoteClusterAdmitTxFields,
+  clusterJoinRequestExists,
+  decodeClusterJoinRequest as decodeSdkClusterJoinRequest,
+  deriveClusterJoinOperatorId,
+  encodeCancelClusterJoinCalldata as encodeSdkCancelClusterJoinCalldata,
+  encodeExpireClusterJoinCalldata as encodeSdkExpireClusterJoinCalldata,
+  encodeGetClusterJoinRequestCalldata as encodeSdkGetClusterJoinRequestCalldata,
+  encodeRequestClusterJoinCalldata as encodeSdkRequestClusterJoinCalldata,
+  encodeVoteClusterAdmitCalldata as encodeSdkVoteClusterAdmitCalldata,
   nodeRegistryAddressHex,
+  NODE_REGISTRY_SELECTORS,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
   RpcClient,
+  type ClusterJoinRequestView as SdkClusterJoinRequestView,
 } from "@monolythium/core-sdk";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
-import {
-  NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
-  operatorPubkeyHash,
-} from "./operatorKeys";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
 
-export const REQUEST_CLUSTER_JOIN_SELECTOR = "0xe1dd13bd";
-export const VOTE_CLUSTER_ADMIT_SELECTOR = "0x20519d4f";
-export const CANCEL_CLUSTER_JOIN_SELECTOR = "0x3e2d51c3";
-export const EXPIRE_CLUSTER_JOIN_SELECTOR = "0xeeb96895";
-export const GET_CLUSTER_JOIN_REQUEST_SELECTOR = "0x224de9bf";
+export const REQUEST_CLUSTER_JOIN_SELECTOR = NODE_REGISTRY_SELECTORS.requestClusterJoin;
+export const VOTE_CLUSTER_ADMIT_SELECTOR = NODE_REGISTRY_SELECTORS.voteClusterAdmit;
+export const CANCEL_CLUSTER_JOIN_SELECTOR = NODE_REGISTRY_SELECTORS.cancelClusterJoin;
+export const EXPIRE_CLUSTER_JOIN_SELECTOR = NODE_REGISTRY_SELECTORS.expireClusterJoin;
+export const GET_CLUSTER_JOIN_REQUEST_SELECTOR = NODE_REGISTRY_SELECTORS.getClusterJoinRequest;
 
 export const DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT =
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT;
 export const CLUSTER_JOIN_REQUEST_TTL_EPOCHS = 6;
 
 const MAX_UINT32 = (1n << 32n) - 1n;
-const CLUSTER_JOIN_REQUEST_VIEW_WORDS = 8;
-const BYTES_PER_WORD = 32;
 
 export type ClusterJoinRequestStatus =
   | "none"
   | "open"
   | "admitted"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "unknown";
 
 export interface ClusterJoinRequestView {
   owner: string;
@@ -126,40 +133,6 @@ function hexToBytes(value: string, label: string, expectedLen?: number): Uint8Ar
   return out;
 }
 
-function normalizeHex(value: string, label: string): string {
-  const clean = stripHex(value.trim());
-  if (clean.length % 2 !== 0) throw new Error(`${label}: odd hex length`);
-  if (!/^[0-9a-fA-F]*$/u.test(clean)) throw new Error(`${label}: invalid hex`);
-  return clean.toLowerCase();
-}
-
-function wordToBigInt(wordHex: string): bigint {
-  return BigInt(`0x${wordHex}`);
-}
-
-function wordToSafeNumber(wordHex: string, label: string): number {
-  const parsed = wordToBigInt(wordHex);
-  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error(`${label}: exceeds safe integer range`);
-  }
-  return Number(parsed);
-}
-
-function clusterJoinStatusFromCode(code: number): ClusterJoinRequestStatus {
-  switch (code) {
-    case 1:
-      return "open";
-    case 2:
-      return "admitted";
-    case 3:
-      return "cancelled";
-    case 4:
-      return "expired";
-    default:
-      return "none";
-  }
-}
-
 function parseUint32(value: bigint | number | string, label: string): bigint {
   let parsed: bigint;
   if (typeof value === "bigint") {
@@ -178,162 +151,73 @@ function parseUint32(value: bigint | number | string, label: string): bigint {
   return parsed;
 }
 
-function parseNonNegativeU256(value: bigint | number | string, label: string): bigint {
-  let parsed: bigint;
-  if (typeof value === "bigint") {
-    parsed = value;
-  } else if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) throw new Error(`${label}: expected safe integer`);
-    parsed = BigInt(value);
-  } else {
-    const trimmed = value.trim();
-    if (!/^\d+$/u.test(trimmed)) throw new Error(`${label}: expected decimal uint256`);
-    parsed = BigInt(trimmed);
-  }
-  if (parsed < 0n || parsed >= 1n << 256n) {
-    throw new Error(`${label}: out of uint256 range`);
-  }
-  return parsed;
-}
-
-function u256BE(value: bigint | number): Uint8Array {
-  const v = typeof value === "bigint" ? value : BigInt(value);
-  if (v < 0n || v >= 1n << 256n) throw new Error("u256 out of range");
-  const out = new Uint8Array(32);
-  let n = v;
-  for (let i = 31; i >= 0; i -= 1) {
-    out[i] = Number(n & 0xffn);
-    n >>= 8n;
-  }
-  return out;
-}
-
-function padTo32(bytes: Uint8Array): Uint8Array {
-  const paddedLength = Math.ceil(bytes.length / 32) * 32;
-  if (paddedLength === bytes.length) return bytes;
-  const out = new Uint8Array(paddedLength);
-  out.set(bytes);
-  return out;
-}
-
-function concat(chunks: Uint8Array[]): Uint8Array {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
 export function encodeRequestClusterJoinCalldata(
   args: RequestClusterJoinCalldataArgs,
 ): string {
-  const operatorPubkey = hexToBytes(
-    args.operatorPubkeyHex,
-    "operatorPubkey",
-    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
-  );
-  const calldata = concat([
-    hexToBytes(REQUEST_CLUSTER_JOIN_SELECTOR, "selector", 4),
-    u256BE(parseUint32(args.clusterId, "clusterId")),
-    u256BE(2n * 32n),
-    u256BE(operatorPubkey.length),
-    padTo32(operatorPubkey),
-  ]);
-  return bytesToHex(calldata);
+  return encodeSdkRequestClusterJoinCalldata({
+    clusterId: args.clusterId,
+    operatorPubkey: args.operatorPubkeyHex,
+  });
 }
 
 export function encodeVoteClusterAdmitCalldata(
   args: VoteClusterAdmitCalldataArgs,
 ): string {
-  const operatorId = hexToBytes(args.operatorIdHex, "operatorId", 32);
-  const voterPubkey = hexToBytes(
-    args.voterPubkeyHex,
-    "voterPubkey",
-    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
-  );
-  const calldata = concat([
-    hexToBytes(VOTE_CLUSTER_ADMIT_SELECTOR, "selector", 4),
-    u256BE(parseUint32(args.clusterId, "clusterId")),
-    operatorId,
-    u256BE(3n * 32n),
-    u256BE(voterPubkey.length),
-    padTo32(voterPubkey),
-  ]);
-  return bytesToHex(calldata);
+  return encodeSdkVoteClusterAdmitCalldata({
+    clusterId: args.clusterId,
+    operatorId: args.operatorIdHex,
+    voterPubkey: args.voterPubkeyHex,
+  });
 }
 
 export function encodeCancelClusterJoinCalldata(
   args: ClusterJoinByOperatorIdCalldataArgs,
 ): string {
-  const calldata = concat([
-    hexToBytes(CANCEL_CLUSTER_JOIN_SELECTOR, "selector", 4),
-    u256BE(parseUint32(args.clusterId, "clusterId")),
-    hexToBytes(args.operatorIdHex, "operatorId", 32),
-  ]);
-  return bytesToHex(calldata);
+  return encodeSdkCancelClusterJoinCalldata({
+    clusterId: args.clusterId,
+    operatorId: args.operatorIdHex,
+  });
 }
 
 export function encodeExpireClusterJoinCalldata(
   args: ClusterJoinByOperatorIdCalldataArgs,
 ): string {
-  const calldata = concat([
-    hexToBytes(EXPIRE_CLUSTER_JOIN_SELECTOR, "selector", 4),
-    u256BE(parseUint32(args.clusterId, "clusterId")),
-    hexToBytes(args.operatorIdHex, "operatorId", 32),
-  ]);
-  return bytesToHex(calldata);
+  return encodeSdkExpireClusterJoinCalldata({
+    clusterId: args.clusterId,
+    operatorId: args.operatorIdHex,
+  });
 }
 
 export function encodeGetClusterJoinRequestCalldata(
   args: ClusterJoinByOperatorIdCalldataArgs,
 ): string {
-  const calldata = concat([
-    hexToBytes(GET_CLUSTER_JOIN_REQUEST_SELECTOR, "selector", 4),
-    u256BE(parseUint32(args.clusterId, "clusterId")),
-    hexToBytes(args.operatorIdHex, "operatorId", 32),
-  ]);
-  return bytesToHex(calldata);
+  return encodeSdkGetClusterJoinRequestCalldata({
+    clusterId: args.clusterId,
+    operatorId: args.operatorIdHex,
+  });
 }
 
 export function deriveClusterJoinOperatorIdHex(operatorPubkeyHex: string): string {
-  const operatorPubkey = hexToBytes(
-    operatorPubkeyHex,
-    "operatorPubkey",
-    NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
-  );
-  return bytesToHex(operatorPubkeyHash(operatorPubkey));
+  return deriveClusterJoinOperatorId(operatorPubkeyHex);
 }
 
 export function decodeClusterJoinRequestView(value: string): ClusterJoinRequestView {
-  const clean = normalizeHex(value, "clusterJoinRequestView");
-  const expectedHexChars = CLUSTER_JOIN_REQUEST_VIEW_WORDS * BYTES_PER_WORD * 2;
-  if (clean.length !== expectedHexChars) {
-    throw new Error(
-      `clusterJoinRequestView: expected ${CLUSTER_JOIN_REQUEST_VIEW_WORDS} ABI words, got ${clean.length / 64}`,
-    );
-  }
-  const word = (index: number) => clean.slice(index * 64, (index + 1) * 64);
-  const owner = `0x${word(0).slice(24)}`;
-  const statusCode = wordToSafeNumber(word(5), "status");
-  const status = clusterJoinStatusFromCode(statusCode);
-  const bond = wordToBigInt(word(6));
-  const sealRosterPending = wordToBigInt(word(7)) !== 0n;
-  const zeroOwner = owner === "0x0000000000000000000000000000000000000000";
+  const decoded = decodeSdkClusterJoinRequest(value);
+  return adaptClusterJoinRequestView(decoded);
+}
 
+function adaptClusterJoinRequestView(view: SdkClusterJoinRequestView): ClusterJoinRequestView {
   return {
-    owner,
-    requestEpoch: wordToBigInt(word(1)).toString(),
-    snapshotThreshold: wordToSafeNumber(word(2), "snapshotThreshold"),
-    snapshotN: wordToSafeNumber(word(3), "snapshotN"),
-    voteCount: wordToSafeNumber(word(4), "voteCount"),
-    status,
-    statusCode,
-    bondLythoshi: bond.toString(),
-    sealRosterPending,
-    exists: status !== "none" || !zeroOwner || bond !== 0n,
+    owner: view.owner,
+    requestEpoch: view.requestEpoch.toString(),
+    snapshotThreshold: view.snapshotThreshold,
+    snapshotN: view.snapshotN,
+    voteCount: view.voteCount,
+    status: view.status,
+    statusCode: view.statusCode,
+    bondLythoshi: view.bondLythoshi.toString(),
+    sealRosterPending: view.sealRosterPending,
+    exists: clusterJoinRequestExists(view),
   };
 }
 
@@ -379,19 +263,18 @@ export function buildRequestClusterJoinTxFields(args: {
   const suggestedTip = BigInt(args.fee.priorityTipLythoshi);
   const priorityTip = clampPriorityTip(suggestedTip, maxExecutionUnitPrice);
 
-  return {
+  return buildSdkRequestClusterJoinTxFields({
     chainId: args.chainId,
     nonce: args.nonce,
-    maxFeePerGas: maxExecutionUnitPrice,
-    maxPriorityFeePerGas: priorityTip,
-    gasLimit: args.executionUnitLimit ?? DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT,
-    to: nodeRegistryAddressHex(),
-    value: parseNonNegativeU256(args.bondLythoshi, "bondLythoshi"),
-    input: encodeRequestClusterJoinCalldata({
-      clusterId: args.clusterId,
-      operatorPubkeyHex: args.operatorPubkeyHex,
-    }),
-  };
+    fee: {
+      maxFeePerGas: maxExecutionUnitPrice,
+      maxPriorityFeePerGas: priorityTip,
+      gasLimit: args.executionUnitLimit ?? DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT,
+    },
+    clusterId: args.clusterId,
+    operatorPubkey: args.operatorPubkeyHex,
+    bondLythoshi: args.bondLythoshi,
+  });
 }
 
 export function buildVoteClusterAdmitTxFields(args: {
@@ -407,20 +290,18 @@ export function buildVoteClusterAdmitTxFields(args: {
   const suggestedTip = BigInt(args.fee.priorityTipLythoshi);
   const priorityTip = clampPriorityTip(suggestedTip, maxExecutionUnitPrice);
 
-  return {
+  return buildSdkVoteClusterAdmitTxFields({
     chainId: args.chainId,
     nonce: args.nonce,
-    maxFeePerGas: maxExecutionUnitPrice,
-    maxPriorityFeePerGas: priorityTip,
-    gasLimit: args.executionUnitLimit ?? DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT,
-    to: nodeRegistryAddressHex(),
-    value: 0n,
-    input: encodeVoteClusterAdmitCalldata({
-      clusterId: args.clusterId,
-      operatorIdHex: args.operatorIdHex,
-      voterPubkeyHex: args.voterPubkeyHex,
-    }),
-  };
+    fee: {
+      maxFeePerGas: maxExecutionUnitPrice,
+      maxPriorityFeePerGas: priorityTip,
+      gasLimit: args.executionUnitLimit ?? DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT,
+    },
+    clusterId: args.clusterId,
+    operatorId: args.operatorIdHex,
+    voterPubkey: args.voterPubkeyHex,
+  });
 }
 
 export async function submitRequestClusterJoin(
