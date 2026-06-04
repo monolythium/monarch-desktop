@@ -315,15 +315,15 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Form cluster",
     sub: "Prepare 7 active + 3 standby roster",
     intro:
-      "Prepares a self-service cluster-formation roster proposal using the whitepaper topology: 10 operator seats, 7-of-10 threshold, 7 active operators, and 3 standby operators. Desktop validates the ML-DSA-65 consensus pubkeys and derives operator ids, but execution stays blocked until the chain exposes a formation primitive.",
+      "Submits a self-service formCluster(bytes,bytes,bytes) transaction using the whitepaper topology: 10 operator seats, 7-of-10 threshold, 7 active operators, and 3 standby operators. Desktop validates the ML-DSA-65 consensus pubkeys, derives operator ids, and requires ten roster consent signatures before signing.",
     destructive: true,
     needsPasskey: true,
-    confirmLabel: "Prepare formation",
+    confirmLabel: "Sign formation",
     keywords: ["cluster", "form", "create", "roster", "standby", "active", "topology"],
     effects: [
       "Validates exactly 7 active and 3 standby ML-DSA-65 consensus pubkeys.",
       "Rejects malformed or duplicate consensus pubkeys before authorization.",
-      "Fails closed until node-registry exposes a signed cluster-formation primitive and Desktop has a submit helper.",
+      "Preflights formCluster through eth_call, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
     ],
     diff: [
       { key: "cluster", label: "Cluster", value: "+ roster proposal" },
@@ -332,7 +332,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     fields: [
       { key: "active", label: "Active seats", value: "7 ML-DSA-65 consensus pubkeys" },
       { key: "standby", label: "Standby seats", value: "3 ML-DSA-65 consensus pubkeys" },
-      { key: "executor", label: "Executor", value: "blocked until runtime primitive exists" },
+      { key: "executor", label: "Executor", value: "formCluster(bytes,bytes,bytes)" },
     ],
   },
   {

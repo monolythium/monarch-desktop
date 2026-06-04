@@ -611,9 +611,9 @@ function interactionChecks(serverUrl, timeoutMs) {
         await clickByText(cdp, "button", "Prepare roster");
         await waitForText(cdp, "Cluster formation roster", timeoutMs);
         await assertDrawer(cdp, "Form cluster");
-        await waitForText(cdp, "Execution remains fail-closed until the runtime exposes a cluster-formation primitive", timeoutMs);
+        await waitForText(cdp, "Submits formCluster(bytes,bytes,bytes) on compatible runtimes", timeoutMs);
         await assertPrimaryDisabled(cdp, true);
-        assertions.push("cluster formation drawer validates topology and stays fail-closed without runtime support");
+        assertions.push("cluster formation drawer validates topology and consent signatures before signing");
       },
     },
   ];

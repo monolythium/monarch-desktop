@@ -5,6 +5,9 @@ import {
   MONARCH_CLUSTER_THRESHOLD,
   MONARCH_STANDBY_OPERATOR_SEATS,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
+  FORM_CLUSTER_SIGNATURE_BYTES,
+  FORM_CLUSTER_MEMBER_COUNT,
+  formClusterConsentMessageHex,
   operatorPubkeyHash,
 } from "../sdk";
 import { useOps } from "./OpsContext";
@@ -13,7 +16,7 @@ import type { ClusterFormInput } from "./types";
 const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
 
 export const CLUSTER_FORM_RUNTIME_NOTICE =
-  "Execution remains fail-closed until the runtime exposes a cluster-formation primitive and Desktop has a matching SDK submit helper.";
+  "Submits formCluster(bytes,bytes,bytes) on compatible runtimes. Requires ten ML-DSA-65 consent signatures in roster order.";
 
 export type ClusterFormRosterRole = "active" | "standby";
 
@@ -30,7 +33,10 @@ export type ClusterFormProposalSummary = {
   totalCount: number;
   invalidActiveCount: number;
   invalidStandbyCount: number;
+  signatureCount: number;
+  invalidSignatureCount: number;
   duplicateCount: number;
+  consentMessageHex: string | null;
   ready: boolean;
   blockers: string[];
   roster: ClusterFormRosterEntry[];
@@ -73,6 +79,13 @@ export function parseClusterFormPubkeys(value: string): string[] {
     .filter(Boolean);
 }
 
+export function parseClusterFormSignatures(value: string): string[] {
+  return value
+    .split(/[\s,]+/u)
+    .map(normalizeHex)
+    .filter(Boolean);
+}
+
 function operatorIdForPubkeyHex(pubkeyHex: string): string {
   return bytesToHex(operatorPubkeyHash(hexToBytes(pubkeyHex)));
 }
@@ -108,8 +121,13 @@ export function clusterFormProposalSummary(
 ): ClusterFormProposalSummary {
   const active = parseClusterFormPubkeys(input?.activePubkeysHex ?? "");
   const standby = parseClusterFormPubkeys(input?.standbyPubkeysHex ?? "");
+  const signatures = parseClusterFormSignatures(input?.signaturesHex ?? "");
   const invalidActiveCount = active.filter((value) => !isFixedConsensusPubkeyHex(value)).length;
   const invalidStandbyCount = standby.filter((value) => !isFixedConsensusPubkeyHex(value)).length;
+  const invalidSignatureCount = signatures.filter(
+    (value) =>
+      value.length !== FORM_CLUSTER_SIGNATURE_BYTES * 2 + 2 || !/^0x[0-9a-f]+$/u.test(value),
+  ).length;
   const duplicateCount = duplicateOverflowCount([...active, ...standby]);
   const blockers: string[] = [];
 
@@ -125,6 +143,25 @@ export function clusterFormProposalSummary(
   if (duplicateCount > 0) {
     blockers.push("active and standby rosters must not reuse a consensus pubkey");
   }
+  if (signatures.length !== FORM_CLUSTER_MEMBER_COUNT) {
+    blockers.push(`expected ${FORM_CLUSTER_MEMBER_COUNT} roster consent signatures`);
+  }
+  if (invalidSignatureCount > 0) {
+    blockers.push(`all consent signatures must be ${FORM_CLUSTER_SIGNATURE_BYTES} byte ML-DSA-65 signatures`);
+  }
+
+  let consentMessageHex: string | null = null;
+  if (
+    active.length === MONARCH_ACTIVE_OPERATOR_SEATS &&
+    standby.length === MONARCH_STANDBY_OPERATOR_SEATS &&
+    invalidActiveCount + invalidStandbyCount === 0 &&
+    duplicateCount === 0
+  ) {
+    consentMessageHex = formClusterConsentMessageHex({
+      activePubkeysHex: active.join("\n"),
+      standbyPubkeysHex: standby.join("\n"),
+    });
+  }
 
   return {
     activeCount: active.length,
@@ -132,7 +169,10 @@ export function clusterFormProposalSummary(
     totalCount: active.length + standby.length,
     invalidActiveCount,
     invalidStandbyCount,
+    signatureCount: signatures.length,
+    invalidSignatureCount,
     duplicateCount,
+    consentMessageHex,
     ready: blockers.length === 0,
     blockers,
     roster: [
@@ -172,7 +212,7 @@ export function ClusterFormProposalForm() {
   const input = request?.clusterFormInput;
   const current: ClusterFormInput = request?.kind === "cluster-form" && input
     ? input
-    : { activePubkeysHex: "", standbyPubkeysHex: "" };
+    : { activePubkeysHex: "", standbyPubkeysHex: "", signaturesHex: "" };
   const summary = useMemo(() => clusterFormProposalSummary(current), [current]);
   const activeOk =
     summary.activeCount === MONARCH_ACTIVE_OPERATOR_SEATS &&
@@ -182,6 +222,9 @@ export function ClusterFormProposalForm() {
     summary.standbyCount === MONARCH_STANDBY_OPERATOR_SEATS &&
     summary.invalidStandbyCount === 0 &&
     summary.duplicateCount === 0;
+  const signaturesOk =
+    summary.signatureCount === FORM_CLUSTER_MEMBER_COUNT &&
+    summary.invalidSignatureCount === 0;
 
   if (!request || request.kind !== "cluster-form") return null;
 
@@ -206,9 +249,15 @@ export function ClusterFormProposalForm() {
         <div className="kv">
           <span className="kv__k">Provided</span>
           <span className="kv__v mono">
-            {summary.activeCount} active · {summary.standbyCount} standby · {summary.totalCount} total
+            {summary.activeCount} active · {summary.standbyCount} standby · {summary.totalCount} total · {summary.signatureCount} signatures
           </span>
         </div>
+        {summary.consentMessageHex ? (
+          <div className="kv">
+            <span className="kv__k">Consent digest</span>
+            <span className="kv__v mono">{compactHex(summary.consentMessageHex, 18, 12)}</span>
+          </div>
+        ) : null}
         {summary.blockers.length > 0 ? (
           <div style={{ display: "grid", gap: 6 }}>
             {summary.blockers.map((blocker) => (
@@ -258,6 +307,27 @@ export function ClusterFormProposalForm() {
         </span>
       </label>
 
+      <label
+        className="kv"
+        style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
+      >
+        <span className="kv__k">Roster consent signatures</span>
+        <textarea
+          placeholder="0x..."
+          value={current.signaturesHex}
+          onChange={(event) => setClusterFormInput({ signaturesHex: event.target.value })}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          style={inputStyle(signaturesOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          Exactly {FORM_CLUSTER_MEMBER_COUNT} signatures over the consent digest, active roster first,
+          then standby roster.
+        </span>
+      </label>
+
       {summary.roster.length > 0 ? (
         <div
           style={{
@@ -287,4 +357,5 @@ export function ClusterFormProposalForm() {
 
 export const CLUSTER_FORM_HEX_LENGTHS = {
   consensusPubkey: CONSENSUS_PUBKEY_HEX_CHARS + 2,
+  consentSignature: FORM_CLUSTER_SIGNATURE_BYTES * 2 + 2,
 } as const;

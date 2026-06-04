@@ -85,12 +85,13 @@ export type ClusterVoteAdmitInput = {
   voterPubkeyHex: string;
 };
 
-// Inputs for a self-service cluster-formation proposal. Formation
-// execution is intentionally blocked until the runtime defines the
-// primitive; Desktop still validates the roster topology and evidence.
+// Inputs for the self-service `formCluster(bytes,bytes,bytes)` call.
+// Signatures are ten ML-DSA-65 consent signatures over the canonical
+// roster digest, in roster order: seven active first, then three standby.
 export type ClusterFormInput = {
   activePubkeysHex: string;
   standbyPubkeysHex: string;
+  signaturesHex: string;
 };
 
 // Inputs for the operator-callable `attestDkgReshare(uint64,bytes,bytes)`.

@@ -25,23 +25,3 @@ export function unsignedExecutionBlocked(req: OpRequest): BlockedOperationOutcom
     meta: { transport: "blocked" },
   };
 }
-
-export function clusterJoinExecutionBlocked(req: OpRequest): BlockedOperationOutcome {
-  return {
-    result: {
-      ok: false,
-      message: `${req.title} was not executed. CJ-1 cluster-vote admission is not live on this chain/runtime yet.`,
-    },
-    meta: { transport: "blocked" },
-  };
-}
-
-export function clusterFormExecutionBlocked(req: OpRequest): BlockedOperationOutcome {
-  return {
-    result: {
-      ok: false,
-      message: `${req.title} was not executed. Cluster formation still needs the on-chain formation primitive and SDK submit helper.`,
-    },
-    meta: { transport: "blocked" },
-  };
-}

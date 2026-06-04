@@ -14,6 +14,7 @@ export type OperationReceiptTransport =
   | "foundation-pending-change-tx"
   | "cluster-join-request-tx"
   | "cluster-vote-admit-tx"
+  | "cluster-form-tx"
   | "dkg-reshare-tx"
   | "incident-freeze-admission-tx"
   | "incident-emergency-key-rotation-tx"

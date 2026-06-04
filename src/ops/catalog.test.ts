@@ -30,12 +30,12 @@ describe("operation catalog", () => {
 
     expect(form).toMatchObject({
       title: "Form cluster",
-      confirmLabel: "Prepare formation",
+      confirmLabel: "Sign formation",
       category: "cluster",
     });
-    expect(form?.intro).toContain("7 active operators");
+    expect(form?.intro).toContain("formCluster(bytes,bytes,bytes)");
     expect(form?.effects).toContain(
-      "Fails closed until node-registry exposes a signed cluster-formation primitive and Desktop has a submit helper.",
+      "Preflights formCluster through eth_call, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
     );
 
     expect(request).toMatchObject({

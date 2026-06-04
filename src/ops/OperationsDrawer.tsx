@@ -136,7 +136,7 @@ export function OperationsDrawer() {
               : clusterVoteAdmitNeedsInput
                 ? "Fill every CJ-1 admit vote input first"
                 : clusterFormNeedsInput
-                  ? "Fill the 7 active + 3 standby cluster roster first"
+                  ? "Fill the 7 active + 3 standby roster and consent signatures first"
                   : dkgReshareNeedsInput
                     ? "Fill every DKG attestation input first"
                     : freezeAdmissionNeedsInput

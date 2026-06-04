@@ -196,6 +196,27 @@ export type {
   VoteClusterAdmitCalldataArgs,
 } from "./clusterJoinOps";
 export {
+  buildFormClusterTxFields,
+  DEFAULT_FORM_CLUSTER_EXECUTION_UNIT_LIMIT,
+  encodeFormClusterCalldata,
+  FORM_CLUSTER_ACTIVE_COUNT,
+  FORM_CLUSTER_CONSENT_MESSAGE_DOMAIN,
+  FORM_CLUSTER_MEMBER_COUNT,
+  FORM_CLUSTER_SELECTOR,
+  FORM_CLUSTER_SIGNATURE_BYTES,
+  FORM_CLUSTER_STANDBY_COUNT,
+  FORM_CLUSTER_THRESHOLD,
+  formClusterConsentMessage,
+  formClusterConsentMessageHex,
+  signFormClusterConsent,
+  submitFormCluster,
+} from "./clusterFormOps";
+export type {
+  FormClusterCalldataArgs,
+  SubmitFormClusterArgs,
+  SubmitFormClusterResult,
+} from "./clusterFormOps";
+export {
   ATTEST_DKG_RESHARE_SELECTOR,
   buildDkgReshareAttestationTxFields,
   DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT,

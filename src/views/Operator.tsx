@@ -106,13 +106,13 @@ export function Operator() {
                 title: `Request join for ${activeClusterLabel}`,
                 sub: "Prepare CJ-1 join request",
                 intro:
-                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id and derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available; execution stays blocked until CJ-1 is live on the connected chain.",
+                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits on CJ-1 runtimes.",
                 fields: [
                   { key: "cluster", label: "Cluster", value: activeClusterLabel },
                   {
                     key: "flow",
                     label: "Flow",
-                    value: "cluster vote admission; blocked until runtime is live",
+                    value: "cluster vote admission; runtime preflight gated",
                   },
                   {
                     key: "seal-roster",

@@ -5,8 +5,11 @@ import {
   clusterFormProposalSummary,
   isClusterFormInputComplete,
   parseClusterFormPubkeys,
+  parseClusterFormSignatures,
 } from "./ClusterFormProposalForm";
 import {
+  FORM_CLUSTER_MEMBER_COUNT,
+  FORM_CLUSTER_SIGNATURE_BYTES,
   MONARCH_ACTIVE_OPERATOR_SEATS,
   MONARCH_STANDBY_OPERATOR_SEATS,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
@@ -14,6 +17,10 @@ import {
 
 function pubkey(byte: number): string {
   return `0x${byte.toString(16).padStart(2, "0").repeat(NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES)}`;
+}
+
+function sig(byte: number): string {
+  return `0x${byte.toString(16).padStart(2, "0").repeat(FORM_CLUSTER_SIGNATURE_BYTES)}`;
 }
 
 function validInput() {
@@ -24,6 +31,9 @@ function validInput() {
     standbyPubkeysHex: Array.from({ length: MONARCH_STANDBY_OPERATOR_SEATS }, (_, index) =>
       pubkey(index + 20),
     ).join("\n"),
+    signaturesHex: Array.from({ length: FORM_CLUSTER_MEMBER_COUNT }, (_, index) =>
+      sig(index + 40),
+    ).join("\n"),
   };
 }
 
@@ -31,6 +41,9 @@ describe("cluster formation roster proposal", () => {
   it("pins the expected ML-DSA-65 consensus pubkey length", () => {
     expect(CLUSTER_FORM_HEX_LENGTHS.consensusPubkey).toBe(
       2 + NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2,
+    );
+    expect(CLUSTER_FORM_HEX_LENGTHS.consentSignature).toBe(
+      2 + FORM_CLUSTER_SIGNATURE_BYTES * 2,
     );
   });
 
@@ -42,6 +55,14 @@ describe("cluster formation roster proposal", () => {
     ]);
   });
 
+  it("parses newline, comma, and whitespace separated consent signatures", () => {
+    expect(parseClusterFormSignatures(` ${sig(1)},\n${sig(2)} ${sig(3)} `)).toEqual([
+      sig(1),
+      sig(2),
+      sig(3),
+    ]);
+  });
+
   it("accepts exactly 7 active and 3 standby unique consensus pubkeys", () => {
     const summary = clusterFormProposalSummary(validInput());
 
@@ -49,6 +70,8 @@ describe("cluster formation roster proposal", () => {
     expect(summary.activeCount).toBe(7);
     expect(summary.standbyCount).toBe(3);
     expect(summary.totalCount).toBe(10);
+    expect(summary.signatureCount).toBe(10);
+    expect(summary.consentMessageHex).toMatch(/^0x[0-9a-f]{64}$/u);
     expect(summary.blockers).toEqual([]);
     expect(summary.roster).toHaveLength(10);
     expect(summary.roster[0]).toMatchObject({
@@ -79,6 +102,7 @@ describe("cluster formation roster proposal", () => {
     ).join("\n");
     const standby = [pubkey(2), pubkey(30), pubkey(31)].join("\n");
     const summary = clusterFormProposalSummary({
+      ...validInput(),
       activePubkeysHex: active,
       standbyPubkeysHex: standby,
     });
@@ -94,8 +118,27 @@ describe("cluster formation roster proposal", () => {
     );
   });
 
-  it("states that formation execution remains blocked", () => {
-    expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("fail-closed");
-    expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("cluster-formation primitive");
+  it("rejects missing or malformed consent signatures", () => {
+    const missing = clusterFormProposalSummary({
+      ...validInput(),
+      signaturesHex: "",
+    });
+    expect(missing.ready).toBe(false);
+    expect(missing.blockers).toContain("expected 10 roster consent signatures");
+
+    const malformed = clusterFormProposalSummary({
+      ...validInput(),
+      signaturesHex: [sig(1), `0x${"aa".repeat(FORM_CLUSTER_SIGNATURE_BYTES - 1)}`].join("\n"),
+    });
+    expect(malformed.ready).toBe(false);
+    expect(malformed.invalidSignatureCount).toBe(1);
+    expect(malformed.blockers).toContain(
+      `all consent signatures must be ${FORM_CLUSTER_SIGNATURE_BYTES} byte ML-DSA-65 signatures`,
+    );
+  });
+
+  it("states that formation execution uses formCluster on compatible runtimes", () => {
+    expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("formCluster(bytes,bytes,bytes)");
+    expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("ten ML-DSA-65 consent signatures");
   });
 });

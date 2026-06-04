@@ -165,10 +165,10 @@ export function Cluster() {
                           title: `Request join for ${label}`,
                           sub: "Prepare CJ-1 join request",
                           intro:
-                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id and derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available; execution stays blocked until CJ-1 is live on the connected chain.",
+                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits on CJ-1 runtimes.",
                           fields: [
                             { key: "cluster", label: "Cluster", value: label },
-                            { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; blocked until runtime is live" },
+                            { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; runtime preflight gated" },
                             { key: "seal-roster", label: "Seal roster", value: "consensus-only until the decrypt roster updates" },
                           ],
                           clusterJoinRequestInput: {
@@ -259,11 +259,11 @@ export function Cluster() {
                         title: `Vote admit ${compactHex(provider.peerId)} to ${activeClusterLabel}`,
                         sub: "Prepare CJ-1 admit vote",
                         intro:
-                          "Prepares voteClusterAdmit(uint32,bytes32,bytes) for the connected cluster. Desktop signs only from a current cluster member key once CJ-1 is live; current chains fail closed before signing.",
+                          "Prepares voteClusterAdmit(uint32,bytes32,bytes) for the connected cluster. Desktop preflights the candidate request, then signs and submits from the stored operator key on CJ-1 runtimes.",
                         fields: [
                           { key: "cluster", label: "Cluster", value: activeClusterLabel },
                           { key: "candidate", label: "Candidate", value: compactHex(provider.peerId) },
-                          { key: "flow", label: "Flow", value: "CJ-1 voteClusterAdmit; blocked until runtime is live" },
+                          { key: "flow", label: "Flow", value: "CJ-1 voteClusterAdmit; runtime preflight gated" },
                         ],
                         clusterVoteAdmitInput: {
                           clusterId: String(activeClusterId),

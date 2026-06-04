@@ -39,6 +39,7 @@ import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
 } from "../sdk/clusterJoinOps";
+import { submitFormCluster } from "../sdk/clusterFormOps";
 import { submitRedelegate } from "../sdk/delegationOps";
 import { submitDkgReshareAttestation } from "../sdk/dkgReshareOps";
 import {
@@ -51,8 +52,6 @@ import { submitRecoverOperatorNode } from "../sdk/recoveryOps";
 import { commandFor, talosActionFor } from "./commands";
 import {
   browserExecutionBlocked,
-  clusterFormExecutionBlocked,
-  clusterJoinExecutionBlocked,
   unsignedExecutionBlocked,
 } from "./executionPolicy";
 import {
@@ -207,16 +206,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
 
   const blockBrowserExecution = useCallback((req: OpRequest) => {
     const { result, meta } = browserExecutionBlocked(req);
-    settleOperation(req, result, meta);
-  }, [settleOperation]);
-
-  const blockClusterJoinExecution = useCallback((req: OpRequest) => {
-    const { result, meta } = clusterJoinExecutionBlocked(req);
-    settleOperation(req, result, meta);
-  }, [settleOperation]);
-
-  const blockClusterFormExecution = useCallback((req: OpRequest) => {
-    const { result, meta } = clusterFormExecutionBlocked(req);
     settleOperation(req, result, meta);
   }, [settleOperation]);
 
@@ -612,6 +601,55 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runClusterFormFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterFormInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Cluster formation form is missing required fields." },
+          { transport: "cluster-form-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting formCluster.",
+            },
+            { transport: "cluster-form-tx" },
+          );
+          return;
+        }
+        const res = await submitFormCluster({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          activePubkeysHex: input.activePubkeysHex,
+          standbyPubkeysHex: input.standbyPubkeysHex,
+          signaturesHex: input.signaturesHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Submitted formCluster with ${res.activeCount} active, ${res.standbyCount} standby, and ${res.signatureCount} consent signatures (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-form-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "cluster-form-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
   const runDkgReshareFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.dkgReshareInput;
@@ -907,7 +945,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       if (inTauri()) {
         await runClusterJoinRequestFlow(req);
       } else {
-        blockClusterJoinExecution(req);
+        blockBrowserExecution(req);
       }
       return;
     }
@@ -915,12 +953,16 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       if (inTauri()) {
         await runClusterVoteAdmitFlow(req);
       } else {
-        blockClusterJoinExecution(req);
+        blockBrowserExecution(req);
       }
       return;
     }
     if (req.kind === "cluster-form") {
-      blockClusterFormExecution(req);
+      if (inTauri()) {
+        await runClusterFormFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
       return;
     }
     if (req.kind === "rotate-keys") {
@@ -1022,8 +1064,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     }
   }, [
     blockBrowserExecution,
-    blockClusterFormExecution,
-    blockClusterJoinExecution,
+    runClusterFormFlow,
     runChatBootstrapPeersFlow,
     runClusterJoinRequestFlow,
     runClusterVoteAdmitFlow,
@@ -1206,6 +1247,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         const base: ClusterFormInput = s.request.clusterFormInput ?? {
           activePubkeysHex: "",
           standbyPubkeysHex: "",
+          signaturesHex: "",
         };
         const next = { ...base, ...patch };
         return {

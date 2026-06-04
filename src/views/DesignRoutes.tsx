@@ -448,7 +448,7 @@ export function Marketplace() {
                         fields: [
                           { key: "cluster", label: "Cluster", value: targetVoteClusterLabel },
                           { key: "candidate", label: "Candidate", value: shortHex(provider.peerId) },
-                          { key: "flow", label: "Flow", value: "CJ-1 voteClusterAdmit; blocked until runtime is live" },
+                          { key: "flow", label: "Flow", value: "CJ-1 voteClusterAdmit; runtime preflight gated" },
                         ],
                         clusterVoteAdmitInput: {
                           clusterId: String(targetVoteClusterId),
@@ -516,7 +516,7 @@ export function Marketplace() {
                         title: `Request join for ${clusterLabel(cluster.clusterId)}`,
                         fields: [
                           { key: "cluster", label: "Cluster", value: clusterLabel(cluster.clusterId) },
-                          { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; blocked until runtime is live" },
+                          { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; runtime preflight gated" },
                         ],
                         clusterJoinRequestInput: {
                           clusterId: String(cluster.clusterId),
@@ -1088,7 +1088,7 @@ export function SetupCluster() {
         <StatCard label="active cluster" value={activeClusterLabel} sub={cluster.data ? `${cluster.data.threshold}-of-${cluster.data.size}` : "not joined"} tone={cluster.data ? "ok" : "warn"} />
         <StatCard label="directory" value={String(directory.data?.length ?? 0)} sub="clusters visible" tone={directory.notExposed ? "warn" : "ok"} />
         <StatCard label="providers" value={String(providers.data?.length ?? 0)} sub="operators visible" tone={providers.notExposed ? "warn" : "ok"} />
-        <StatCard label="join policy" value="prepared" sub="CJ-1 runtime still needed" tone="warn" />
+        <StatCard label="join policy" value="guarded" sub="CJ-1 runtime gated" tone="warn" />
       </div>
 
       <div className="grid-2">
@@ -1096,7 +1096,7 @@ export function SetupCluster() {
           <div className="card__head">
             <div>
               <h3>Join existing cluster</h3>
-              <div className="sub">Prepare a CJ-1 request; execution stays blocked until the chain method is live.</div>
+              <div className="sub">Prepare and preflight a CJ-1 request; compatible runtimes can sign and submit.</div>
             </div>
           </div>
           <div className="inline-actions">
@@ -1132,6 +1132,7 @@ export function SetupCluster() {
                 clusterFormInput: {
                   activePubkeysHex: "",
                   standbyPubkeysHex: "",
+                  signaturesHex: "",
                 },
               }}
             >
@@ -1140,8 +1141,8 @@ export function SetupCluster() {
             <CatalogButton kind="rotate-keys">Submit DKG attestation</CatalogButton>
           </div>
           <Blocker
-            title="Cluster formation execution is not live."
-            detail="Desktop now validates the proposed roster, but the chain/SDK still need the cluster formation API before this can execute end to end."
+            title="Compatible runtime required."
+            detail="Desktop validates the proposed roster and consent signatures, preflights formCluster, and signs only when the connected runtime accepts the call."
           />
         </div>
       </div>
