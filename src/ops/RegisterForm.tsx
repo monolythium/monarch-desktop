@@ -12,7 +12,7 @@
 // - Bond: LYTH (whole units) — translated to lythoshi via the SDK
 //   `parseLythToLythoshi` helper (1 LYTH = 1e18 lythoshi) before sign.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { parseLythToLythoshi } from "@monolythium/core-sdk";
 import { useOps } from "./OpsContext";
 
@@ -45,6 +45,7 @@ function parseBondLyth(value: string): bigint | null {
 export function RegisterForm() {
   const { request, setRegisterInput } = useOps();
   const input = request?.registerInput;
+  const [bondLyth, setBondLyth] = useState("");
   const validity = useMemo(() => {
     const endpointOk = !!input && input.endpoint.trim().length > 0;
     const capsOk = !!input && input.capabilities > 0;
@@ -76,6 +77,7 @@ export function RegisterForm() {
   };
 
   const onBondChange = (value: string) => {
+    setBondLyth(value);
     const parsed = parseBondLyth(value);
     setRegisterInput({ bondLythoshi: parsed !== null ? parsed.toString() : "0" });
   };
@@ -151,6 +153,7 @@ export function RegisterForm() {
           type="text"
           inputMode="decimal"
           placeholder="5000"
+          value={bondLyth}
           onChange={(e) => onBondChange(e.target.value)}
           style={{
             background: "rgba(0,0,0,0.3)",

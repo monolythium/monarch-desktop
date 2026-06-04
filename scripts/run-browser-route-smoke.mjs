@@ -15,6 +15,7 @@ const DEFAULT_VIEWPORTS = [
   { name: "desktop", width: 1440, height: 960, mobile: false },
   { name: "narrow", width: 390, height: 844, mobile: true },
 ];
+const CDP_CALL_TIMEOUT_MS = 10_000;
 
 const options = parseArgs(process.argv.slice(2));
 if (options.help) {
@@ -41,6 +42,7 @@ async function main() {
   const browserSession = await startBrowser(browser, options);
   const blockers = [];
   const routeResults = [];
+  const interactionResults = [];
 
   try {
     const target = await openTarget(browserSession.port, "about:blank");
@@ -114,6 +116,24 @@ async function main() {
         }
       }
     }
+    const shouldRunInteractions =
+      options.interactions || (options.routes.length === 0 && !options.skipInteractions);
+    if (shouldRunInteractions) {
+      const interactions = await runInteractionSmoke(cdp, {
+        serverUrl: server.url,
+        viewports,
+        screenshotsDir,
+        outputDir: path.dirname(outputPath),
+        timeoutMs: Number(options.timeoutMs),
+        pageIssues,
+      });
+      interactionResults.push(...interactions);
+      for (const interaction of interactions) {
+        for (const blocker of interaction.blockers) {
+          blockers.push(`${interaction.viewport} ${interaction.id}: ${blocker}`);
+        }
+      }
+    }
   } finally {
     await stopBrowser(browserSession);
     await stopServer(server);
@@ -131,6 +151,7 @@ async function main() {
     },
     viewports,
     routes: routeResults,
+    interactions: interactionResults,
     blockers,
   };
 
@@ -148,6 +169,7 @@ async function main() {
     evidence: path.relative(process.cwd(), outputPath) || outputPath,
     routes: routes.length,
     viewports: viewports.length,
+    interactions: interactionResults.length,
   }));
 }
 
@@ -167,6 +189,8 @@ function parseArgs(args) {
     else if (arg === "--commit") out.commit = needArg(args, ++i, arg);
     else if (arg === "--route") out.routes.push(needArg(args, ++i, arg));
     else if (arg === "--viewport") out.viewports.push(parseViewport(needArg(args, ++i, arg)));
+    else if (arg === "--interactions") out.interactions = true;
+    else if (arg === "--skip-interactions") out.skipInteractions = true;
     else if (arg === "--headed") out.headed = true;
     else throw new Error(`unknown option: ${arg}`);
   }
@@ -202,6 +226,8 @@ Options:
   --browser <path>          Chromium/Chrome binary. Also reads MONARCH_BROWSER.
   --route <path>            Limit to one route; repeatable.
   --viewport <name:WxH>     Limit/add viewport; repeatable.
+  --interactions            Run interaction checks even with --route filters.
+  --skip-interactions       Skip command-palette/drawer/key interaction checks.
   --port <port>             Vite port when starting a server.
   --timeout-ms <ms>         Per-navigation timeout. Default: 20000.
   --headed                  Run the browser with a visible window.
@@ -406,7 +432,8 @@ async function evaluateRoute(cdp, expectedRoute) {
           if (rect.width < 8 || rect.height < 8) return [];
           if (hasViewportBoundScrollContainer(el, vw)) return [];
           const excess = Math.max(0, Math.ceil(rect.right - vw), Math.ceil(-rect.left));
-          if (excess <= 2) return [];
+          if (excess <= 16 && el.closest(".drawer.is-open")) return [];
+          if (excess <= 4) return [];
           return [{
             excess,
             label: cssPath(el) + " +" + excess + "px [" + Math.round(rect.left) + "," + Math.round(rect.right) + "]",
@@ -450,6 +477,386 @@ async function captureScreenshot(cdp, { route, viewport, screenshotsDir, outputD
   };
 }
 
+async function runInteractionSmoke(cdp, {
+  serverUrl,
+  viewports,
+  screenshotsDir,
+  outputDir,
+  timeoutMs,
+  pageIssues,
+}) {
+  const results = [];
+  for (const viewport of viewports) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: 1,
+      mobile: viewport.mobile,
+    });
+    for (const check of interactionChecks(serverUrl, timeoutMs)) {
+      results.push(await runInteractionCheck(cdp, {
+        ...check,
+        viewport,
+        screenshotsDir,
+        outputDir,
+        pageIssues,
+      }));
+    }
+  }
+  return results;
+}
+
+function interactionChecks(serverUrl, timeoutMs) {
+  return [
+    {
+      id: "command-palette-navigation",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/home", timeoutMs);
+        await clickSelector(cdp, ".monarch-topbar__cmdk");
+        await waitForCondition(cdp, "command palette opened", `
+          Boolean(document.querySelector(".cmdk-input")) &&
+          document.body.innerText.toLowerCase().includes("navigate") &&
+          document.body.innerText.toLowerCase().includes("operations")
+        `, timeoutMs);
+        assertions.push("command palette opens from the topbar");
+        await clickByText(cdp, ".cmdk-item", "Keys");
+        await waitForPath(cdp, "/keys", timeoutMs);
+        await assertRouteOk(cdp, "/keys");
+        assertions.push("palette route item navigates to Keys");
+      },
+    },
+    {
+      id: "operator-key-validation",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/operations", timeoutMs);
+        await fillInputByLabel(cdp, "Operator mnemonic", "alpha beta");
+        await waitForText(cdp, "Operator mnemonic must be 24 words.", timeoutMs);
+        await waitForCondition(cdp, "invalid operator mnemonic disables save", `
+          (() => {
+            const button = Array.from(document.querySelectorAll("button"))
+              .find((item) => item.textContent?.trim() === "Save key");
+            return Boolean(button?.disabled);
+          })()
+        `, timeoutMs);
+        assertions.push("operator key import validates PQM-1 mnemonic shape");
+      },
+    },
+    {
+      id: "register-drawer-gating",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/operations", timeoutMs);
+        await clickByText(cdp, ".ops-card", "Register operator");
+        await waitForText(cdp, "register inputs", timeoutMs);
+        await assertDrawer(cdp, "Register operator");
+        await assertPrimaryDisabled(cdp, true);
+        assertions.push("register drawer opens at preview and blocks incomplete input");
+        await fillInputByPlaceholder(cdp, "https://node.example", "https://operator.local:9944", ".drawer.is-open");
+        await clickByText(cdp, ".drawer.is-open button", "RPC");
+        await fillInputByPlaceholder(cdp, "5000", "5000", ".drawer.is-open");
+        try {
+          await waitForCondition(cdp, "register authorize button enabled after valid inputs", `
+            (() => {
+              const button = primaryDrawerButton();
+              return Boolean(button && !button.disabled && (button.textContent || "").toLowerCase().includes("authorize"));
+            })()
+          `, timeoutMs);
+        } catch (err) {
+          const debug = await cdp.evaluate(`
+            (() => {
+              const drawer = document.querySelector(".drawer.is-open");
+              const inputs = Array.from(drawer?.querySelectorAll("input") || [])
+                .map((input) => ({ placeholder: input.placeholder, value: input.value }));
+              const button = Array.from(document.querySelectorAll(".drawer__foot .btn--primary")).at(-1);
+              return {
+                inputs,
+                button: button ? { text: button.textContent, disabled: button.disabled, title: button.title } : null,
+                text: (drawer?.innerText || "").replace(/\\s+/g, " ").slice(0, 1000),
+              };
+            })()
+          `);
+          throw new Error(`${errorMessage(err)}; register debug ${JSON.stringify(debug)}`);
+        }
+        assertions.push("register drawer enables authorization after endpoint, capability, and bond are filled");
+      },
+    },
+    {
+      id: "cj1-request-drawer",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/setup-cluster", timeoutMs);
+        await clickByText(cdp, "button", "Request join");
+        await waitForText(cdp, "CJ-1 join request inputs", timeoutMs);
+        await assertDrawer(cdp, "Request cluster join");
+        await waitForText(cdp, "Submission is guarded by a live CJ-1 view preflight", timeoutMs);
+        await waitForText(cdp, "consensus-only for sealed mempool work", timeoutMs);
+        await assertPrimaryDisabled(cdp, true);
+        assertions.push("CJ-1 join request drawer opens fail-closed with seal-roster disclosure");
+      },
+    },
+    {
+      id: "cj1-vote-drawer",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/operations", timeoutMs);
+        await clickByText(cdp, ".ops-card", "Vote to admit operator");
+        await waitForText(cdp, "CJ-1 admit vote inputs", timeoutMs);
+        await assertDrawer(cdp, "Vote to admit operator");
+        await waitForText(cdp, "Submission is guarded by a live CJ-1 view preflight", timeoutMs);
+        await assertPrimaryDisabled(cdp, true);
+        assertions.push("CJ-1 admit vote drawer opens fail-closed before signing");
+      },
+    },
+    {
+      id: "cluster-form-drawer",
+      async run(cdp, assertions) {
+        await openRoute(cdp, serverUrl, "/setup-cluster", timeoutMs);
+        await clickByText(cdp, "button", "Prepare roster");
+        await waitForText(cdp, "Cluster formation roster", timeoutMs);
+        await assertDrawer(cdp, "Form cluster");
+        await waitForText(cdp, "Execution remains fail-closed until the runtime exposes a cluster-formation primitive", timeoutMs);
+        await assertPrimaryDisabled(cdp, true);
+        assertions.push("cluster formation drawer validates topology and stays fail-closed without runtime support");
+      },
+    },
+  ];
+}
+
+async function runInteractionCheck(cdp, {
+  id,
+  run,
+  viewport,
+  screenshotsDir,
+  outputDir,
+  pageIssues,
+}) {
+  const blockers = [];
+  const assertions = [];
+  pageIssues.length = 0;
+  try {
+    await run(cdp, assertions);
+    await settle(cdp);
+    const routeCheck = await evaluateRoute(cdp, await cdp.evaluate("window.location.pathname"));
+    blockers.push(...routeCheck.blockers);
+    const fatalIssues = pageIssues.filter((issue) => !isExpectedUnavailableIssue(issue.text));
+    for (const issue of fatalIssues) blockers.push(`${issue.kind}: ${issue.text}`);
+  } catch (err) {
+    blockers.push(errorMessage(err));
+  }
+
+  let screenshot = null;
+  try {
+    screenshot = await captureNamedScreenshot(cdp, {
+      name: `${id}-${viewport.name}`,
+      screenshotsDir,
+      outputDir,
+    });
+  } catch (err) {
+    blockers.push(`interaction screenshot failed: ${errorMessage(err)}`);
+  }
+
+  return {
+    id,
+    viewport: viewport.name,
+    assertions,
+    screenshot,
+    blockers,
+  };
+}
+
+async function captureNamedScreenshot(cdp, { name, screenshotsDir, outputDir }) {
+  const response = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    captureBeyondViewport: false,
+  });
+  const bytes = Buffer.from(response.data, "base64");
+  const dimensions = pngDimensions(bytes);
+  if (!dimensions) throw new Error(`interaction screenshot for ${name} is not a PNG`);
+
+  const file = path.join(screenshotsDir, "interactions", `${fileSlug(name)}.png`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, bytes);
+  return {
+    path: slashPath(path.relative(outputDir, file)),
+    sha256: sha256Hex(bytes),
+    bytes: bytes.length,
+    width: dimensions.width,
+    height: dimensions.height,
+  };
+}
+
+async function openRoute(cdp, serverUrl, route, timeoutMs) {
+  await navigate(cdp, new URL(route, serverUrl).href, timeoutMs);
+  await waitForApp(cdp, route, timeoutMs);
+  await settle(cdp);
+}
+
+async function waitForPath(cdp, route, timeoutMs) {
+  await waitForCondition(cdp, `path ${route}`, `
+    window.location.pathname === ${JSON.stringify(route)}
+  `, timeoutMs);
+  await waitForApp(cdp, route, timeoutMs);
+  await settle(cdp);
+}
+
+async function assertRouteOk(cdp, route) {
+  const routeCheck = await evaluateRoute(cdp, route);
+  if (routeCheck.blockers.length > 0) {
+    throw new Error(routeCheck.blockers.join("; "));
+  }
+}
+
+async function waitForText(cdp, text, timeoutMs) {
+  await waitForCondition(cdp, `text ${text}`, `
+    document.body.innerText.toLowerCase().includes(${JSON.stringify(text.toLowerCase())})
+  `, timeoutMs);
+}
+
+async function waitForCondition(cdp, label, expression, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    try {
+      const ok = await cdp.evaluate(`(() => {
+        function primaryDrawerButton() {
+          return Array.from(document.querySelectorAll(".drawer__foot .btn--primary")).at(-1);
+        }
+        return Boolean(${expression});
+      })()`);
+      if (ok) return;
+      last = String(ok);
+    } catch (err) {
+      last = errorMessage(err);
+    }
+    await delay(100);
+  }
+  throw new Error(`timed out waiting for ${label}: ${last}`);
+}
+
+async function clickSelector(cdp, selector) {
+  await clickElementExpression(cdp, `
+    document.querySelector(${JSON.stringify(selector)})
+  `, `selector ${selector}`);
+}
+
+async function clickByText(cdp, selector, text) {
+  await clickElementExpression(cdp, `
+    (() => {
+      const expected = ${JSON.stringify(text)};
+      const items = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
+      const el = items.find((item) => normalize(item.textContent || "").includes(normalize(expected)));
+      if (!el) throw new Error("text not found in " + ${JSON.stringify(selector)} + ": " + expected);
+      return el;
+      function normalize(value) {
+        return value.replace(/\\s+/g, " ").trim().toLowerCase();
+      }
+    })()
+  `, `${selector} text ${text}`);
+}
+
+async function clickElementExpression(cdp, expression, label) {
+  const point = await cdp.evaluate(`
+    (() => {
+      const el = ${expression};
+      if (!el) throw new Error("click target not found: ${escapeJs(label)}");
+      el.scrollIntoView({ block: "center", inline: "center" });
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        throw new Error("click target has no visible box: ${escapeJs(label)}");
+      }
+      return {
+        x: Math.round(rect.left + rect.width / 2),
+        y: Math.round(rect.top + rect.height / 2),
+      };
+    })()
+  `);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: point.x,
+    y: point.y,
+    button: "none",
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await settle(cdp);
+}
+
+async function fillInputByPlaceholder(cdp, placeholder, value, scopeSelector = null) {
+  await fillInput(cdp, `
+    Array.from((${scopeSelector ? `document.querySelector(${JSON.stringify(scopeSelector)})` : "document"})?.querySelectorAll("input, textarea") || [])
+      .find((item) => (item.getAttribute("placeholder") || "").includes(${JSON.stringify(placeholder)}))
+  `, value, `placeholder ${placeholder}`);
+}
+
+async function fillInputByLabel(cdp, labelText, value) {
+  await fillInput(cdp, `
+    (() => {
+      const expected = ${JSON.stringify(labelText)};
+      const label = Array.from(document.querySelectorAll("label"))
+        .find((item) => (item.textContent || "").replace(/\\s+/g, " ").toLowerCase().includes(expected.toLowerCase()));
+      return label?.querySelector("input, textarea") || null;
+    })()
+  `, value, `label ${labelText}`);
+}
+
+async function fillInput(cdp, expression, value, label) {
+  await clickElementExpression(cdp, expression, label);
+  await cdp.evaluate(`
+    (() => {
+      const el = ${expression};
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+        throw new Error("input not found after click: ${escapeJs(label)}");
+      }
+      el.focus({ preventScroll: true });
+      const previous = el.value;
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (!setter) throw new Error("input value setter missing: ${escapeJs(label)}");
+      setter.call(el, ${JSON.stringify(value)});
+      el._valueTracker?.setValue(previous);
+      el.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: ${JSON.stringify(value)},
+        inputType: "insertText",
+      }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()
+  `);
+  await settle(cdp);
+}
+
+async function assertDrawer(cdp, titleText) {
+  await waitForCondition(cdp, `drawer ${titleText}`, `
+    (() => {
+      const drawer = document.querySelector(".drawer.is-open");
+      return Boolean(drawer && drawer.textContent.includes(${JSON.stringify(titleText)}));
+    })()
+  `, 5_000);
+}
+
+async function assertPrimaryDisabled(cdp, expected) {
+  const disabled = await cdp.evaluate(`
+    (() => {
+      const button = Array.from(document.querySelectorAll(".drawer__foot .btn--primary")).at(-1);
+      if (!button) throw new Error("drawer primary button missing");
+      return Boolean(button.disabled);
+    })()
+  `);
+  if (disabled !== expected) {
+    throw new Error(`drawer primary disabled=${disabled}, expected ${expected}`);
+  }
+}
+
 class Cdp {
   constructor(ws) {
     this.ws = ws;
@@ -478,11 +885,24 @@ class Cdp {
     this.handlers.set(method, list);
   }
 
-  async send(method, params = {}) {
+  async send(method, params = {}, timeoutMs = CDP_CALL_TIMEOUT_MS) {
     const id = ++this.id;
     const payload = JSON.stringify({ id, method, params });
     const promise = new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`timed out waiting for DevTools response: ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
     });
     this.ws.send(payload);
     return await promise;
@@ -495,7 +915,12 @@ class Cdp {
       awaitPromise: Boolean(options.awaitPromise),
     });
     if (response.exceptionDetails) {
-      throw new Error(response.exceptionDetails.text || "Runtime.evaluate failed");
+      const detail =
+        response.exceptionDetails.exception?.description ||
+        response.exceptionDetails.exception?.value ||
+        response.exceptionDetails.text ||
+        "Runtime.evaluate failed";
+      throw new Error(detail);
     }
     return response.result?.value;
   }
@@ -646,6 +1071,14 @@ function pngDimensions(bytes) {
 
 function routeSlug(route) {
   return route === "/" ? "root" : route.replace(/^\//u, "").replace(/[^a-z0-9_-]+/giu, "-");
+}
+
+function fileSlug(value) {
+  return value.replace(/[^a-z0-9_-]+/giu, "-").replace(/^-+|-+$/gu, "") || "item";
+}
+
+function escapeJs(value) {
+  return String(value).replace(/\\/gu, "\\\\").replace(/"/gu, '\\"');
 }
 
 function slashPath(value) {

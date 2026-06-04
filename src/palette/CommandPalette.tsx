@@ -10,6 +10,7 @@
 // app root via `<CommandPalette />` mounted in App.tsx.
 
 import { Command } from "cmdk";
+import { Title as DialogTitle } from "@radix-ui/react-dialog";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
@@ -142,6 +143,7 @@ export function CommandPalette({
       shouldFilter
       loop
     >
+      <DialogTitle className="sr-only">Command palette</DialogTitle>
       <Command.Input
         value={search}
         onValueChange={setSearch}
