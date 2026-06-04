@@ -18,42 +18,42 @@ describe("DKG re-share attestation input validation", () => {
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: "0",
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: sigHex,
       }),
     ).toBe(false);
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: (1n << 56n).toString(),
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: sigHex,
       }),
     ).toBe(false);
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: "7",
-        blsPublicKeysHex: "0x" + [1, 2, 3, 4].map(key).join(""),
+        consensusPublicKeysHex: "0x" + [1, 2, 3, 4].map(key).join(""),
         thresholdSigHex: sigHex,
       }),
     ).toBe(false);
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: "7",
-        blsPublicKeysHex: "0x" + [1, 1, 2, 3, 4].map(key).join(""),
+        consensusPublicKeysHex: "0x" + [1, 1, 2, 3, 4].map(key).join(""),
         thresholdSigHex: sigHex,
       }),
     ).toBe(false);
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: "7",
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES - 1),
       }),
     ).toBe(false);
     expect(
       isDkgReshareAttestationInputComplete({
         intentId: "7",
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: sigHex,
       }),
     ).toBe(true);

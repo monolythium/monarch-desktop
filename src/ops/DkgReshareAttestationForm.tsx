@@ -82,23 +82,23 @@ export function DkgReshareAttestationForm() {
   const [artifactStatus, setArtifactStatus] = useState<string | null>(null);
   const input = request?.dkgReshareInput;
   const validity = useMemo(() => {
-    const signerCount = consensusSignerCount(input?.blsPublicKeysHex);
+    const signerCount = consensusSignerCount(input?.consensusPublicKeysHex);
     const intentOk = isIntentId(input?.intentId);
-    const keysOk = isConsensusPublicKeys(input?.blsPublicKeysHex);
+    const keysOk = isConsensusPublicKeys(input?.consensusPublicKeysHex);
     const sigOk = isAttestationSigs(input?.thresholdSigHex, signerCount);
     return { intentOk, keysOk, sigOk };
-  }, [input?.blsPublicKeysHex, input?.intentId, input?.thresholdSigHex]);
+  }, [input?.consensusPublicKeysHex, input?.intentId, input?.thresholdSigHex]);
 
   if (!request || request.kind !== "rotate-keys") return null;
 
   const current: Partial<DkgReshareAttestationInput> = input ?? {};
-  const signerCount = consensusSignerCount(current.blsPublicKeysHex);
+  const signerCount = consensusSignerCount(current.consensusPublicKeysHex);
   const importArtifact = () => {
     try {
       const parsed = parseDkgReshareAttestationArtifact(artifactText);
       setDkgReshareInput({
         intentId: parsed.intentId,
-        blsPublicKeysHex: parsed.blsPublicKeysHex,
+        consensusPublicKeysHex: parsed.consensusPublicKeysHex,
         thresholdSigHex: parsed.thresholdSigHex,
       });
       setArtifactStatus(
@@ -168,8 +168,10 @@ export function DkgReshareAttestationForm() {
         <span className="kv__k">Participant consensus pubkeys</span>
         <textarea
           placeholder="0x..."
-          value={current.blsPublicKeysHex ?? ""}
-          onChange={(e) => setDkgReshareInput({ blsPublicKeysHex: normalizeHex(e.target.value) })}
+          value={current.consensusPublicKeysHex ?? ""}
+          onChange={(e) =>
+            setDkgReshareInput({ consensusPublicKeysHex: normalizeHex(e.target.value) })
+          }
           spellCheck={false}
           autoComplete="off"
           autoCorrect="off"
@@ -213,7 +215,7 @@ export function isDkgReshareAttestationInputComplete(
   return (
     !!input &&
     isIntentId(input.intentId) &&
-    isConsensusPublicKeys(input.blsPublicKeysHex) &&
-    isAttestationSigs(input.thresholdSigHex, consensusSignerCount(input.blsPublicKeysHex))
+    isConsensusPublicKeys(input.consensusPublicKeysHex) &&
+    isAttestationSigs(input.thresholdSigHex, consensusSignerCount(input.consensusPublicKeysHex))
   );
 }

@@ -96,7 +96,7 @@ export type ClusterFormInput = {
 // Inputs for the operator-callable `attestDkgReshare(uint64,bytes,bytes)`.
 export type DkgReshareAttestationInput = {
   intentId: string;
-  blsPublicKeysHex: string;
+  consensusPublicKeysHex: string;
   thresholdSigHex: string;
 };
 

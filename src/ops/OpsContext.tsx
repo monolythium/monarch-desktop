@@ -641,7 +641,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           rpcUrl: rpcEndpoint,
           mnemonic,
           intentId: input.intentId,
-          blsPublicKeysHex: input.blsPublicKeysHex,
+          consensusPublicKeysHex: input.consensusPublicKeysHex,
           thresholdSigHex: input.thresholdSigHex,
         });
         settleOperation(
@@ -1223,7 +1223,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         if (!s.request || s.request.kind !== "rotate-keys") return s;
         const base: DkgReshareAttestationInput = s.request.dkgReshareInput ?? {
           intentId: "",
-          blsPublicKeysHex: "",
+          consensusPublicKeysHex: "",
           thresholdSigHex: "",
         };
         const next = { ...base, ...patch };

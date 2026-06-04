@@ -269,7 +269,9 @@ function checkDkgReshareAttestation(dkg, out) {
     }
   }
 
-  const keysHex = normalizeHex(stringValue(dkg.bls_public_keys_hex));
+  const keysHex = normalizeHex(
+    stringValue(dkg.consensus_public_keys_hex) || stringValue(dkg.bls_public_keys_hex),
+  );
   if (
     !/^[0-9a-f]+$/u.test(keysHex) ||
     keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0

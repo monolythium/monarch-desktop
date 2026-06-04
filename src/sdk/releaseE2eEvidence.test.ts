@@ -221,7 +221,7 @@ function dkgReshareAttestation(): DesktopReleaseE2eEvidence["dkg_reshare_attesta
     schema_version: DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA,
     created_at: "2026-06-01T00:00:00Z",
     intent_id: "7",
-    bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(blsKey).join(""),
+    consensus_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(blsKey).join(""),
     threshold_sig_hex: "0x" + "c".repeat(5 * 3309 * 2),
     signer_count: 5,
   };
@@ -445,7 +445,7 @@ describe("Desktop release e2e evidence", () => {
     const duplicate = verifyDesktopReleaseE2eEvidence(evidence({
       dkg_reshare_attestation: {
         ...dkgReshareAttestation(),
-        bls_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(blsKey).join(""),
+        consensus_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(blsKey).join(""),
       },
     }));
     expect(duplicate.ok).toBe(false);

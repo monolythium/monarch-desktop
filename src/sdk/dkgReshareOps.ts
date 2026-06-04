@@ -29,6 +29,7 @@ export const DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT =
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT;
 export const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES;
 export const DKG_RESHARE_ATTESTATION_SIG_BYTES = NODE_REGISTRY_DKG_ATTESTATION_SIG_BYTES;
+/** @deprecated Use DKG_RESHARE_CONSENSUS_PUBKEY_BYTES. */
 export const DKG_RESHARE_BLS_PUBKEY_BYTES = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
 export const DKG_RESHARE_THRESHOLD_SIG_BYTES = DKG_RESHARE_ATTESTATION_SIG_BYTES;
 export const DKG_RESHARE_MIN_SIGNERS = 5;
@@ -41,7 +42,7 @@ export interface SubmitDkgReshareAttestationArgs {
   rpcUrl: string;
   mnemonic: string;
   intentId: bigint | number | string;
-  blsPublicKeysHex: string;
+  consensusPublicKeysHex: string;
   thresholdSigHex: string;
   executionUnitLimit?: bigint;
 }
@@ -58,7 +59,7 @@ export interface SubmitDkgReshareAttestationResult {
 export interface DkgReshareAttestationArtifact {
   schemaVersion: string | null;
   intentId: string;
-  blsPublicKeysHex: string;
+  consensusPublicKeysHex: string;
   thresholdSigHex: string;
   signerCount: number;
 }
@@ -106,6 +107,15 @@ function getStringField(record: Record<string, unknown>, keys: string[], label: 
     if (typeof value === "bigint") return value.toString();
   }
   throw new Error(`${label}: missing required field`);
+}
+
+function getLegacyStringField(
+  record: Record<string, unknown>,
+  canonicalKeys: string[],
+  legacyKeys: string[],
+  label: string,
+): string {
+  return getStringField(record, [...canonicalKeys, ...legacyKeys], label);
 }
 
 function findAttestationRecord(value: unknown): Record<string, unknown> {
@@ -171,17 +181,17 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function parseDkgResharePublicKeys(blsPublicKeysHex: string): Uint8Array[] {
-  const keys = hexToBytes(blsPublicKeysHex, "blsPublicKeys");
+export function parseDkgResharePublicKeys(consensusPublicKeysHex: string): Uint8Array[] {
+  const keys = hexToBytes(consensusPublicKeysHex, "consensusPublicKeys");
   if (keys.length % DKG_RESHARE_CONSENSUS_PUBKEY_BYTES !== 0) {
     throw new Error(
-      `blsPublicKeys: length must be a multiple of ${DKG_RESHARE_CONSENSUS_PUBKEY_BYTES} bytes`,
+      `consensusPublicKeys: length must be a multiple of ${DKG_RESHARE_CONSENSUS_PUBKEY_BYTES} bytes`,
     );
   }
   const signerCount = keys.length / DKG_RESHARE_CONSENSUS_PUBKEY_BYTES;
   if (signerCount < DKG_RESHARE_MIN_SIGNERS || signerCount > DKG_RESHARE_MAX_SIGNERS) {
     throw new Error(
-      `blsPublicKeys: expected ${DKG_RESHARE_MIN_SIGNERS}..${DKG_RESHARE_MAX_SIGNERS} signers`,
+      `consensusPublicKeys: expected ${DKG_RESHARE_MIN_SIGNERS}..${DKG_RESHARE_MAX_SIGNERS} signers`,
     );
   }
   const out: Uint8Array[] = [];
@@ -190,7 +200,7 @@ export function parseDkgResharePublicKeys(blsPublicKeysHex: string): Uint8Array[
     const key = keys.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_BYTES);
     const keyHex = bytesToHex(key);
     if (seen.has(keyHex)) {
-      throw new Error("blsPublicKeys: duplicate signer pubkey");
+      throw new Error("consensusPublicKeys: duplicate signer pubkey");
     }
     seen.add(keyHex);
     out.push(key);
@@ -236,15 +246,21 @@ export function parseDkgReshareAttestationArtifact(
     throw new Error("intentId: exceeds 2^56-1");
   }
 
-  const blsPublicKeysHex = normalizeHexString(
-    getStringField(
+  const consensusPublicKeysHex = normalizeHexString(
+    getLegacyStringField(
       record,
+      [
+        "consensus_public_keys_hex",
+        "consensusPublicKeysHex",
+        "consensus_public_keys",
+        "consensusPublicKeys",
+      ],
       ["bls_public_keys_hex", "blsPublicKeysHex", "bls_public_keys", "blsPublicKeys"],
-      "blsPublicKeys",
+      "consensusPublicKeys",
     ),
-    "blsPublicKeys",
+    "consensusPublicKeys",
   );
-  const publicKeys = parseDkgResharePublicKeys(blsPublicKeysHex);
+  const publicKeys = parseDkgResharePublicKeys(consensusPublicKeysHex);
   const thresholdSigHex = normalizeHexString(
     getStringField(
       record,
@@ -263,15 +279,26 @@ export function parseDkgReshareAttestationArtifact(
   return {
     schemaVersion,
     intentId: intentId.toString(),
-    blsPublicKeysHex,
+    consensusPublicKeysHex,
     thresholdSigHex,
     signerCount: publicKeys.length,
   };
 }
 
+function dkgConsensusPublicKeysHex(
+  args: unknown,
+): string {
+  const record = args as { consensusPublicKeysHex?: unknown; blsPublicKeysHex?: unknown };
+  const value = record.consensusPublicKeysHex;
+  if (typeof value === "string") return value;
+  const legacy = record.blsPublicKeysHex;
+  if (typeof legacy === "string") return legacy;
+  throw new Error("consensusPublicKeys: missing required field");
+}
+
 export function encodeAttestDkgReshareCalldata(args: {
   intentId: bigint | number | string;
-  blsPublicKeysHex: string;
+  consensusPublicKeysHex: string;
   thresholdSigHex: string;
 }): string {
   const intentId = parseUint64(args.intentId, "intentId");
@@ -281,7 +308,7 @@ export function encodeAttestDkgReshareCalldata(args: {
   if (intentId > MAX_DKG_RESHARE_INTENT_ID) {
     throw new Error("intentId: exceeds 2^56-1");
   }
-  const publicKeys = parseDkgResharePublicKeys(args.blsPublicKeysHex);
+  const publicKeys = parseDkgResharePublicKeys(dkgConsensusPublicKeysHex(args));
   const publicKeysBytes = concat(publicKeys);
   const thresholdSig = hexToBytes(args.thresholdSigHex, "thresholdSig");
   if (thresholdSig.length !== publicKeys.length * DKG_RESHARE_ATTESTATION_SIG_BYTES) {
@@ -317,10 +344,11 @@ export function buildDkgReshareAttestationTxFields(args: {
   nonce: bigint | number | string;
   fee: RegisterFeeQuote;
   intentId: bigint | number | string;
-  blsPublicKeysHex: string;
+  consensusPublicKeysHex: string;
   thresholdSigHex: string;
   executionUnitLimit?: bigint;
 }): NativeEvmTxFields {
+  const consensusPublicKeysHex = dkgConsensusPublicKeysHex(args);
   const maxExecutionUnitPrice = BigInt(args.fee.executionUnitPriceLythoshi);
   const suggestedTip = BigInt(args.fee.priorityTipLythoshi);
   const priorityTip = clampPriorityTip(suggestedTip, maxExecutionUnitPrice);
@@ -335,7 +363,7 @@ export function buildDkgReshareAttestationTxFields(args: {
     value: 0n,
     input: encodeAttestDkgReshareCalldata({
       intentId: args.intentId,
-      blsPublicKeysHex: args.blsPublicKeysHex,
+      consensusPublicKeysHex,
       thresholdSigHex: args.thresholdSigHex,
     }),
   };
@@ -345,7 +373,8 @@ export async function submitDkgReshareAttestation(
   args: SubmitDkgReshareAttestationArgs,
 ): Promise<SubmitDkgReshareAttestationResult> {
   const intentId = parseUint64(args.intentId, "intentId");
-  const publicKeys = parseDkgResharePublicKeys(args.blsPublicKeysHex);
+  const consensusPublicKeysHex = dkgConsensusPublicKeysHex(args);
+  const publicKeys = parseDkgResharePublicKeys(consensusPublicKeysHex);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = new RpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
@@ -361,7 +390,7 @@ export async function submitDkgReshareAttestation(
     nonce,
     fee,
     intentId,
-    blsPublicKeysHex: args.blsPublicKeysHex,
+    consensusPublicKeysHex,
     thresholdSigHex: args.thresholdSigHex,
     executionUnitLimit: args.executionUnitLimit,
   });

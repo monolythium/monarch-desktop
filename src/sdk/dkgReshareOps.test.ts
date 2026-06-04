@@ -81,7 +81,7 @@ describe("attestDkgReshare calldata", () => {
   it("pins selector and ABI-v2 dynamic bytes layout", () => {
     const calldata = encodeAttestDkgReshareCalldata({
       intentId: 7n,
-      blsPublicKeysHex: keysHex,
+      consensusPublicKeysHex: keysHex,
       thresholdSigHex: sigHex,
     });
 
@@ -124,14 +124,14 @@ describe("attestDkgReshare calldata", () => {
     expect(() =>
       encodeAttestDkgReshareCalldata({
         intentId: MAX_DKG_RESHARE_INTENT_ID + 1n,
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: sigHex,
       }),
     ).toThrow(/2\^56-1/u);
     expect(() =>
       encodeAttestDkgReshareCalldata({
         intentId: 7,
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES - 1),
       }),
     ).toThrow(/expected 16545 bytes/u);
@@ -144,14 +144,14 @@ describe("parseDkgReshareAttestationArtifact", () => {
       JSON.stringify({
         schema_version: DKG_RESHARE_ATTESTATION_SCHEMA,
         intent_id: "7",
-        bls_public_keys_hex: keysHex.toUpperCase(),
+        consensus_public_keys_hex: keysHex.toUpperCase(),
         threshold_sig_hex: sigHex.toUpperCase(),
       }),
     );
 
     expect(artifact.schemaVersion).toBe(DKG_RESHARE_ATTESTATION_SCHEMA);
     expect(artifact.intentId).toBe("7");
-    expect(artifact.blsPublicKeysHex).toBe(keysHex);
+    expect(artifact.consensusPublicKeysHex).toBe(keysHex);
     expect(artifact.thresholdSigHex).toBe(sigHex);
     expect(artifact.signerCount).toBe(5);
   });
@@ -160,7 +160,7 @@ describe("parseDkgReshareAttestationArtifact", () => {
     const artifact = parseDkgReshareAttestationArtifact({
       dkgReshareAttestation: {
         intentId: 8,
-        blsPublicKeysHex: keysHex,
+        consensusPublicKeysHex: keysHex,
         thresholdSigHex: sigHex,
       },
     });
@@ -170,19 +170,31 @@ describe("parseDkgReshareAttestationArtifact", () => {
     expect(artifact.signerCount).toBe(5);
   });
 
+  it("accepts legacy public-key artifact aliases", () => {
+    const artifact = parseDkgReshareAttestationArtifact({
+      intent_id: "9",
+      bls_public_keys_hex: keysHex,
+      threshold_sig_hex: sigHex,
+    });
+
+    expect(artifact.intentId).toBe("9");
+    expect(artifact.consensusPublicKeysHex).toBe(keysHex);
+    expect(artifact.signerCount).toBe(5);
+  });
+
   it("rejects invalid artifact schema and malformed threshold signatures", () => {
     expect(() =>
       parseDkgReshareAttestationArtifact({
         schema_version: "monarch-dkg-reshare-attestation/v0",
         intent_id: "7",
-        bls_public_keys_hex: keysHex,
+        consensus_public_keys_hex: keysHex,
         threshold_sig_hex: sigHex,
       }),
     ).toThrow(/unsupported schema_version/u);
     expect(() =>
       parseDkgReshareAttestationArtifact({
         intent_id: "7",
-        bls_public_keys_hex: keysHex,
+        consensus_public_keys_hex: keysHex,
         threshold_sig_hex: "0x" + "cc".repeat(5 * DKG_RESHARE_ATTESTATION_SIG_BYTES - 1),
       }),
     ).toThrow(/expected 16545 bytes/u);
@@ -196,7 +208,7 @@ describe("buildDkgReshareAttestationTxFields", () => {
       nonce: 0n,
       fee,
       intentId: 7,
-      blsPublicKeysHex: keysHex,
+      consensusPublicKeysHex: keysHex,
       thresholdSigHex: sigHex,
     });
 
@@ -221,7 +233,7 @@ describe("submitDkgReshareAttestation", () => {
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "operator mnemonic",
       intentId: 7,
-      blsPublicKeysHex: keysHex,
+      consensusPublicKeysHex: keysHex,
       thresholdSigHex: sigHex,
     });
 

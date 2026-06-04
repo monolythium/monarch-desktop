@@ -21,7 +21,7 @@ function dkgAttestation(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     schema_version: "monarch-dkg-reshare-attestation/v1",
     intent_id: "7",
-    bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
+    consensus_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
     threshold_sig_hex: "0x" + "cc".repeat(5 * 3309),
     signer_count: 5,
     ...overrides,
@@ -57,6 +57,19 @@ function run(overrides: Record<string, string | undefined> = {}) {
 describe("release e2e input validator", () => {
   it("accepts distinct operator inputs, cluster/chat inputs, digest, and DKG attestation", () => {
     const result = run();
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
+    expect(result.stderr).toBe("");
+  });
+
+  it("accepts legacy DKG re-share public-key field names", () => {
+    const result = run({
+      MONARCH_E2E_DKG_RESHARE_ATTESTATION: dkgAttestation({
+        consensus_public_keys_hex: undefined,
+        bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
+      }),
+    });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
@@ -144,7 +157,7 @@ describe("release e2e input validator", () => {
 
     const malformed = run({
       MONARCH_E2E_DKG_RESHARE_ATTESTATION: dkgAttestation({
-        bls_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(key).join(""),
+        consensus_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(key).join(""),
         signer_count: 5,
       }),
     });
