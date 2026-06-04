@@ -12,7 +12,7 @@ export const MONARCH_TARGET_ACTIVE_OPERATOR_SEATS =
 export const MONARCH_TARGET_STANDBY_OPERATOR_SEATS =
   MONARCH_TARGET_CLUSTER_COUNT * MONARCH_STANDBY_OPERATOR_SEATS;
 
-export const DEFAULT_ACTIVE_CLUSTER_ID = 1;
+export const DEFAULT_ACTIVE_CLUSTER_ID = 0;
 
 export type ClusterModelState = "unknown" | "aligned" | "partial" | "degraded";
 

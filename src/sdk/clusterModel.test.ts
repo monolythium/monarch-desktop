@@ -5,6 +5,7 @@ import {
   MONARCH_CLUSTER_THRESHOLD,
   MONARCH_STANDBY_OPERATOR_SEATS,
   MONARCH_TARGET_CLUSTER_COUNT,
+  DEFAULT_ACTIVE_CLUSTER_ID,
   clusterLabel,
   evaluateClusterModel,
   targetClusterSummary,
@@ -30,6 +31,11 @@ function cluster(overrides: Partial<ClusterStatus> = {}): ClusterStatus {
 }
 
 describe("clusterLabel", () => {
+  it("targets the genesis cluster by default", () => {
+    expect(DEFAULT_ACTIVE_CLUSTER_ID).toBe(0);
+    expect(clusterLabel(DEFAULT_ACTIVE_CLUSTER_ID)).toBe("C-000");
+  });
+
   it("formats public cluster ids with the canonical C-### label", () => {
     expect(clusterLabel(1)).toBe("C-001");
     expect(clusterLabel(42)).toBe("C-042");
