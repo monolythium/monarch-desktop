@@ -98,6 +98,20 @@ describe("operation catalog", () => {
     );
   });
 
+  it("routes cluster naming through the cluster-name registry", () => {
+    const clusterName = OP_CATALOG.find((entry) => entry.kind === "cluster-name-register");
+
+    expect(clusterName).toMatchObject({
+      title: "Set cluster name",
+      confirmLabel: "Sign cluster name tx",
+      category: "cluster",
+    });
+    expect(clusterName?.intro).toContain("register(string,uint64)");
+    expect(clusterName?.effects).toContain(
+      "Builds register(name, clusterId) calldata against cluster-name registry 0x1104.",
+    );
+  });
+
   it("routes cluster swap through a foundation Rotate pending-change", () => {
     const swap = OP_CATALOG.find((entry) => entry.kind === "cluster-swap");
 

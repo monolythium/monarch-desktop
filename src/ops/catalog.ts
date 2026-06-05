@@ -136,6 +136,34 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "cluster-name-register",
+    category: "cluster",
+    icon: "CN",
+    risk: "medium",
+    title: "Set cluster name",
+    sub: "Register public cluster name",
+    intro:
+      "Posts a signed register(string,uint64) tx to cluster-name registry 0x1104 from the cluster primary anchor key. Monoscan and Desktop read the resulting canonical name through lyth_getClusterName.",
+    destructive: false,
+    needsPasskey: true,
+    confirmLabel: "Sign cluster name tx",
+    keywords: ["cluster", "name", "moniker", "registry", "display"],
+    effects: [
+      "Builds register(name, clusterId) calldata against cluster-name registry 0x1104.",
+      "Signs the plaintext native tx from the cluster primary anchor mnemonic.",
+      "Pays the exact annual registration fee required by the on-chain name curve.",
+    ],
+    diff: [
+      { key: "name", label: "Cluster name", value: "+ canonical name" },
+      { key: "source", label: "Discovery", value: "lyth_getClusterName" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster id", value: "uint64 cluster id" },
+      { key: "name", label: "Name", value: "3-32 lowercase letters" },
+      { key: "executor", label: "Executor", value: "register(string,uint64)" },
+    ],
+  },
+  {
     kind: "rotate-keys",
     category: "keys",
     icon: "KY",

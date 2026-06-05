@@ -75,6 +75,36 @@ export function Cluster() {
           distributed operator cluster · {c ? `${c.threshold}-of-${c.size} quorum` : clusterModel.thresholdSummary}
           {round.data ? ` · round ${round.data.height.toLocaleString()}` : null}
         </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() =>
+              ops.requestOp({
+                kind: "cluster-name-register",
+                title: "Set cluster name",
+                sub: "Register public cluster name",
+                intro:
+                  "Posts register(string,uint64) to cluster-name registry 0x1104 from the cluster primary anchor key. Monoscan and Desktop read the resulting canonical name through lyth_getClusterName.",
+                fields: [
+                  { key: "cluster", label: "Cluster id", value: String(activeClusterId) },
+                  { key: "source", label: "Source", value: "lyth_getClusterName" },
+                  { key: "authority", label: "Authority", value: "primary anchor key" },
+                ],
+                clusterNameInput: {
+                  clusterId: String(activeClusterId),
+                  name: "",
+                },
+                icon: "CN",
+                risk: "medium",
+                needsPasskey: true,
+                confirmLabel: "Sign cluster name tx",
+              })
+            }
+          >
+            Set name
+          </button>
+        </div>
       </header>
 
       {cluster.notExposed ? (

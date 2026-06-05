@@ -9,6 +9,7 @@ export const OP_KINDS = [
   "operator-register",
   "operator-display",
   "chat-bootstrap-peers",
+  "cluster-name-register",
   "rotate-keys",
   "redelegate",
   "export-backup",
@@ -66,6 +67,13 @@ export type OperatorDisplayInput = {
   peerIdHex: string;
   moniker: string;
   alias: string;
+};
+
+// Inputs for cluster-name-registry `register(string,uint64)`.
+// The tx must be signed by the cluster's primary anchor key.
+export type ClusterNameInput = {
+  clusterId: string;
+  name: string;
 };
 
 // Inputs for node-registry `submitPendingChange(uint8,bytes,uint64,uint64)`.
@@ -165,6 +173,8 @@ export type OpRequest = {
   /** Present only when `kind === "operator-display"`. Carries public
    *  operator display metadata. */
   operatorDisplayInput?: OperatorDisplayInput;
+  /** Present only when `kind === "cluster-name-register"`. */
+  clusterNameInput?: ClusterNameInput;
   /** Present only when `kind` maps to a foundation pending-change op. */
   pendingChangeInput?: PendingChangeInput;
   /** Present only when `kind === "cluster-request-join"`. */

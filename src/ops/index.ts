@@ -10,6 +10,7 @@ export type {
   OpResult,
   OpStage,
   ChatBootstrapPeersInput,
+  ClusterNameInput,
   ClusterFormInput,
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,

@@ -35,6 +35,7 @@ import {
   talosUpgrade,
 } from "../sdk";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
+import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
 import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
 import {
   submitRequestClusterJoin,
@@ -71,6 +72,7 @@ import type {
   EmergencyKeyRotationInput,
   FreezeAdmissionInput,
   ChatBootstrapPeersInput,
+  ClusterNameInput,
   ClusterFormInput,
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,
@@ -110,6 +112,8 @@ type OpsContextValue = OpsState & {
   setChatBootstrapPeersInput: (patch: Partial<ChatBootstrapPeersInput>) => void;
   /** Update the operator display metadata declaration payload. */
   setOperatorDisplayInput: (patch: Partial<OperatorDisplayInput>) => void;
+  /** Update the cluster-name registration payload. */
+  setClusterNameInput: (patch: Partial<ClusterNameInput>) => void;
   /** Update the pending-change request payload for cluster invite/swap. */
   setPendingChangeInput: (patch: Partial<PendingChangeInput>) => void;
   /** Update the CJ-1 join request payload. */
@@ -445,6 +449,58 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           req,
           { ok: false, message },
           { transport: "operator-display-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runClusterNameFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterNameInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Cluster name form is missing required fields." },
+          { transport: "cluster-name-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Cluster primary anchor mnemonic not in keychain. Store the active anchor mnemonic under monarch-desktop/operator:mnemonic before submitting register(string,uint64).",
+            },
+            { transport: "cluster-name-tx" },
+          );
+          return;
+        }
+        const res = await submitClusterNameRegistration({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          name: input.name,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Registered cluster ${res.clusterId} as ${res.name} (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-name-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "cluster-name-tx" },
         );
       }
     },
@@ -998,6 +1054,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "cluster-name-register") {
+      if (inTauri()) {
+        await runClusterNameFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-accept-invite" || req.kind === "cluster-swap") {
       if (inTauri()) {
         await runPendingChangeFlow(req);
@@ -1131,6 +1195,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     blockBrowserExecution,
     runClusterFormFlow,
     runChatBootstrapPeersFlow,
+    runClusterNameFlow,
     runClusterJoinRequestFlow,
     runClusterVoteAdmitFlow,
     runDkgReshareFlow,
@@ -1255,6 +1320,24 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           request: { ...s.request, operatorDisplayInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setClusterNameInput = useCallback(
+    (patch: Partial<ClusterNameInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "cluster-name-register") return s;
+        const base: ClusterNameInput = s.request.clusterNameInput ?? {
+          clusterId: "",
+          name: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, clusterNameInput: next },
         };
       });
     },
@@ -1431,6 +1514,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
+      setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
@@ -1452,6 +1536,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
+      setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,

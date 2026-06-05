@@ -15,6 +15,7 @@ import {
   ClusterFormProposalForm,
   isClusterFormInputComplete,
 } from "./ClusterFormProposalForm";
+import { ClusterNameForm, isClusterNameInputComplete } from "./ClusterNameForm";
 import {
   ClusterJoinRequestForm,
   ClusterVoteAdmitForm,
@@ -80,6 +81,10 @@ export function OperationsDrawer() {
     request?.kind === "operator-display" &&
     stage === "preview" &&
     !isOperatorDisplayInputComplete(request.operatorDisplayInput);
+  const clusterNameNeedsInput =
+    request?.kind === "cluster-name-register" &&
+    stage === "preview" &&
+    !isClusterNameInputComplete(request.clusterNameInput);
   const otaApplyNeedsInput =
     request?.kind === "ota-apply" &&
     stage === "preview" &&
@@ -121,6 +126,7 @@ export function OperationsDrawer() {
     redelegateNeedsInput ||
     chatBootstrapPeersNeedsInput ||
     operatorDisplayNeedsInput ||
+    clusterNameNeedsInput ||
     restoreNeedsInput ||
     pendingChangeNeedsInput ||
     clusterJoinRequestNeedsInput ||
@@ -138,25 +144,27 @@ export function OperationsDrawer() {
         ? "Enter the operator peer id and chat peers first"
         : operatorDisplayNeedsInput
           ? "Enter the operator peer id and valid display fields first"
-          : restoreNeedsInput
-            ? "Enter the operator peer id first"
-            : pendingChangeNeedsInput
-              ? "Fill every pending-change input first"
-              : clusterJoinRequestNeedsInput
-                ? "Fill every CJ-1 join request input first"
-                : clusterVoteAdmitNeedsInput
-                  ? "Fill every CJ-1 admit vote input first"
-                  : clusterFormNeedsInput
-                    ? "Fill the 7 active + 3 standby roster and consent signatures first"
-                    : dkgReshareNeedsInput
-                      ? "Fill every DKG attestation input first"
-                      : freezeAdmissionNeedsInput
-                        ? "Enter the incident reason hash first"
-                        : emergencyKeyRotationNeedsInput
-                          ? "Fill every emergency key-rotation input first"
-                          : otaApplyNeedsInput
-                            ? "Enter the signed image reference first"
-                            : undefined;
+          : clusterNameNeedsInput
+            ? "Enter a cluster id and valid cluster name first"
+            : restoreNeedsInput
+              ? "Enter the operator peer id first"
+              : pendingChangeNeedsInput
+                ? "Fill every pending-change input first"
+                : clusterJoinRequestNeedsInput
+                  ? "Fill every CJ-1 join request input first"
+                  : clusterVoteAdmitNeedsInput
+                    ? "Fill every CJ-1 admit vote input first"
+                    : clusterFormNeedsInput
+                      ? "Fill the 7 active + 3 standby roster and consent signatures first"
+                      : dkgReshareNeedsInput
+                        ? "Fill every DKG attestation input first"
+                        : freezeAdmissionNeedsInput
+                          ? "Enter the incident reason hash first"
+                          : emergencyKeyRotationNeedsInput
+                            ? "Fill every emergency key-rotation input first"
+                            : otaApplyNeedsInput
+                              ? "Enter the signed image reference first"
+                              : undefined;
 
   return (
     <>
@@ -305,6 +313,7 @@ function DrawerBody() {
         {request.kind === "redelegate" ? <RedelegateForm /> : null}
         {request.kind === "operator-display" ? <OperatorDisplayForm /> : null}
         {request.kind === "chat-bootstrap-peers" ? <ChatBootstrapPeersForm /> : null}
+        {request.kind === "cluster-name-register" ? <ClusterNameForm /> : null}
         {request.kind === "operator-restore" ? <RestoreForm /> : null}
         {request.kind === "cluster-accept-invite" || request.kind === "cluster-swap" ? (
           <ClusterPendingChangeForm />

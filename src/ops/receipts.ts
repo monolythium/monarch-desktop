@@ -11,6 +11,7 @@ export type OperationReceiptTransport =
   | "redelegate-tx"
   | "operator-display-tx"
   | "chat-bootstrap-peers-tx"
+  | "cluster-name-tx"
   | "foundation-recovery-tx"
   | "foundation-pending-change-tx"
   | "cluster-join-request-tx"

@@ -32,6 +32,7 @@ describe("operation command mapping", () => {
     expect(commandFor(req("operator-restore"))).toBeNull();
     expect(commandFor(req("operator-display"))).toBeNull();
     expect(commandFor(req("chat-bootstrap-peers"))).toBeNull();
+    expect(commandFor(req("cluster-name-register"))).toBeNull();
     expect(commandFor(req("rotate-keys"))).toBeNull();
     expect(commandFor(req("export-backup"))).toBeNull();
     expect(commandFor(req("cluster-swap"))).toBeNull();

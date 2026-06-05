@@ -294,7 +294,7 @@ jobs:
         run: pnpm run verify:e2e-evidence -- "${{ github.event.inputs.desktop_e2e_evidence }}"
 
       - name: Verify signing inputs for release
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != ''
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -444,7 +444,7 @@ jobs:
     needs: build
     # A tagged release must be a complete signed matrix. Partial platform
     # uploads are preview artifacts, not a release channel.
-    if: ${{ needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag != '') }}
+    if: ${{ needs.build.result == 'success' && (startsWith(github.ref, 'refs/tags/') || inputs.tag != '') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -465,7 +465,7 @@ jobs:
       # private key held in TAURI_SIGNING_PRIVATE_KEY.
       - name: Generate latest.json (updater manifest)
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -524,15 +524,15 @@ jobs:
 
       - name: Verify release artifact set
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: node scripts/verify-release-artifacts.mjs ./artifacts --tag "$TAG"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: ./artifacts/*
           draft: false
-          prerelease: ${{ endsWith(github.event.inputs.tag || github.ref_name, '-preview') }}
-          make_latest: ${{ endsWith(github.event.inputs.tag || github.ref_name, '-preview') && 'false' || 'true' }}
+          prerelease: ${{ endsWith(inputs.tag || github.ref_name, '-preview') }}
+          make_latest: ${{ endsWith(inputs.tag || github.ref_name, '-preview') && 'false' || 'true' }}
           fail_on_unmatched_files: true
