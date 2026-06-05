@@ -108,6 +108,7 @@ async function main() {
     });
   } finally {
     await stopChild(smoke);
+    await stopSmokeVm(smokeEnv);
   }
 }
 
@@ -281,6 +282,44 @@ async function stopChild(child) {
   if (!stopped && child.exitCode === null) {
     child.kill("SIGKILL");
     await new Promise((resolve) => child.once("exit", resolve));
+  }
+}
+
+async function stopSmokeVm(smokeEnv) {
+  const smokeResult = smokeEnv?.MONARCH_OS_SMOKE_RESULT;
+  if (!smokeResult) return;
+
+  const pidFile = path.join(path.dirname(smokeResult), "qemu.pid");
+  let rawPid = "";
+  try {
+    rawPid = fs.readFileSync(pidFile, "utf8").trim();
+  } catch {
+    return;
+  }
+
+  const pid = Number(rawPid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return;
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await delay(250);
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The VM may have exited after the final liveness probe.
   }
 }
 
