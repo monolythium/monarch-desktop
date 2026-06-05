@@ -22,7 +22,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@monolythium/core-sdk": "0.4.1",
+    "@monolythium/core-sdk": "0.4.2",
     "@noble/hashes": "2.2.0",
     "@radix-ui/react-dialog": "1.1.15",
     "@tauri-apps/api": "2.10.1",

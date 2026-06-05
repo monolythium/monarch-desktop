@@ -3,8 +3,8 @@
 // Encodes `register(bytes32,string,bytes32,uint32,uint32,bytes,bytes,bytes)`
 // calldata, derives the ML-DSA-65 consensus key and possession signature
 // from the operator PQM-1 mnemonic, signs the inner ML-DSA-65 envelope, and
-// submits it through the plaintext native tx path
-// (`submitTransactionWithPrivacy({ private: false })` -> `mesh_submitTx`).
+// submits it through the sealed private native tx path
+// (`submitTransactionWithPrivacy({ private: true })` -> `lyth_submitEncrypted`).
 //
 // Operator-self-signed: the register handler at
 // `crates/economics/node-registry/src/ops.rs::register_op_host` does
@@ -14,10 +14,12 @@
 
 import { addressToTypedBech32, RpcClient } from "@monolythium/core-sdk";
 import {
+  MempoolClass,
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
 } from "@monolythium/core-sdk/crypto";
-import type { NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
+import type { ClusterSealKeysSource, NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
+import { resolveTestnetClusterSealKeysSource } from "./clusterSeal";
 import {
   NODE_REGISTRY_CONSENSUS_POP_BYTES,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
@@ -67,12 +69,13 @@ export interface RegisterArgs {
   /** Optional execution-unit limit override. Register measures ~151k;
    *  the default of 200k covers it. */
   executionUnitLimit?: bigint;
-  /** PREVIEW ONLY — default `false` (plaintext). Threshold-encrypted
-   *  INCLUSION is not live yet, so `true` would build an encrypted
-   *  envelope that the node admits but never confirms. The operator
-   *  register flow leaves this `false`; it exists only so the encrypted
-   *  path can be smoke-tested once the threshold pipeline ships. */
+  /** Optional test escape hatch. Default is sealed private submission because
+   *  the public testnet rejects plaintext mempool entries. Set to `false`
+   *  only against local chains that still allow `mesh_submitTx`. */
   privatePreview?: boolean;
+  /** Optional pre-resolved cluster seal roster. If omitted on testnet, Desktop
+   *  resolves it from the pinned chain-registry genesis. */
+  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface RegisterResult {
@@ -326,15 +329,19 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
     executionUnitLimit: args.executionUnitLimit,
   });
 
-  // DEFAULT PLAINTEXT (`private: false`) -> `mesh_submitTx`, the working
-  // inclusion path. The returned hash is the node-echoed-and-validated
-  // canonical native tx hash. `privatePreview` is never set by the
-  // operator register flow (threshold-encrypted inclusion is a fast-follow).
+  const privateSubmit = args.privatePreview !== false;
+  const clusterSealKeysSource = privateSubmit
+    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
+    : undefined;
+
   const txHash = await submitTransactionWithPrivacy({
     client: rpc,
     backend,
     tx,
-    private: args.privatePreview === true,
+    private: privateSubmit,
+    clusterId: clusterSealKeysSource?.clusterId ?? 0,
+    clusterSealKeysSource,
+    class: MempoolClass.ContractCall,
   });
 
   // Recompute the canonical sighash locally for the result surface. The

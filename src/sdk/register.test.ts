@@ -8,6 +8,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 type SubmitArg = {
   private: boolean;
+  clusterId?: number;
+  clusterSealKeysSource?: unknown;
+  class?: number;
   tx: { gasLimit: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; input?: string };
 };
 const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ab".repeat(32));
@@ -46,6 +49,7 @@ vi.mock("@monolythium/core-sdk", () => ({
 }));
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
+  MempoolClass: { ContractCall: 1 },
   pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
   submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
 }));
@@ -63,6 +67,16 @@ import {
 } from "./operatorKeys";
 
 const peerId = new Uint8Array(32).fill(0xcc);
+const clusterSealKeysSource = {
+  clusterId: 0,
+  epoch: 0,
+  t: 2,
+  n: 2,
+  roster: [
+    { operatorIndex: 1, mlKemEk: "0x" + "11".repeat(1184) },
+    { operatorIndex: 2, mlKemEk: "0x" + "22".repeat(1184) },
+  ],
+};
 
 describe("clampPriorityTip", () => {
   it("clamps a tip above the per-execution-unit price ceiling", () => {
@@ -181,12 +195,12 @@ describe("buildRegisterTxFields — SDK sane fee defaults", () => {
   });
 });
 
-describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
+describe("submitRegister — defaults to sealed private submission", () => {
   beforeEach(() => {
     submitWithPrivacy.mockClear();
   });
 
-  it("submits via submitTransactionWithPrivacy with private:false (plaintext → mesh_submitTx)", async () => {
+  it("submits via submitTransactionWithPrivacy with private:true", async () => {
     const res = await submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -194,12 +208,15 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
       capabilities: 0x0001,
       bondLythoshi: "500000000000",
       peerIdHex: "0x" + "cc".repeat(32),
+      clusterSealKeysSource,
     });
 
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    // PLAINTEXT is the default and only path the operator flow uses.
-    expect(call.private).toBe(false);
+    expect(call.private).toBe(true);
+    expect(call.clusterId).toBe(0);
+    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
+    expect(call.class).toBe(1);
     // Sane fee defaults flow through to the actual submit.
     expect(call.tx.gasLimit).toBe(200_000n);
     expect(call.tx.maxFeePerGas).toBe(1000n);
@@ -214,7 +231,7 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
     expect(res.consensusPubkeyHex).toBe("0x" + "aa".repeat(1952));
   });
 
-  it("only engages the encrypted PREVIEW path when privatePreview is explicitly true", async () => {
+  it("can use the plaintext path when privatePreview is explicitly false", async () => {
     await submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -222,10 +239,11 @@ describe("submitRegister — defaults to the PLAINTEXT SDK path", () => {
       capabilities: 0x0001,
       bondLythoshi: "1",
       peerIdHex: "0x" + "cc".repeat(32),
-      privatePreview: true,
+      privatePreview: false,
     });
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(true);
+    expect(call.private).toBe(false);
+    expect(call.clusterSealKeysSource).toBeUndefined();
   });
 
   it("rejects malformed hex before submitting a transaction", async () => {
