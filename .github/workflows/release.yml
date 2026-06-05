@@ -437,6 +437,10 @@ jobs:
             [ -e "$artifact" ] || continue
             mv "$artifact" "dist-release/${{ matrix.target }}-$(basename "$artifact")"
           done
+          for artifact in dist-release/*" "*; do
+            [ -e "$artifact" ] || continue
+            mv "$artifact" "dist-release/$(basename "$artifact" | tr ' ' '.')"
+          done
           ls -la dist-release/
 
       - uses: actions/upload-artifact@v4
