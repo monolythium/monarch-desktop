@@ -219,6 +219,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _out
+          export MONARCH_DESKTOP_E2E_KEYCHAIN_DIR="$RUNNER_TEMP/monarch-desktop-e2e-keychain"
+          mkdir -p "$MONARCH_DESKTOP_E2E_KEYCHAIN_DIR"
           xvfb-run -a pnpm run e2e:monarch -- \
             --os-repo monarch-os-talos \
             --build-app \

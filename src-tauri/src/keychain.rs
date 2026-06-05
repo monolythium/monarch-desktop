@@ -10,6 +10,11 @@
 // crashing.
 
 use serde::Serialize;
+use std::{
+    env, fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 use thiserror::Error;
 
 /// Service name registered in the OS keychain. Every account this app
@@ -45,6 +50,9 @@ pub fn store_credential(account: &str, secret: &str) -> Result<(), KeychainError
     if account.is_empty() {
         return Err(KeychainError::Backend("account must not be empty".into()));
     }
+    if let Some(dir) = e2e_keychain_dir() {
+        return store_e2e_credential(&dir, account, secret);
+    }
     let entry = keyring::Entry::new(SERVICE, account)?;
     entry.set_password(secret)?;
     Ok(())
@@ -53,6 +61,9 @@ pub fn store_credential(account: &str, secret: &str) -> Result<(), KeychainError
 /// Read a credential. Returns `KeychainError::NotFound` if absent so
 /// the caller can fall back to a default (e.g. mock SSH host).
 pub fn read_credential(account: &str) -> Result<String, KeychainError> {
+    if let Some(dir) = e2e_keychain_dir() {
+        return read_e2e_credential(&dir, account);
+    }
     let entry = keyring::Entry::new(SERVICE, account)?;
     Ok(entry.get_password()?)
 }
@@ -61,9 +72,57 @@ pub fn read_credential(account: &str) -> Result<String, KeychainError> {
 /// surfaced rather than silently ignored so the UI can decide what to
 /// do (we don't want a "delete succeeded" lie).
 pub fn delete_credential(account: &str) -> Result<(), KeychainError> {
+    if let Some(dir) = e2e_keychain_dir() {
+        return delete_e2e_credential(&dir, account);
+    }
     let entry = keyring::Entry::new(SERVICE, account)?;
     entry.delete_credential()?;
     Ok(())
+}
+
+fn e2e_keychain_dir() -> Option<PathBuf> {
+    let value = env::var_os("MONARCH_DESKTOP_E2E_KEYCHAIN_DIR")?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(value))
+}
+
+fn store_e2e_credential(dir: &Path, account: &str, secret: &str) -> Result<(), KeychainError> {
+    fs::create_dir_all(dir).map_err(file_backend_error)?;
+    fs::write(e2e_credential_path(dir, account), secret).map_err(file_backend_error)
+}
+
+fn read_e2e_credential(dir: &Path, account: &str) -> Result<String, KeychainError> {
+    fs::read_to_string(e2e_credential_path(dir, account)).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => KeychainError::NotFound,
+        _ => file_backend_error(err),
+    })
+}
+
+fn delete_e2e_credential(dir: &Path, account: &str) -> Result<(), KeychainError> {
+    fs::remove_file(e2e_credential_path(dir, account)).map_err(|err| match err.kind() {
+        ErrorKind::NotFound => KeychainError::NotFound,
+        _ => file_backend_error(err),
+    })
+}
+
+fn e2e_credential_path(dir: &Path, account: &str) -> PathBuf {
+    dir.join(format!("{}.secret", hex_encode(account.as_bytes())))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn file_backend_error(err: std::io::Error) -> KeychainError {
+    KeychainError::Backend(format!("e2e keychain file backend: {err}"))
 }
 
 // ---- Tauri command wrappers ---------------------------------------
@@ -84,4 +143,37 @@ pub fn keychain_get(account: String) -> Result<String, String> {
 #[tauri::command]
 pub fn keychain_delete(account: String) -> Result<(), String> {
     delete_credential(&account).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn e2e_keychain_round_trips_without_secret_service() {
+        let dir = env::temp_dir().join(format!(
+            "monarch-desktop-keychain-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock before unix epoch")
+                .as_nanos()
+        ));
+        env::set_var("MONARCH_DESKTOP_E2E_KEYCHAIN_DIR", &dir);
+
+        store_credential("operator:mnemonic", "test secret").expect("store e2e credential");
+        assert_eq!(
+            read_credential("operator:mnemonic").expect("read e2e credential"),
+            "test secret"
+        );
+        delete_credential("operator:mnemonic").expect("delete e2e credential");
+        assert!(matches!(
+            read_credential("operator:mnemonic"),
+            Err(KeychainError::NotFound)
+        ));
+
+        env::remove_var("MONARCH_DESKTOP_E2E_KEYCHAIN_DIR");
+        let _ = fs::remove_dir_all(dir);
+    }
 }
