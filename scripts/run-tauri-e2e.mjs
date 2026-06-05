@@ -196,9 +196,14 @@ async function main() {
     const tempPath = `${outputPath}.tmp`;
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(tempPath, `${JSON.stringify(evidence, null, 2)}\n`);
-    await verifyEvidence(tempPath);
-    fs.renameSync(tempPath, outputPath);
-    console.log(JSON.stringify({ ok: true, evidence: path.relative(process.cwd(), outputPath) || outputPath }));
+    try {
+      await verifyEvidence(tempPath);
+      fs.renameSync(tempPath, outputPath);
+      console.log(JSON.stringify({ ok: true, evidence: path.relative(process.cwd(), outputPath) || outputPath }));
+    } catch (err) {
+      fs.copyFileSync(tempPath, outputPath);
+      throw err;
+    }
   } finally {
     await Promise.allSettled(sessions.map((session) => deleteSession(session.driverUrl, session.id)));
     if (driver) stopProcess(driver);

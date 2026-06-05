@@ -132,7 +132,7 @@ async function alignTalosconfigForSmoke(osRepo, osConfigDir) {
     cwd: osRepo,
     env: process.env,
   });
-  await runChecked("talosctl", ["--talosconfig", talosconfig, "config", "node", endpoint], {
+  await runChecked("talosctl", ["--talosconfig", talosconfig, "config", "node", smokeTalosNode()], {
     cwd: osRepo,
     env: process.env,
   });
@@ -153,6 +153,15 @@ function normalizeTalosEndpoint(value) {
   if (!trimmed) return "https://127.0.0.1:50000";
   if (trimmed.includes("://")) return trimmed.replace(/\/+$/u, "");
   return `https://${trimmed}`.replace(/\/+$/u, "");
+}
+
+function smokeTalosNode() {
+  const endpoint = smokeTalosEndpoint();
+  try {
+    return new URL(endpoint).hostname;
+  } catch {
+    return "127.0.0.1";
+  }
 }
 
 async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
