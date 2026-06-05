@@ -39,11 +39,10 @@ const NODE_REGISTRY_ADDRESS_HEX = "0x0000000000000000000000000000000000001005";
 // in `crates/core/sdk/src/operator.rs`).
 const DEFAULT_SOFTWARE_VERSION = 1 << 16;
 
-// Register is a heavy op (peer-id + endpoint + caps + possession proof slot
-// writes plus the bond-escrow transfer). It measures ~151k execution units,
-// so the default limit is the SDK sane register default of 200k — comfortably
-// above the metered cost without overpaying. Callers may override.
-export const DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT = 200_000n;
+// Register carries large PQ key/proof payloads and pays the sealed-submit
+// intrinsic floor. Mirror the SDK registry default with public-preview
+// headroom; callers may override.
+export const DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT = 1_000_000n;
 
 // Operator-supplied fields the form collects.
 export interface RegisterArgs {
@@ -66,8 +65,8 @@ export interface RegisterArgs {
   /** Optional TPM quote bytes (empty for testnet — TPM verification
    *  is disabled when `tpm.ek_roots` is empty in genesis). */
   tpmQuoteHex?: string;
-  /** Optional execution-unit limit override. Register measures ~151k;
-   *  the default of 200k covers it. */
+  /** Optional execution-unit limit override. The default mirrors the SDK
+   *  registry write ceiling with public-preview headroom. */
   executionUnitLimit?: bigint;
   /** Optional test escape hatch. Default is sealed private submission because
    *  the public testnet rejects plaintext mempool entries. Set to `false`

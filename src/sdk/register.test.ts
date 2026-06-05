@@ -100,7 +100,7 @@ describe("buildRegisterTxFields — SDK sane fee defaults", () => {
     priorityTipLythoshi: "5000",
   };
 
-  it("uses the 200k register execution-unit limit by default (covers ~151k)", () => {
+  it("uses the SDK registry execution-unit limit by default", () => {
     const { tx } = buildRegisterTxFields({
       chainId: 69420n,
       nonce: 0n,
@@ -114,10 +114,8 @@ describe("buildRegisterTxFields — SDK sane fee defaults", () => {
       sppkHash: new Uint8Array(32),
       tpmQuote: new Uint8Array(0),
     });
-    expect(DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT).toBe(200_000n);
-    expect(tx.gasLimit).toBe(200_000n);
-    // ~151k register cost fits comfortably under the default ceiling.
-    expect(tx.gasLimit as bigint).toBeGreaterThan(151_000n);
+    expect(DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT).toBe(1_000_000n);
+    expect(tx.gasLimit).toBe(1_000_000n);
   });
 
   it("sets maxFeePerGas to the price ceiling and clamps the tip to it", () => {
@@ -218,7 +216,7 @@ describe("submitRegister — defaults to sealed private submission", () => {
     expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
     expect(call.class).toBe(1);
     // Sane fee defaults flow through to the actual submit.
-    expect(call.tx.gasLimit).toBe(200_000n);
+    expect(call.tx.gasLimit).toBe(1_000_000n);
     expect(call.tx.maxFeePerGas).toBe(1000n);
     expect(call.tx.maxPriorityFeePerGas).toBe(1000n);
     expect(call.tx.input).toContain(
