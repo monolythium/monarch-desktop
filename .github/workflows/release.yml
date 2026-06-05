@@ -286,6 +286,7 @@ jobs:
           pnpm typecheck
           pnpm run test:release-readiness
           pnpm test
+          pnpm build
           cargo test --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Verify supplied GUI e2e evidence
