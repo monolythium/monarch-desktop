@@ -36,23 +36,21 @@ export function clusterSealKeysSourceFromGenesisToml(
 
   const cluster = firstClusterBlock(genesisToml);
   const threshold = numberField(cluster.header, "threshold");
-  const activeMembers = cluster.memberBlocks
-    .filter((block) => booleanField(block, "active", true))
-    .map((block, index) => ({
-      operatorIndex: index + 1,
-      mlKemEk: prefixedHex(stringField(block, "seal_ek_hex"), "seal_ek_hex"),
-    }));
+  const members = cluster.memberBlocks.map((block, index) => ({
+    operatorIndex: index + 1,
+    mlKemEk: prefixedHex(stringField(block, "seal_ek_hex"), "seal_ek_hex"),
+  }));
 
-  if (activeMembers.length === 0) {
-    throw new Error("testnet genesis has no active cluster seal members");
+  if (members.length === 0) {
+    throw new Error("testnet genesis has no cluster seal members");
   }
 
   return {
     clusterId: numberField(cluster.header, "id"),
     epoch: 0,
     t: threshold,
-    n: activeMembers.length,
-    roster: activeMembers,
+    n: members.length,
+    roster: members,
   };
 }
 
@@ -84,15 +82,6 @@ function numberField(block: string, field: string): number {
     throw new Error(`invalid ${field} in testnet genesis`);
   }
   return value;
-}
-
-function booleanField(block: string, field: string, fallback: boolean): boolean {
-  const line = fieldLine(block, field);
-  if (line === null) return fallback;
-  const raw = line.split("=", 2)[1]?.trim();
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  throw new Error(`invalid ${field} in testnet genesis`);
 }
 
 function stringField(block: string, field: string): string {

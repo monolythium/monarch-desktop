@@ -26,16 +26,17 @@ seal_ek_hex = "${ek3}"
 }
 
 describe("cluster seal roster resolution", () => {
-  it("extracts active cluster seal members from genesis TOML", () => {
+  it("extracts the full cluster seal roster from genesis TOML", () => {
     const source = clusterSealKeysSourceFromGenesisToml(genesisToml());
 
     expect(source.clusterId).toBe(0);
     expect(source.epoch).toBe(0);
     expect(source.t).toBe(2);
-    expect(source.n).toBe(2);
+    expect(source.n).toBe(3);
     expect(source.roster).toEqual([
       { operatorIndex: 1, mlKemEk: `0x${ek1}` },
       { operatorIndex: 2, mlKemEk: `0x${ek2}` },
+      { operatorIndex: 3, mlKemEk: `0x${ek3}` },
     ]);
   });
 
