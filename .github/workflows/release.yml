@@ -81,7 +81,7 @@ permissions:
 
 jobs:
   gui-e2e:
-    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.run_desktop_e2e == 'true' || github.event.inputs.tag != '')) }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_desktop_e2e == 'true') }}
     runs-on: ubuntu-latest
     env:
       VITE_MONARCH_E2E_RECORDER: "true"
