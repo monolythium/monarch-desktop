@@ -35,9 +35,21 @@ const screenshotsDir = path.resolve(
   ),
 );
 const driverUrl = new URL(firstNonEmpty(options.driverUrl, env("MONARCH_TAURI_DRIVER_URL"), "http://127.0.0.1:4444"));
+const driverPort = portNumber(driverUrl, "Tauri driver port", 4444);
+const nativePort = positivePort(
+  firstNonEmpty(options.nativePort, env("MONARCH_TAURI_NATIVE_DRIVER_PORT"), String(driverPort + 1)),
+  "Native WebDriver port",
+);
 const driverBin = firstNonEmpty(options.driver, env("MONARCH_TAURI_DRIVER"), "tauri-driver");
 const externalDriver = options.externalDriver || env("MONARCH_TAURI_DRIVER_EXTERNAL") === "true";
 const twoWindows = options.twoWindows ?? env("MONARCH_DESKTOP_E2E_TWO_WINDOWS") !== "false";
+const secondaryDriverUrlInput = firstNonEmpty(options.secondaryDriverUrl, env("MONARCH_TAURI_SECONDARY_DRIVER_URL"));
+const secondaryDriverUrl = new URL(secondaryDriverUrlInput || (externalDriver ? driverUrl.href : deriveDriverUrl(driverUrl, 2).href));
+const secondaryDriverPort = portNumber(secondaryDriverUrl, "Secondary Tauri driver port", driverPort + 2);
+const secondaryNativePort = positivePort(
+  firstNonEmpty(options.secondaryNativePort, env("MONARCH_TAURI_SECONDARY_NATIVE_DRIVER_PORT"), String(secondaryDriverPort + 1)),
+  "Secondary native WebDriver port",
+);
 const appVersion = firstNonEmpty(options.appVersion, env("MONARCH_DESKTOP_APP_VERSION"), packageVersion());
 const commit = firstNonEmpty(options.commit, env("GITHUB_SHA"), gitCommit());
 const timeoutMs = positiveIntegerMs(
@@ -114,16 +126,18 @@ async function main() {
     throw new Error("Expected Protocore digest missing; pass --expected-digest or use an OS smoke result with expected_protocore_digest.");
   }
 
-  const driver = externalDriver ? null : startDriver(driverBin);
+  const driver = externalDriver ? null : startDriver(driverBin, driverUrl, nativePort);
+  const secondaryDriver = !externalDriver && twoWindows ? startDriver(driverBin, secondaryDriverUrl, secondaryNativePort) : null;
   const sessions = [];
 
   try {
     await waitForDriver(driverUrl, timeoutMs);
+    if (twoWindows) await waitForDriver(secondaryDriverUrl, timeoutMs);
     const primary = await createSession(driverUrl, appPath);
     sessions.push(primary);
     let secondary = null;
     if (twoWindows) {
-      secondary = await createSession(driverUrl, appPath);
+      secondary = await createSession(secondaryDriverUrl, appPath);
       sessions.push(secondary);
     }
 
@@ -186,8 +200,9 @@ async function main() {
     fs.renameSync(tempPath, outputPath);
     console.log(JSON.stringify({ ok: true, evidence: path.relative(process.cwd(), outputPath) || outputPath }));
   } finally {
-    await Promise.allSettled(sessions.map((session) => deleteSession(driverUrl, session.id)));
+    await Promise.allSettled(sessions.map((session) => deleteSession(session.driverUrl, session.id)));
     if (driver) stopProcess(driver);
+    if (secondaryDriver) stopProcess(secondaryDriver);
   }
 }
 
@@ -204,6 +219,9 @@ function parseArgs(args) {
     else if (arg === "--screenshots-dir") out.screenshotsDir = needArg(args, ++i, arg);
     else if (arg === "--driver") out.driver = needArg(args, ++i, arg);
     else if (arg === "--driver-url") out.driverUrl = needArg(args, ++i, arg);
+    else if (arg === "--native-port") out.nativePort = needArg(args, ++i, arg);
+    else if (arg === "--secondary-driver-url") out.secondaryDriverUrl = needArg(args, ++i, arg);
+    else if (arg === "--secondary-native-port") out.secondaryNativePort = needArg(args, ++i, arg);
     else if (arg === "--app-version") out.appVersion = needArg(args, ++i, arg);
     else if (arg === "--commit") out.commit = needArg(args, ++i, arg);
     else if (arg === "--timeout-ms") out.timeoutMs = needArg(args, ++i, arg);
@@ -254,6 +272,11 @@ Options:
                          Directory for per-route PNG screenshots.
   --driver <path>       tauri-driver binary. Default: tauri-driver
   --driver-url <url>    WebDriver URL. Default: http://127.0.0.1:4444
+  --native-port <port>  Native WebDriver port. Default: driver port + 1.
+  --secondary-driver-url <url>
+                         Second WebDriver URL. Default: primary driver port + 2.
+  --secondary-native-port <port>
+                         Second native WebDriver port. Default: secondary driver port + 1.
   --external-driver     Use an already-running tauri-driver.
   --one-window          Do not launch a second Tauri session.
   --expected-chain-id <id>
@@ -290,13 +313,15 @@ Options:
 `);
 }
 
-function startDriver(binary) {
-  const child = childProcess.spawn(binary, [], {
+function startDriver(binary, baseUrl, driverNativePort) {
+  const port = portNumber(baseUrl, "Tauri driver port", 4444);
+  const child = childProcess.spawn(binary, [`--port=${port}`, `--native-port=${driverNativePort}`], {
     cwd: ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stdout.on("data", (chunk) => process.stdout.write(`[tauri-driver] ${chunk}`));
-  child.stderr.on("data", (chunk) => process.stderr.write(`[tauri-driver] ${chunk}`));
+  const label = `tauri-driver:${port}`;
+  child.stdout.on("data", (chunk) => process.stdout.write(`[${label}] ${chunk}`));
+  child.stderr.on("data", (chunk) => process.stderr.write(`[${label}] ${chunk}`));
   child.on("error", (err) => {
     console.error(`tauri-driver failed to start: ${errorMessage(err)}`);
   });
@@ -329,7 +354,7 @@ async function createSession(baseUrl, application) {
   const value = response.value ?? response;
   const id = value.sessionId ?? response.sessionId;
   if (!id) throw new Error(`WebDriver session response did not include sessionId: ${JSON.stringify(response)}`);
-  return { id };
+  return { id, driverUrl: new URL(baseUrl.href) };
 }
 
 async function deleteSession(baseUrl, sessionId) {
@@ -444,7 +469,7 @@ async function collectReadiness(session, options) {
 }
 
 async function sessionRequest(session, method, route, body) {
-  return await webdriverRequest(driverUrl, method, `/session/${session.id}${route}`, body, timeoutMs);
+  return await webdriverRequest(session.driverUrl, method, `/session/${session.id}${route}`, body, timeoutMs);
 }
 
 async function webdriverRequest(baseUrl, method, route, body, timeout) {
@@ -657,6 +682,25 @@ function numberOption(value) {
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function deriveDriverUrl(baseUrl, portOffset) {
+  const next = new URL(baseUrl.href);
+  next.port = String(portNumber(baseUrl, "Tauri driver port", 4444) + portOffset);
+  return next;
+}
+
+function portNumber(url, label, fallback) {
+  const raw = url.port || String(fallback);
+  return positivePort(raw, label);
+}
+
+function positivePort(value, label) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 65535) {
+    throw new Error(`${label} must be a TCP port number`);
+  }
+  return parsed;
 }
 
 function positiveIntegerMs(value, label) {
