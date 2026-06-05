@@ -17,26 +17,33 @@ if (options.help) {
   process.exit(0);
 }
 
-const appPath = path.resolve(options.app ?? env("MONARCH_DESKTOP_APP") ?? DEFAULT_APP);
-const osSmokePath = path.resolve(options.osSmoke ?? env("MONARCH_OS_SMOKE_RESULT") ?? DEFAULT_SMOKE);
+const appPath = path.resolve(firstNonEmpty(options.app, env("MONARCH_DESKTOP_APP"), DEFAULT_APP));
+const osSmokePath = path.resolve(firstNonEmpty(options.osSmoke, env("MONARCH_OS_SMOKE_RESULT"), DEFAULT_SMOKE));
 const readinessPath = options.readiness
   ? path.resolve(options.readiness)
   : env("MONARCH_DESKTOP_READINESS_JSON")
     ? path.resolve(env("MONARCH_DESKTOP_READINESS_JSON"))
     : "";
-const outputPath = path.resolve(options.output ?? env("MONARCH_DESKTOP_E2E_OUTPUT") ?? path.join(ROOT, "_out", "monarch-desktop-e2e-evidence.json"));
-const screenshotsDir = path.resolve(
-  options.screenshotsDir ??
-    env("MONARCH_DESKTOP_E2E_SCREENSHOTS_DIR") ??
-    path.join(path.dirname(outputPath), "monarch-desktop-e2e-screenshots"),
+const outputPath = path.resolve(
+  firstNonEmpty(options.output, env("MONARCH_DESKTOP_E2E_OUTPUT"), path.join(ROOT, "_out", "monarch-desktop-e2e-evidence.json")),
 );
-const driverUrl = new URL(options.driverUrl ?? env("MONARCH_TAURI_DRIVER_URL") ?? "http://127.0.0.1:4444");
-const driverBin = options.driver ?? env("MONARCH_TAURI_DRIVER") ?? "tauri-driver";
+const screenshotsDir = path.resolve(
+  firstNonEmpty(
+    options.screenshotsDir,
+    env("MONARCH_DESKTOP_E2E_SCREENSHOTS_DIR"),
+    path.join(path.dirname(outputPath), "monarch-desktop-e2e-screenshots"),
+  ),
+);
+const driverUrl = new URL(firstNonEmpty(options.driverUrl, env("MONARCH_TAURI_DRIVER_URL"), "http://127.0.0.1:4444"));
+const driverBin = firstNonEmpty(options.driver, env("MONARCH_TAURI_DRIVER"), "tauri-driver");
 const externalDriver = options.externalDriver || env("MONARCH_TAURI_DRIVER_EXTERNAL") === "true";
 const twoWindows = options.twoWindows ?? env("MONARCH_DESKTOP_E2E_TWO_WINDOWS") !== "false";
-const appVersion = options.appVersion ?? env("MONARCH_DESKTOP_APP_VERSION") ?? packageVersion();
-const commit = options.commit ?? env("GITHUB_SHA") ?? gitCommit();
-const timeoutMs = Number(options.timeoutMs ?? env("MONARCH_DESKTOP_E2E_TIMEOUT_MS") ?? 60_000);
+const appVersion = firstNonEmpty(options.appVersion, env("MONARCH_DESKTOP_APP_VERSION"), packageVersion());
+const commit = firstNonEmpty(options.commit, env("GITHUB_SHA"), gitCommit());
+const timeoutMs = positiveIntegerMs(
+  firstNonEmpty(options.timeoutMs, env("MONARCH_DESKTOP_E2E_TIMEOUT_MS"), "60000"),
+  "Desktop e2e timeout",
+);
 const skipChatSend = options.skipChatSend || env("MONARCH_E2E_SKIP_CHAT_SEND") === "true";
 const skipRestart = options.skipRestart || env("MONARCH_E2E_SKIP_RESTART") === "true";
 const allowMissingBootstrapPeers =
@@ -77,7 +84,7 @@ const readinessOptions = {
   executeRestart: skipRestart ? false : undefined,
   requireBootstrapPeers: allowMissingBootstrapPeers ? false : undefined,
 };
-const peerWaitMs = Number(options.peerWaitMs ?? env("MONARCH_E2E_PEER_WAIT_MS") ?? 5_000);
+const peerWaitMs = positiveIntegerMs(firstNonEmpty(options.peerWaitMs, env("MONARCH_E2E_PEER_WAIT_MS"), "5000"), "Peer wait timeout");
 const dkgReshareAttestationPath =
   options.dkgReshareAttestation ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE");
 const dkgReshareAttestationJson =
@@ -650,6 +657,14 @@ function numberOption(value) {
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function positiveIntegerMs(value, label) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer number of milliseconds`);
+  }
+  return parsed;
 }
 
 function delay(ms) {

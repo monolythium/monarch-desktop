@@ -21,9 +21,9 @@ await main().catch((err) => {
 });
 
 async function main() {
-  const osRepo = path.resolve(options.osRepo ?? env("MONARCH_OS_REPO") ?? DEFAULT_OS_REPO);
-  const outputPath = path.resolve(options.output ?? env("MONARCH_DESKTOP_E2E_OUTPUT") ?? DEFAULT_OUTPUT);
-  const osConfigDir = options.osConfigDir ?? env("MONARCH_OS_SMOKE_CONFIG_DIR") ?? DEFAULT_OS_CONFIG_DIR;
+  const osRepo = path.resolve(firstNonEmpty(options.osRepo, env("MONARCH_OS_REPO"), DEFAULT_OS_REPO));
+  const outputPath = path.resolve(firstNonEmpty(options.output, env("MONARCH_DESKTOP_E2E_OUTPUT"), DEFAULT_OUTPUT));
+  const osConfigDir = firstNonEmpty(options.osConfigDir, env("MONARCH_OS_SMOKE_CONFIG_DIR"), DEFAULT_OS_CONFIG_DIR);
   assertDir(osRepo, "Monarch OS repo");
 
   if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
