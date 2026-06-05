@@ -30,6 +30,7 @@ describe("operation command mapping", () => {
 
   it("does not dispatch dedicated production operations through shell commands", () => {
     expect(commandFor(req("operator-restore"))).toBeNull();
+    expect(commandFor(req("operator-display"))).toBeNull();
     expect(commandFor(req("chat-bootstrap-peers"))).toBeNull();
     expect(commandFor(req("rotate-keys"))).toBeNull();
     expect(commandFor(req("export-backup"))).toBeNull();

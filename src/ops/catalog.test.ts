@@ -85,6 +85,19 @@ describe("operation catalog", () => {
     );
   });
 
+  it("routes operator display metadata through an operator metadata tx", () => {
+    const display = OP_CATALOG.find((entry) => entry.kind === "operator-display");
+
+    expect(display).toMatchObject({
+      title: "Set operator name",
+      confirmLabel: "Sign display metadata tx",
+    });
+    expect(display?.intro).toContain("setOperatorDisplay(bytes32,string,string)");
+    expect(display?.effects).toContain(
+      "Builds setOperatorDisplay(peerId, moniker, alias) calldata against node-registry 0x1005.",
+    );
+  });
+
   it("routes cluster swap through a foundation Rotate pending-change", () => {
     const swap = OP_CATALOG.find((entry) => entry.kind === "cluster-swap");
 

@@ -226,8 +226,8 @@ describe("CJ-1 cluster-admission tx field builders", () => {
       bondLythoshi: "5000000000000000000000",
     });
 
-    expect(DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT).toBe(250_000n);
-    expect(tx.gasLimit).toBe(250_000n);
+    expect(DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT).toBe(1_000_000n);
+    expect(tx.gasLimit).toBe(1_000_000n);
     expect(tx.maxFeePerGas).toBe(800n);
     expect(tx.maxPriorityFeePerGas).toBe(800n);
     expect(tx.to).toBe("0x0000000000000000000000000000000000001005");

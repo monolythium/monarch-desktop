@@ -32,6 +32,10 @@ import {
   isFreezeAdmissionInputComplete,
 } from "./IncidentExecutorForm";
 import { isOtaApplyInputComplete, OtaApplyForm } from "./OtaApplyForm";
+import {
+  isOperatorDisplayInputComplete,
+  OperatorDisplayForm,
+} from "./OperatorDisplayForm";
 import { isRegisterInputComplete, RegisterForm } from "./RegisterForm";
 import { isRedelegateInputComplete, RedelegateForm } from "./RedelegateForm";
 import { isRestoreInputComplete, RestoreForm } from "./RestoreForm";
@@ -72,6 +76,10 @@ export function OperationsDrawer() {
     request?.kind === "chat-bootstrap-peers" &&
     stage === "preview" &&
     !isChatBootstrapPeersInputComplete(request.chatBootstrapPeersInput);
+  const operatorDisplayNeedsInput =
+    request?.kind === "operator-display" &&
+    stage === "preview" &&
+    !isOperatorDisplayInputComplete(request.operatorDisplayInput);
   const otaApplyNeedsInput =
     request?.kind === "ota-apply" &&
     stage === "preview" &&
@@ -112,6 +120,7 @@ export function OperationsDrawer() {
     registerNeedsInput ||
     redelegateNeedsInput ||
     chatBootstrapPeersNeedsInput ||
+    operatorDisplayNeedsInput ||
     restoreNeedsInput ||
     pendingChangeNeedsInput ||
     clusterJoinRequestNeedsInput ||
@@ -127,25 +136,27 @@ export function OperationsDrawer() {
       ? "Fill every redelegate input first"
       : chatBootstrapPeersNeedsInput
         ? "Enter the operator peer id and chat peers first"
-        : restoreNeedsInput
-          ? "Enter the operator peer id first"
-          : pendingChangeNeedsInput
-            ? "Fill every pending-change input first"
-            : clusterJoinRequestNeedsInput
-              ? "Fill every CJ-1 join request input first"
-              : clusterVoteAdmitNeedsInput
-                ? "Fill every CJ-1 admit vote input first"
-                : clusterFormNeedsInput
-                  ? "Fill the 7 active + 3 standby roster and consent signatures first"
-                  : dkgReshareNeedsInput
-                    ? "Fill every DKG attestation input first"
-                    : freezeAdmissionNeedsInput
-                      ? "Enter the incident reason hash first"
-                      : emergencyKeyRotationNeedsInput
-                        ? "Fill every emergency key-rotation input first"
-                        : otaApplyNeedsInput
-                          ? "Enter the signed image reference first"
-                          : undefined;
+        : operatorDisplayNeedsInput
+          ? "Enter the operator peer id and valid display fields first"
+          : restoreNeedsInput
+            ? "Enter the operator peer id first"
+            : pendingChangeNeedsInput
+              ? "Fill every pending-change input first"
+              : clusterJoinRequestNeedsInput
+                ? "Fill every CJ-1 join request input first"
+                : clusterVoteAdmitNeedsInput
+                  ? "Fill every CJ-1 admit vote input first"
+                  : clusterFormNeedsInput
+                    ? "Fill the 7 active + 3 standby roster and consent signatures first"
+                    : dkgReshareNeedsInput
+                      ? "Fill every DKG attestation input first"
+                      : freezeAdmissionNeedsInput
+                        ? "Enter the incident reason hash first"
+                        : emergencyKeyRotationNeedsInput
+                          ? "Fill every emergency key-rotation input first"
+                          : otaApplyNeedsInput
+                            ? "Enter the signed image reference first"
+                            : undefined;
 
   return (
     <>
@@ -292,6 +303,7 @@ function DrawerBody() {
         </div>
         {request.kind === "operator-register" ? <RegisterForm /> : null}
         {request.kind === "redelegate" ? <RedelegateForm /> : null}
+        {request.kind === "operator-display" ? <OperatorDisplayForm /> : null}
         {request.kind === "chat-bootstrap-peers" ? <ChatBootstrapPeersForm /> : null}
         {request.kind === "operator-restore" ? <RestoreForm /> : null}
         {request.kind === "cluster-accept-invite" || request.kind === "cluster-swap" ? (

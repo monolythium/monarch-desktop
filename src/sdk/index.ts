@@ -131,6 +131,22 @@ export type {
   SubmitChatBootstrapPeersResult,
 } from "./chatPeerOps";
 export {
+  buildSetOperatorDisplayTxFields,
+  DEFAULT_OPERATOR_DISPLAY_EXECUTION_UNIT_LIMIT,
+  encodeSetOperatorDisplayCalldata,
+  normalizeOperatorDisplay,
+  normalizeOperatorDisplayField,
+  OPERATOR_ALIAS_MAX_BYTES,
+  OPERATOR_MONIKER_MAX_BYTES,
+  operatorDisplayPeerIdHexToBytes,
+  SET_OPERATOR_DISPLAY_SELECTOR,
+  submitOperatorDisplay,
+} from "./operatorDisplayOps";
+export type {
+  SubmitOperatorDisplayArgs,
+  SubmitOperatorDisplayResult,
+} from "./operatorDisplayOps";
+export {
   buildEmergencyKeyRotationTxFields,
   buildFreezeAdmissionTxFields,
   DEFAULT_INCIDENT_EXECUTION_UNIT_LIMIT,

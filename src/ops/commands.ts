@@ -4,7 +4,7 @@
 // Other verbs either have dedicated live helpers or need higher-trust /
 // foundation-coordinated paths that do not exist yet. They return null
 // here so the drawer never dispatches a shell command no binary implements.
-// Chain verbs such as register, redelegate, chat metadata, foundation
+// Chain verbs such as register, redelegate, operator/chat metadata, foundation
 // recovery, and foundation pending-change submission, offline backup export,
 // plus Talos OS upgrade/rollback, are handled before this mapper by dedicated
 // live helpers.
@@ -44,6 +44,7 @@ export function commandFor(op: OpRequest): string | null {
     // shell fallback from bypassing the signed node-registry path.
     case "operator-restore":
     case "operator-register":
+    case "operator-display":
     case "chat-bootstrap-peers":
     case "rotate-keys":
     case "redelegate":

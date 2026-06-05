@@ -35,6 +35,7 @@ import {
   talosUpgrade,
 } from "../sdk";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
+import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
 import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
@@ -74,6 +75,7 @@ import type {
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,
   OtaApplyInput,
+  OperatorDisplayInput,
   PendingChangeInput,
   RedelegateInput,
   RegisterInput,
@@ -106,6 +108,8 @@ type OpsContextValue = OpsState & {
   setRestoreInput: (patch: Partial<RestoreInput>) => void;
   /** Update the operator chat bootstrap metadata declaration payload. */
   setChatBootstrapPeersInput: (patch: Partial<ChatBootstrapPeersInput>) => void;
+  /** Update the operator display metadata declaration payload. */
+  setOperatorDisplayInput: (patch: Partial<OperatorDisplayInput>) => void;
   /** Update the pending-change request payload for cluster invite/swap. */
   setPendingChangeInput: (patch: Partial<PendingChangeInput>) => void;
   /** Update the CJ-1 join request payload. */
@@ -388,6 +392,59 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           req,
           { ok: false, message },
           { transport: "chat-bootstrap-peers-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runOperatorDisplayFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.operatorDisplayInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Operator display form is missing required fields." },
+          { transport: "operator-display-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting setOperatorDisplay.",
+            },
+            { transport: "operator-display-tx" },
+          );
+          return;
+        }
+        const res = await submitOperatorDisplay({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          peerIdHex: input.peerIdHex,
+          moniker: input.moniker,
+          alias: input.alias,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Published operator display metadata for ${res.peerIdHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "operator-display-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "operator-display-tx" },
         );
       }
     },
@@ -933,6 +990,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "operator-display") {
+      if (inTauri()) {
+        await runOperatorDisplayFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-accept-invite" || req.kind === "cluster-swap") {
       if (inTauri()) {
         await runPendingChangeFlow(req);
@@ -1074,6 +1139,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runFreezeAdmissionFlow,
     runOtaApplyFlow,
     runOtaRollbackFlow,
+    runOperatorDisplayFlow,
     runPendingChangeFlow,
     runRedelegateFlow,
     runRegisterFlow,
@@ -1170,6 +1236,25 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           request: { ...s.request, chatBootstrapPeersInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setOperatorDisplayInput = useCallback(
+    (patch: Partial<OperatorDisplayInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "operator-display") return s;
+        const base: OperatorDisplayInput = s.request.operatorDisplayInput ?? {
+          peerIdHex: "",
+          moniker: "",
+          alias: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, operatorDisplayInput: next },
         };
       });
     },
@@ -1345,6 +1430,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRedelegateInput,
       setRestoreInput,
       setChatBootstrapPeersInput,
+      setOperatorDisplayInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
@@ -1365,6 +1451,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRedelegateInput,
       setRestoreInput,
       setChatBootstrapPeersInput,
+      setOperatorDisplayInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,

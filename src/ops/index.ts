@@ -16,5 +16,6 @@ export type {
   DkgReshareAttestationInput,
   OtaApplyInput,
   OtaRebootMode,
+  OperatorDisplayInput,
   PendingChangeInput,
 } from "./types";

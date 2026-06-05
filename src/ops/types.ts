@@ -7,6 +7,7 @@ export const OP_KINDS = [
   "operator-restart",
   "operator-restore",
   "operator-register",
+  "operator-display",
   "chat-bootstrap-peers",
   "rotate-keys",
   "redelegate",
@@ -56,6 +57,15 @@ export type RestoreInput = {
 export type ChatBootstrapPeersInput = {
   peerIdHex: string;
   peers: string;
+};
+
+// Inputs for node-registry `setOperatorDisplay(bytes32,string,string)`.
+// The peer id selects the operator-owned registration row; empty text clears
+// the corresponding public display field.
+export type OperatorDisplayInput = {
+  peerIdHex: string;
+  moniker: string;
+  alias: string;
 };
 
 // Inputs for node-registry `submitPendingChange(uint8,bytes,uint64,uint64)`.
@@ -152,6 +162,9 @@ export type OpRequest = {
   /** Present only when `kind === "chat-bootstrap-peers"`. Carries the
    *  operator-owned chat bootstrap metadata declaration. */
   chatBootstrapPeersInput?: ChatBootstrapPeersInput;
+  /** Present only when `kind === "operator-display"`. Carries public
+   *  operator display metadata. */
+  operatorDisplayInput?: OperatorDisplayInput;
   /** Present only when `kind` maps to a foundation pending-change op. */
   pendingChangeInput?: PendingChangeInput;
   /** Present only when `kind === "cluster-request-join"`. */

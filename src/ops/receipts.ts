@@ -9,6 +9,7 @@ export type OperationReceiptTransport =
   | "ssh-dev"
   | "register-tx"
   | "redelegate-tx"
+  | "operator-display-tx"
   | "chat-bootstrap-peers-tx"
   | "foundation-recovery-tx"
   | "foundation-pending-change-tx"

@@ -102,6 +102,35 @@ export function Operator() {
             className="btn btn--ghost"
             onClick={() =>
               ops.requestOp({
+                kind: "operator-display",
+                title: "Set operator name",
+                sub: "Submit public operator metadata",
+                intro:
+                  "Posts setOperatorDisplay(bytes32,string,string) from the operator's PQM-1 mnemonic. Monoscan and Desktop read the resulting public moniker and alias through lyth_operatorInfo.",
+                fields: [
+                  { key: "operator", label: "Operator", value: moniker },
+                  { key: "peer-id", label: "Peer id", value: operatorId ?? "enter peer id" },
+                  { key: "source", label: "Source", value: "lyth_operatorInfo" },
+                ],
+                operatorDisplayInput: {
+                  peerIdHex: operatorId ?? "",
+                  moniker: displayMonikerInput(v?.moniker, operatorId),
+                  alias: "",
+                },
+                icon: "ID",
+                risk: "medium",
+                needsPasskey: true,
+                confirmLabel: "Sign display metadata tx",
+              })
+            }
+          >
+            Set name
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() =>
+              ops.requestOp({
                 kind: "cluster-request-join",
                 title: `Request join for ${activeClusterLabel}`,
                 sub: "Prepare CJ-1 join request",
@@ -410,6 +439,16 @@ export function Operator() {
 
 function shortId(value: string): string {
   return value.length <= 18 ? value : `${value.slice(0, 10)}…${value.slice(-6)}`;
+}
+
+function displayMonikerInput(value: string | undefined, operatorId: string | null): string {
+  if (!value || !operatorId) return "";
+  const sdkFallback =
+    operatorId.length <= 16 ? operatorId : `${operatorId.slice(0, 8)}…${operatorId.slice(-6)}`;
+  if (value === operatorId || value === sdkFallback || value === shortId(operatorId)) {
+    return "";
+  }
+  return value;
 }
 
 function compact(value: string): string {

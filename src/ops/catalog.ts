@@ -80,6 +80,34 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "operator-display",
+    category: "cluster",
+    icon: "ID",
+    risk: "medium",
+    title: "Set operator name",
+    sub: "Submit public operator metadata",
+    intro:
+      "Posts a signed setOperatorDisplay(bytes32,string,string) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The public moniker and alias feed lyth_operatorInfo and explorer/operator-console name surfaces. Empty fields clear the stored values.",
+    destructive: false,
+    needsPasskey: true,
+    confirmLabel: "Sign display metadata tx",
+    keywords: ["name", "moniker", "alias", "display", "metadata", "operator"],
+    effects: [
+      "Builds setOperatorDisplay(peerId, moniker, alias) calldata against node-registry 0x1005.",
+      "Signs the zero-value native tx from the operator keychain mnemonic.",
+      "Publishes bounded UTF-8 display text for Monoscan and Desktop operator views.",
+    ],
+    diff: [
+      { key: "display", label: "Display metadata", value: "+ public moniker/alias" },
+      { key: "source", label: "Discovery", value: "lyth_operatorInfo" },
+    ],
+    fields: [
+      { key: "peer-id", label: "Peer id", value: "32-byte node-registry peer id" },
+      { key: "moniker", label: "Moniker", value: "up to 128 UTF-8 bytes" },
+      { key: "alias", label: "Alias", value: "up to 64 UTF-8 bytes" },
+    ],
+  },
+  {
     kind: "chat-bootstrap-peers",
     category: "cluster",
     icon: "CP",

@@ -242,6 +242,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "operator-register",
   "operator-start",
   "operator-stop",
+  "operator-display",
   "chat-bootstrap-peers",
   "cluster-form",
   "cluster-request-join",
@@ -545,8 +546,8 @@ export const DESIGN_SOURCE_AUDIT = [
     status: "partial",
     desktopSurface: "/operator",
     routes: ["/operator"],
-    operationKinds: ["operator-register", "operator-start", "operator-stop", "operator-restart"],
-    evidence: "Operator route reads node/operator state and exposes register/service operations.",
+    operationKinds: ["operator-register", "operator-display", "operator-start", "operator-stop", "operator-restart"],
+    evidence: "Operator route reads node/operator state and exposes register/display/service operations.",
     decision: "Live operator identity generation happens on OS first boot; Desktop imports the operator PQM-1 mnemonic.",
   },
   {
