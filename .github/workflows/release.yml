@@ -40,6 +40,15 @@ on:
         description: "Monarch OS release tag to download for GUI e2e. Empty uses latest release."
         required: false
         type: string
+      monarch_os_artifact_run_id:
+        description: "Monarch OS workflow run id containing a talos-image artifact for GUI e2e. Takes precedence over release tag."
+        required: false
+        type: string
+      monarch_os_artifact_name:
+        description: "Monarch OS workflow artifact name for GUI e2e."
+        required: false
+        default: "talos-image"
+        type: string
       monarch_os_raw_pattern:
         description: "Raw image release asset pattern for GUI e2e."
         required: false
@@ -131,21 +140,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MONARCH_OS_RELEASE_TAG: ${{ github.event.inputs.monarch_os_release_tag || vars.MONARCH_OS_RELEASE_TAG || '' }}
+          MONARCH_OS_ARTIFACT_RUN_ID: ${{ github.event.inputs.monarch_os_artifact_run_id || vars.MONARCH_OS_ARTIFACT_RUN_ID || '' }}
+          MONARCH_OS_ARTIFACT_NAME: ${{ github.event.inputs.monarch_os_artifact_name || vars.MONARCH_OS_ARTIFACT_NAME || 'talos-image' }}
           MONARCH_OS_RAW_PATTERN: ${{ github.event.inputs.monarch_os_raw_pattern || vars.MONARCH_OS_RAW_PATTERN || '*.raw.xz' }}
         run: |
           set -euo pipefail
           mkdir -p monarch-os-talos/_out
-          tag="$MONARCH_OS_RELEASE_TAG"
-          if [ -z "$tag" ]; then
-            tag="$(gh release list --repo monolythium/monarch-os-talos --limit 1 --json tagName --jq '.[0].tagName')"
+          if [ -n "$MONARCH_OS_ARTIFACT_RUN_ID" ]; then
+            gh run download "$MONARCH_OS_ARTIFACT_RUN_ID" \
+              --repo monolythium/monarch-os-talos \
+              --name "$MONARCH_OS_ARTIFACT_NAME" \
+              --dir monarch-os-talos/_out
+          else
+            tag="$MONARCH_OS_RELEASE_TAG"
+            if [ -z "$tag" ]; then
+              tag="$(gh release list --repo monolythium/monarch-os-talos --limit 1 --json tagName --jq '.[0].tagName')"
+            fi
+            gh release download "$tag" \
+              --repo monolythium/monarch-os-talos \
+              --pattern "$MONARCH_OS_RAW_PATTERN" \
+              --pattern "${MONARCH_OS_RAW_PATTERN}.sha256" \
+              --pattern "*.release.json" \
+              --pattern "*.release.json.sha256" \
+              --dir monarch-os-talos/_out
           fi
-          gh release download "$tag" \
-            --repo monolythium/monarch-os-talos \
-            --pattern "$MONARCH_OS_RAW_PATTERN" \
-            --pattern "${MONARCH_OS_RAW_PATTERN}.sha256" \
-            --pattern "*.release.json" \
-            --pattern "*.release.json.sha256" \
-            --dir monarch-os-talos/_out
           (cd monarch-os-talos/_out && sha256sum -c *.raw.xz.sha256)
           (cd monarch-os-talos/_out && sha256sum -c *.release.json.sha256)
           metadata="$(find monarch-os-talos/_out -maxdepth 1 -type f -name '*.release.json' | sort | head -n 1)"
