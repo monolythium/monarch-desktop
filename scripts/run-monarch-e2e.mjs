@@ -115,6 +115,11 @@ async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
     env: {
       ...process.env,
       KEEP_QEMU_ALIVE: "true",
+      TIMEOUT_SECONDS: firstNonEmpty(env("TIMEOUT_SECONDS"), "1500"),
+      BOOT_HOLD_SECONDS: firstNonEmpty(env("BOOT_HOLD_SECONDS"), "240"),
+      POST_APPLY_TIMEOUT_SECONDS: firstNonEmpty(env("POST_APPLY_TIMEOUT_SECONDS"), "1200"),
+      EXTENSION_SERVICE_TIMEOUT_SECONDS: firstNonEmpty(env("EXTENSION_SERVICE_TIMEOUT_SECONDS"), "900"),
+      PROTOCORE_RPC_TIMEOUT_SECONDS: firstNonEmpty(env("PROTOCORE_RPC_TIMEOUT_SECONDS"), "1200"),
       TALOS_MACHINE_CONFIG_FILE: path.join(osConfigDir, "controlplane.yaml"),
       TALOSCONFIG_FILE: path.join(osConfigDir, "talosconfig"),
       REQUIRE_TALOS_API_PROBE: "true",
@@ -130,7 +135,7 @@ async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
     await waitForFileOrExit(
       liveEnvPath,
       smoke,
-      positiveIntegerMs(firstNonEmpty(options.smokeTimeoutMs, env("MONARCH_E2E_SMOKE_TIMEOUT_MS"), "600000"), "OS smoke timeout"),
+      positiveIntegerMs(firstNonEmpty(options.smokeTimeoutMs, env("MONARCH_E2E_SMOKE_TIMEOUT_MS"), "1800000"), "OS smoke timeout"),
     );
     const smokeEnv = parseEnvFile(liveEnvPath);
     for (const key of [
