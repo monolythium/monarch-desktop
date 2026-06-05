@@ -74,3 +74,5 @@ function normalizeRoute(route: string): string {
   if (!trimmed) return "";
   return trimmed === "/" ? "/home" : trimmed;
 }
+
+installMonarchE2eRecorder();

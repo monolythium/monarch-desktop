@@ -4,7 +4,7 @@
 // (live round/block halo). ⌘K palette and `g+letter` nav are wired here
 // so they work on every route.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { SideNav } from "./components/SideNav";
 import { TopBar } from "./components/TopBar";
@@ -66,11 +66,14 @@ function ShellInner() {
   // renders only when set; dismissal clears it until the next launch.
   const [pendingUpdate, setPendingUpdate] = useState<UpdateAvailable | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  useLayoutEffect(() => {
     installMonarchE2eRecorder({
       collectReadiness: collectMonarchE2eReadiness,
     });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     void checkForUpdate().then((result) => {
       if (cancelled || !result.available) return;
       setPendingUpdate(result);
