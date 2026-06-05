@@ -3,6 +3,9 @@ import type { OperatorOnboardingPreview } from "./clusterJoinOps";
 
 type SubmitArg = {
   private: boolean;
+  clusterId?: number;
+  clusterSealKeysSource?: unknown;
+  class?: number;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -14,6 +17,7 @@ type SubmitArg = {
 };
 
 const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
+const clusterSealKeysSource = { clusterId: 7, epoch: 0, t: 0, n: 0, roster: [] };
 let previewResponse: OperatorOnboardingPreview = {
   schemaVersion: 1,
   capability: "operatorOnboardingRpcV1",
@@ -73,6 +77,7 @@ vi.mock("@monolythium/core-sdk", async (importOriginal) => {
 });
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
+  MempoolClass: { ContractCall: 1 },
   pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
   submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
 }));
@@ -109,13 +114,14 @@ describe("CJ-1 submit helpers", () => {
     };
   });
 
-  it("submits requestClusterJoin as a plaintext native tx after native preview", async () => {
+  it("submits requestClusterJoin as a private native tx after native preview", async () => {
     const res = await submitRequestClusterJoin({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
       clusterId: 7,
       operatorPubkeyHex,
       bondLythoshi: "9000",
+      clusterSealKeysSource,
     });
 
     expect(rpcCalls[0]?.method).toBe("lyth_previewRequestClusterJoin");
@@ -127,7 +133,10 @@ describe("CJ-1 submit helpers", () => {
     }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(call.private).toBe(true);
+    expect(call.clusterId).toBe(7);
+    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
+    expect(call.class).toBe(1);
     expect(call.tx.gasLimit).toBe(DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT);
     expect(call.tx.maxPriorityFeePerGas).toBe(800n);
     expect(call.tx.to).toBe("0x0000000000000000000000000000000000001005");
@@ -157,6 +166,7 @@ describe("CJ-1 submit helpers", () => {
       clusterId: "7",
       operatorIdHex,
       voterPubkeyHex,
+      clusterSealKeysSource,
     });
 
     expect(rpcCalls[0]?.method).toBe("lyth_previewVoteClusterAdmit");
@@ -168,7 +178,10 @@ describe("CJ-1 submit helpers", () => {
     }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(call.private).toBe(true);
+    expect(call.clusterId).toBe(7);
+    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
+    expect(call.class).toBe(1);
     expect(call.tx.value).toBe(0n);
     expect(call.tx.input.startsWith(VOTE_CLUSTER_ADMIT_SELECTOR)).toBe(true);
     expect(transactionCountAddresses).toEqual(["mono1typedoperator"]);

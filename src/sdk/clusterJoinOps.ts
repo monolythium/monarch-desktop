@@ -22,10 +22,13 @@ import {
   type ClusterJoinRequestView as SdkClusterJoinRequestView,
 } from "@monolythium/core-sdk";
 import {
+  MempoolClass,
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
+  type ClusterSealKeysSource,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
+import { resolveTestnetClusterSealKeysSource } from "./clusterSeal";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
 
 export const REQUEST_CLUSTER_JOIN_SELECTOR = NODE_REGISTRY_SELECTORS.requestClusterJoin;
@@ -123,6 +126,8 @@ export interface SubmitRequestClusterJoinArgs {
   operatorPubkeyHex: string;
   bondLythoshi: bigint | number | string;
   executionUnitLimit?: bigint;
+  private?: boolean;
+  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface SubmitVoteClusterAdmitArgs {
@@ -132,6 +137,8 @@ export interface SubmitVoteClusterAdmitArgs {
   operatorIdHex: string;
   voterPubkeyHex: string;
   executionUnitLimit?: bigint;
+  private?: boolean;
+  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface ClusterJoinSubmitResult {
@@ -426,11 +433,18 @@ export async function submitRequestClusterJoin(
     bondLythoshi: args.bondLythoshi,
     executionUnitLimit: args.executionUnitLimit,
   });
+  const privateSubmit = args.private !== false;
+  const clusterSealKeysSource = privateSubmit
+    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
+    : undefined;
   const txHash = await submitTransactionWithPrivacy({
     client: rpc,
     backend,
     tx,
-    private: false,
+    private: privateSubmit,
+    clusterId: Number(clusterId),
+    clusterSealKeysSource,
+    class: MempoolClass.ContractCall,
   });
   const signed = backend.signEvmTx(tx);
   return {
@@ -472,11 +486,18 @@ export async function submitVoteClusterAdmit(
     voterPubkeyHex: args.voterPubkeyHex,
     executionUnitLimit: args.executionUnitLimit,
   });
+  const privateSubmit = args.private !== false;
+  const clusterSealKeysSource = privateSubmit
+    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
+    : undefined;
   const txHash = await submitTransactionWithPrivacy({
     client: rpc,
     backend,
     tx,
-    private: false,
+    private: privateSubmit,
+    clusterId: Number(clusterId),
+    clusterSealKeysSource,
+    class: MempoolClass.ContractCall,
   });
   const signed = backend.signEvmTx(tx);
   return {
