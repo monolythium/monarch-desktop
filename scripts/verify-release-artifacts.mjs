@@ -21,8 +21,8 @@ const REQUIRED_PLATFORMS = [
   },
   {
     key: "windows-x86_64",
-    bundle: [/\.nsis\.zip$/u, /\.msi\.zip$/u],
-    installers: [[/\.exe$/u, /\.msi$/u]],
+    bundle: [/\.nsis\.zip$/u],
+    installers: [[/-setup\.exe$/u], [/\.msi$/u]],
   },
 ];
 
