@@ -26,13 +26,6 @@ async function main() {
   const osConfigDir = firstNonEmpty(options.osConfigDir, env("MONARCH_OS_SMOKE_CONFIG_DIR"), DEFAULT_OS_CONFIG_DIR);
   assertDir(osRepo, "Monarch OS repo");
 
-  if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
-    await runChecked("pnpm", ["tauri", "build", "--debug", "--no-bundle", "--ci"], {
-      cwd: ROOT,
-      env: { ...process.env, VITE_MONARCH_E2E_RECORDER: "true" },
-    });
-  }
-
   if (options.skipSmokeConfig !== true) {
     await runChecked("make", ["smoke-qemu-config"], {
       cwd: osRepo,
@@ -49,8 +42,23 @@ async function main() {
     });
   }
 
+  await alignTalosconfigForSmoke(osRepo, osConfigDir);
+
   const { smoke, smokeEnv } = await startSmokeAndReadLiveEnv(osRepo, osConfigDir);
   try {
+    if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
+      await runChecked("pnpm", ["tauri", "build", "--debug", "--no-bundle", "--ci"], {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          ...smokeEnv,
+          VITE_MONARCH_E2E_RECORDER: "true",
+          VITE_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+          TAURI_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+        },
+      });
+    }
+
     const e2eArgs = [
       "run",
       "e2e:tauri",
@@ -104,12 +112,47 @@ async function main() {
         ...process.env,
         ...smokeEnv,
         VITE_MONARCH_E2E_RECORDER: "true",
+        VITE_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+        TAURI_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
       },
     });
   } finally {
     await stopChild(smoke);
     await stopSmokeVm(smokeEnv);
   }
+}
+
+async function alignTalosconfigForSmoke(osRepo, osConfigDir) {
+  const configDirPath = path.resolve(osRepo, osConfigDir);
+  const talosconfig = path.join(configDirPath, "talosconfig");
+  if (!fs.existsSync(talosconfig)) return;
+
+  const endpoint = smokeTalosEndpoint();
+  await runChecked("talosctl", ["--talosconfig", talosconfig, "config", "endpoint", endpoint], {
+    cwd: osRepo,
+    env: process.env,
+  });
+  await runChecked("talosctl", ["--talosconfig", talosconfig, "config", "node", endpoint], {
+    cwd: osRepo,
+    env: process.env,
+  });
+}
+
+function smokeTalosEndpoint() {
+  return normalizeTalosEndpoint(
+    firstNonEmpty(
+      env("MONARCH_E2E_TALOS_ENDPOINT"),
+      env("TALOS_ENDPOINT"),
+      `127.0.0.1:${firstNonEmpty(env("API_HOST_PORT"), "50000")}`,
+    ),
+  );
+}
+
+function normalizeTalosEndpoint(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "https://127.0.0.1:50000";
+  if (trimmed.includes("://")) return trimmed.replace(/\/+$/u, "");
+  return `https://${trimmed}`.replace(/\/+$/u, "");
 }
 
 async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
@@ -208,7 +251,8 @@ _out/smoke-qemu/live-env.sh, runs the Desktop Tauri e2e harness, then stops QEMU
 Options:
   --os-repo <path>      Monarch OS repo. Default: ${path.relative(ROOT, DEFAULT_OS_REPO)}
   --os-config-dir <dir> Smoke config dir relative to OS repo. Default: ${DEFAULT_OS_CONFIG_DIR}
-  --build-app           Build a recorder-enabled debug Tauri app before e2e.
+  --build-app           Build a recorder-enabled debug Tauri app after OS smoke
+                        exposes its live endpoints.
   --skip-smoke-config   Reuse an existing OS smoke config directory.
   --output <path>       Desktop evidence JSON output path.
   --app <path>          Built Tauri app binary for the Desktop harness.
