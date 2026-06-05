@@ -39,6 +39,12 @@ async function main() {
       env: {
         ...process.env,
         SMOKE_CONFIG_DIR: osConfigDir,
+        PROTOCORE_REQUIRE_ENROLLMENT: firstNonEmpty(env("PROTOCORE_REQUIRE_ENROLLMENT"), "true"),
+        PROTOCORE_EXPECTED_DIGEST_FILE: firstNonEmpty(
+          env("PROTOCORE_EXPECTED_DIGEST_FILE"),
+          "/var/lib/protocore/enrollment/protocore.sha256",
+        ),
+        PROTOCORE_REQUIRE_TPM_BINDING: firstNonEmpty(env("PROTOCORE_REQUIRE_TPM_BINDING"), "true"),
       },
     });
   }
@@ -125,6 +131,8 @@ async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
       REQUIRE_TALOS_API_PROBE: "true",
       REQUIRE_EXTENSION_SERVICE_CHECK: "true",
       REQUIRE_PROTOCORE_RPC_PROBE: "true",
+      REQUIRE_ENROLLMENT_RUNTIME_PROOF: "true",
+      REQUIRE_TPM_BINDING_RUNTIME_PROOF: "true",
       REQUIRE_SUBSTRATE_RUNTIME_PROOF: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
