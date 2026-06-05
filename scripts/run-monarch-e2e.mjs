@@ -27,7 +27,7 @@ async function main() {
   assertDir(osRepo, "Monarch OS repo");
 
   if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
-    await runChecked("pnpm", ["tauri", "build", "--debug"], {
+    await runChecked("pnpm", ["tauri", "build", "--debug", "--no-bundle", "--ci"], {
       cwd: ROOT,
       env: { ...process.env, VITE_MONARCH_E2E_RECORDER: "true" },
     });

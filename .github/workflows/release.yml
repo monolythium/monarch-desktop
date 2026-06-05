@@ -189,6 +189,7 @@ jobs:
           xz -d -k monarch-os-talos/_out/*.raw.xz
 
       - name: Run Tauri GUI e2e
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           mkdir -p _out
@@ -198,8 +199,10 @@ jobs:
             --output _out/monarch-desktop-e2e-evidence.json
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: monarch-desktop-e2e-evidence
+          if-no-files-found: warn
           path: |
             _out/monarch-desktop-e2e-evidence.json
             _out/monarch-desktop-e2e-screenshots/**
