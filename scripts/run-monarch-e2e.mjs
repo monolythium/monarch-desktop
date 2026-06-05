@@ -127,7 +127,11 @@ async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
   pipeChild(smoke, "os-smoke");
 
   try {
-    await waitForFileOrExit(liveEnvPath, smoke, Number(options.smokeTimeoutMs ?? env("MONARCH_E2E_SMOKE_TIMEOUT_MS") ?? 600_000));
+    await waitForFileOrExit(
+      liveEnvPath,
+      smoke,
+      positiveIntegerMs(firstNonEmpty(options.smokeTimeoutMs, env("MONARCH_E2E_SMOKE_TIMEOUT_MS"), "600000"), "OS smoke timeout"),
+    );
     const smokeEnv = parseEnvFile(liveEnvPath);
     for (const key of [
       "MONARCH_OS_SMOKE_RESULT",
@@ -298,6 +302,14 @@ function firstNonEmpty(...values) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+function positiveIntegerMs(value, label) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer number of milliseconds`);
+  }
+  return parsed;
 }
 
 function assertDir(dir, label) {
