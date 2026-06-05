@@ -40,6 +40,10 @@ on:
         description: "Monarch OS release tag to download for GUI e2e. Empty uses latest release."
         required: false
         type: string
+      monarch_os_ref:
+        description: "Monarch OS git ref used for GUI e2e smoke scripts."
+        required: false
+        type: string
       monarch_os_artifact_run_id:
         description: "Monarch OS workflow run id containing a talos-image artifact for GUI e2e. Takes precedence over release tag."
         required: false
@@ -97,6 +101,7 @@ jobs:
         with:
           repository: monolythium/monarch-os-talos
           path: monarch-os-talos
+          ref: ${{ github.event.inputs.monarch_os_ref || github.event.inputs.monarch_os_release_tag || vars.MONARCH_OS_REF || 'master' }}
 
       - uses: pnpm/action-setup@v4
 
@@ -210,6 +215,7 @@ jobs:
           path: |
             _out/monarch-desktop-e2e-evidence.json
             _out/monarch-desktop-e2e-screenshots/**
+            monarch-os-talos/_out/smoke-qemu/**
 
   build:
     needs: gui-e2e
