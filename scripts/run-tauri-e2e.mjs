@@ -171,9 +171,9 @@ async function main() {
     const desktopReadiness = readinessPath
       ? readJson(readinessPath)
       : await collectReadiness(primary, readinessOptions);
-    const snapshot = await snapshot(primary);
+    const primarySnapshot = await snapshot(primary);
     const secondarySnapshot = secondary ? await snapshot(secondary) : emptySnapshot();
-    const merged = mergeSnapshots(snapshot, secondarySnapshot, windowsObserved);
+    const merged = mergeSnapshots(primarySnapshot, secondarySnapshot, windowsObserved);
 
     const evidence = {
       schema_version: "monarch-desktop-e2e-evidence/v1",
