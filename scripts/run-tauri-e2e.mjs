@@ -362,10 +362,30 @@ async function deleteSession(baseUrl, sessionId) {
 }
 
 async function assertRecorder(session) {
-  const present = await execute(session, "return Boolean(window.__MONARCH_E2E__);");
-  if (!present) {
-    throw new Error("Tauri app did not expose window.__MONARCH_E2E__; rebuild with VITE_MONARCH_E2E_RECORDER=true");
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const present = await execute(session, "return Boolean(window.__MONARCH_E2E__);");
+    if (present) return;
+    await delay(250);
   }
+  throw new Error(
+    `Tauri app did not expose window.__MONARCH_E2E__; rebuild with VITE_MONARCH_E2E_RECORDER=true; ${await recorderDiagnostics(session)}`,
+  );
+}
+
+async function recorderDiagnostics(session) {
+  const details = await execute(
+    session,
+    `return {
+      href: window.location.href,
+      readyState: document.readyState,
+      title: document.title,
+      bodyText: (document.body?.innerText || "").slice(0, 300),
+      monarchKeys: Object.keys(window).filter((key) => key.includes("MONARCH")).slice(0, 20),
+      scripts: Array.from(document.scripts).map((script) => script.src || "[inline]").slice(0, 20),
+    };`,
+  ).catch((err) => ({ error: errorMessage(err) }));
+  return `diagnostics=${JSON.stringify(details)}`;
 }
 
 async function setWindowsObserved(session, count) {
