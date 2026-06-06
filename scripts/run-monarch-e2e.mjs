@@ -352,14 +352,19 @@ function pipeChild(child, label) {
 async function stopChild(child) {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
-  const stopped = await Promise.race([
-    new Promise((resolve) => child.once("exit", () => resolve(true))),
-    delay(10_000).then(() => false),
-  ]);
+  const stopped = await waitForChildExit(child, 10_000);
   if (!stopped && child.exitCode === null) {
     child.kill("SIGKILL");
-    await new Promise((resolve) => child.once("exit", resolve));
+    await waitForChildExit(child, 5_000);
   }
+}
+
+async function waitForChildExit(child, timeoutMs) {
+  if (child.exitCode !== null) return true;
+  return await Promise.race([
+    new Promise((resolve) => child.once("exit", () => resolve(true))),
+    delay(timeoutMs).then(() => false),
+  ]);
 }
 
 async function stopSmokeVm(smokeEnv) {
