@@ -103,6 +103,6 @@ Exit criteria:
 
 ## Immediate Next Implementation Targets
 
-1. Add the production ceremony runner for key-share output: DKG transition evidence, TPM-sealed output shares, and operator handoff artifacts. The Desktop/OS import contract now exists for the `attestDkgReshare` artifact, but Desktop still does not run DKG or seal new shares itself.
+1. Add the production ceremony runner for key-share output: DKG transition evidence, TPM-sealed output shares, and operator transfer artifacts. The Desktop/OS import contract now exists for the `attestDkgReshare` artifact, but Desktop still does not run DKG or seal new shares itself.
 2. Keep GUI/Tauri e2e release validation supplied with current live peer chat, cluster, DKG attestation, and mnemonic inputs for each candidate.
 3. Replace remaining named blockers as mono-core/SDK endpoints become available.

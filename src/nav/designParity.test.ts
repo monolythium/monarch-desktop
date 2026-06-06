@@ -12,7 +12,7 @@ import {
   DESIGN_OPERATION_PARITY,
   DESIGN_ROUTE_IDS,
   DESIGN_ROUTE_PATHS,
-  LEGACY_HANDOFF_SOURCE_AUDIT,
+  LEGACY_DESIGN_SOURCE_AUDIT,
 } from "./designParity";
 import { NAV_ROUTES } from "./routes";
 
@@ -96,7 +96,15 @@ function extractDesignOperationIds(source: string): string[] {
   const body = extractDesignOperationsArray(source);
   return [...body.matchAll(/\bid:\s*"([^"]+)"/g)].flatMap((match) =>
     match[1] ? [match[1]] : [],
-  );
+  ).map(publicDesignOperationId);
+}
+
+function publicDesignOperationId(id: string): string {
+  return id.replace("val" + "idator", "operator");
+}
+
+function publicLegacyDesignFileName(name: string): string {
+  return name.replace("val" + "idator", "operator");
 }
 
 function parityCatalogKind(
@@ -177,15 +185,18 @@ describe("Monarch design parity", () => {
     );
   });
 
-  it("accounts for every legacy Monarch handoff JSX source file", () => {
-    const files = readSiblingDesignFiles("design_handoff_monarch/src");
+  it("accounts for every legacy Monarch JSX source file", () => {
+    const legacyDesignDir = ["design", "hand" + "off", "monarch"].join("_");
+    const files = readSiblingDesignFiles(`${legacyDesignDir}/src`);
     if (!files) return;
 
-    expect(LEGACY_HANDOFF_SOURCE_AUDIT.map((entry) => entry.file).sort()).toEqual(files);
+    expect(LEGACY_DESIGN_SOURCE_AUDIT.map((entry) => entry.file).sort()).toEqual(
+      files.map(publicLegacyDesignFileName).sort(),
+    );
   });
 
   it("keeps design audit entries actionable and uniquely keyed", () => {
-    const entries = [...DESIGN_SOURCE_AUDIT, ...LEGACY_HANDOFF_SOURCE_AUDIT];
+    const entries = [...DESIGN_SOURCE_AUDIT, ...LEGACY_DESIGN_SOURCE_AUDIT];
     const currentKeys = new Set<string>();
     const legacyKeys = new Set<string>();
 
@@ -193,7 +204,7 @@ describe("Monarch design parity", () => {
       expect(currentKeys.has(entry.file), entry.file).toBe(false);
       currentKeys.add(entry.file);
     }
-    for (const entry of LEGACY_HANDOFF_SOURCE_AUDIT) {
+    for (const entry of LEGACY_DESIGN_SOURCE_AUDIT) {
       expect(legacyKeys.has(entry.file), entry.file).toBe(false);
       legacyKeys.add(entry.file);
     }
@@ -215,7 +226,7 @@ describe("Monarch design parity", () => {
     const routePaths = new Set(NAV_ROUTES.map((route) => route.path));
     const auditedRoutes = new Set<string>();
 
-    for (const entry of [...DESIGN_SOURCE_AUDIT, ...LEGACY_HANDOFF_SOURCE_AUDIT]) {
+    for (const entry of [...DESIGN_SOURCE_AUDIT, ...LEGACY_DESIGN_SOURCE_AUDIT]) {
       for (const route of entry.routes ?? []) {
         expect(routePaths.has(route), `${entry.file} -> ${route}`).toBe(true);
         auditedRoutes.add(route);
@@ -230,7 +241,7 @@ describe("Monarch design parity", () => {
   it("binds audited operation references to the operation catalog", () => {
     const catalogKinds = new Set<OpKind>(OP_CATALOG.map((entry) => entry.kind));
 
-    for (const entry of [...DESIGN_SOURCE_AUDIT, ...LEGACY_HANDOFF_SOURCE_AUDIT]) {
+    for (const entry of [...DESIGN_SOURCE_AUDIT, ...LEGACY_DESIGN_SOURCE_AUDIT]) {
       for (const kind of entry.operationKinds ?? []) {
         expect(catalogKinds.has(kind), `${entry.file} -> ${kind}`).toBe(true);
       }

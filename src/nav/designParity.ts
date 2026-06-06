@@ -36,7 +36,7 @@ export const DESIGN_OPERATION_IDS = [
   "rotate-bridge-ed25519",
   "backup-keys",
   "recover-account-key",
-  "import-validator-key",
+  "import-operator-key",
   "post-bond-topup",
   "delegate-stake",
   "unbond-stake",
@@ -125,7 +125,7 @@ export const DESIGN_OPERATION_PARITY = {
     reason:
       "Account-key recovery is not wired to the current keychain or wallet runtime.",
   },
-  "import-validator-key": {
+  "import-operator-key": {
     status: "deferred",
     reason:
       "Legacy design flow; the target product flow is first-boot operator key generation, not key import.",
@@ -792,7 +792,7 @@ export const DESIGN_SOURCE_AUDIT = [
   },
 ] satisfies ReadonlyArray<DesignSourceAuditEntry>;
 
-export const LEGACY_HANDOFF_SOURCE_AUDIT = [
+export const LEGACY_DESIGN_SOURCE_AUDIT = [
   {
     file: "app.jsx",
     domain: "desktop-shell",
@@ -814,7 +814,7 @@ export const LEGACY_HANDOFF_SOURCE_AUDIT = [
     domain: "desktop-shell",
     status: "superseded",
     desktopSurface: "SideNav/TopBar",
-    evidence: "Current shell and route registry supersede the handoff chrome.",
+    evidence: "Current shell and route registry supersede the legacy chrome.",
     decision: "Use current designs/src/chrome.jsx as baseline.",
   },
   {
@@ -886,7 +886,7 @@ export const LEGACY_HANDOFF_SOURCE_AUDIT = [
     desktopSurface: "/operations and OperationsDrawer",
     routes: ["/operations"],
     operationKinds: ["operator-restore", "rotate-keys", "operator-restart", "redelegate", "export-backup"],
-    evidence: "The five handoff operations map into OP_CATALOG entries or newer names.",
+    evidence: "The five legacy operations map into OP_CATALOG entries or newer names.",
     decision: "Current operation catalog is the source of truth.",
   },
   {
@@ -911,15 +911,15 @@ export const LEGACY_HANDOFF_SOURCE_AUDIT = [
     status: "partial",
     desktopSurface: "TweaksPanel",
     evidence: "Tweaks panel is wired through postMessage and TopBar.",
-    decision: "Current production-safe tweaks supersede the handoff panel.",
+    decision: "Current production-safe tweaks supersede the legacy panel.",
   },
   {
-    file: "validator.jsx",
+    file: "operator.jsx",
     domain: "operator-console",
     status: "superseded",
     desktopSurface: "/operator",
     routes: ["/operator"],
-    evidence: "Legacy validator screen is represented by the operator route using current terminology.",
-    decision: "No new visible UX should use validator terminology.",
+    evidence: "Legacy node-role screen is represented by the operator route using current terminology.",
+    decision: "Use operator terminology in visible UX.",
   },
 ] satisfies ReadonlyArray<DesignSourceAuditEntry>;

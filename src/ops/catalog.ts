@@ -4,7 +4,7 @@
 // up automatically.
 //
 // The 5 canonical verbs (restore / rotate-keys / restart / redelegate /
-// export-backup) line up with `OperationsView` in design_handoff_monarch.
+// export-backup) line up with the legacy `OperationsView` design source.
 // Additional flow verbs round out what the palette surfaces today.
 
 import type { OpRequest } from "./types";

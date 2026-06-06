@@ -36,8 +36,8 @@ describe("runNetworkDiagnostic", () => {
       new Error("no active ssh session - running outside Tauri"),
     );
 
-    const ping = await runNetworkDiagnostic("ping", "validator-1");
-    const trace = await runNetworkDiagnostic("traceroute", "validator-1");
+    const ping = await runNetworkDiagnostic("ping", "operator-1");
+    const trace = await runNetworkDiagnostic("traceroute", "operator-1");
 
     expect(ping).toMatchObject({ ran: false, preview: false });
     expect(trace).toMatchObject({ ran: false, preview: false });
