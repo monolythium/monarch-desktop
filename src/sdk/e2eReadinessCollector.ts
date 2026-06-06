@@ -33,6 +33,7 @@ import type {
 export type MonarchE2eReadinessOptions = {
   expectedChainId?: number;
   expectedRpcEndpoint?: string;
+  protocoreRpcEndpoint?: string;
   expectedDigest?: string;
   talosEndpoint?: string;
   talosConfigPath?: string;
@@ -52,12 +53,13 @@ export async function collectMonarchE2eReadiness(
 ): Promise<DesktopReleaseReadinessInput> {
   const options = parseOptions(rawOptions);
   const endpoint = options.expectedRpcEndpoint ?? rpcEndpoint;
+  const protocoreEndpoint = options.protocoreRpcEndpoint ?? endpoint;
   await bootstrapE2eState(options);
 
   const [status, config, protocore] = await Promise.all([
     talosStatus().catch(() => null),
     talosConfigInfo().catch(() => null),
-    talosProtocoreReadiness(endpoint).catch(() => null),
+    talosProtocoreReadiness(protocoreEndpoint).catch(() => null),
   ]);
 
   const [expectedDigest, provenance] = await Promise.all([
@@ -306,6 +308,7 @@ function parseOptions(raw: unknown): MonarchE2eReadinessOptions {
   return {
     expectedChainId: numberOption(input.expectedChainId),
     expectedRpcEndpoint: stringOption(input.expectedRpcEndpoint),
+    protocoreRpcEndpoint: stringOption(input.protocoreRpcEndpoint),
     expectedDigest: stringOption(input.expectedDigest),
     talosEndpoint: stringOption(input.talosEndpoint),
     talosConfigPath: stringOption(input.talosConfigPath),

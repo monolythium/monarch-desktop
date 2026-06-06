@@ -628,6 +628,24 @@ fn decode_pem(label: &str, value: &str) -> Result<Vec<u8>, TalosError> {
         .map_err(|err| TalosError::Config(format!("invalid {label} in talosconfig: {err}")))
 }
 
+fn normalize_private_key_pem(label: &str, pem: Vec<u8>) -> Result<Vec<u8>, TalosError> {
+    if !pem.starts_with(b"-----BEGIN ED25519 PRIVATE KEY-----") {
+        return Ok(pem);
+    }
+    let text = String::from_utf8(pem)
+        .map_err(|err| TalosError::Config(format!("invalid {label} PEM text: {err}")))?;
+    Ok(text
+        .replace(
+            "-----BEGIN ED25519 PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----",
+        )
+        .replace(
+            "-----END ED25519 PRIVATE KEY-----",
+            "-----END PRIVATE KEY-----",
+        )
+        .into_bytes())
+}
+
 fn format_time(ts: ASN1Time) -> String {
     ts.to_rfc2822()
         .unwrap_or_else(|_| ts.timestamp().to_string())
@@ -873,7 +891,7 @@ fn connector_from_talosconfig(
 
     let ca = decode_pem("CA certificate", &context.ca)?;
     let cert = decode_pem("client certificate", &context.crt)?;
-    let key = decode_pem("client key", &context.key)?;
+    let key = normalize_private_key_pem("client key", decode_pem("client key", &context.key)?)?;
 
     Ok(TalosConnector::new(&endpoint)
         .ca_pem(ca)
@@ -2392,11 +2410,11 @@ pub async fn talos_protocore_restart(
 mod tests {
     use super::{
         backup_paths, classify_protocore_readiness, endpoint_url, enforce_privileged_control_plane,
-        format_fingerprint, node_address, parse_reboot_mode, parse_rpc_u64, parse_service_action,
-        parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
-        service_allows_offline_backup, summarize_service_state, validate_service_name,
-        validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo, TalosConfigInfo,
-        TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
+        format_fingerprint, node_address, normalize_private_key_pem, parse_reboot_mode,
+        parse_rpc_u64, parse_service_action, parse_u64_string, protocore_rpc_endpoint,
+        sanitize_backup_component, service_allows_offline_backup, summarize_service_state,
+        validate_service_name, validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo,
+        TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
     };
     use serde_json::json;
 
@@ -2430,6 +2448,18 @@ mod tests {
     fn node_address_preserves_ipv6_host() {
         assert_eq!(node_address("https://[fd00::1]:50000"), "fd00::1");
         assert_eq!(node_address("fd00::2"), "fd00::2");
+    }
+
+    #[test]
+    fn talos_ed25519_private_key_is_pkcs8_labelled_for_rustls() {
+        let input = b"-----BEGIN ED25519 PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIA==\n-----END ED25519 PRIVATE KEY-----\n".to_vec();
+
+        let normalized = normalize_private_key_pem("client key", input).unwrap();
+        let text = String::from_utf8(normalized).unwrap();
+
+        assert!(text.contains("-----BEGIN PRIVATE KEY-----"));
+        assert!(text.contains("-----END PRIVATE KEY-----"));
+        assert!(!text.contains("ED25519 PRIVATE KEY"));
     }
 
     #[test]

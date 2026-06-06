@@ -201,6 +201,8 @@ describe("collectMonarchE2eReadiness", () => {
   it("collects live Talos, attestation, operation, and chat evidence", async () => {
     const readiness = await collectMonarchE2eReadiness({
       expectedChainId: 69420,
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      protocoreRpcEndpoint: "http://127.0.0.1:18545",
       expectedDigest: "sha256:expected",
       talosEndpoint: "https://talos.monolythium.test",
       talosConfigPath: "/tmp/talosconfig",
@@ -227,7 +229,7 @@ describe("collectMonarchE2eReadiness", () => {
       endpoint: "https://talos.monolythium.test",
       configPath: "/tmp/talosconfig",
     });
-    expect(talosProtocoreReadiness).toHaveBeenCalledWith("https://rpc.monolythium.test");
+    expect(talosProtocoreReadiness).toHaveBeenCalledWith("http://127.0.0.1:18545");
     expect(releaseAttestationStatus).toHaveBeenCalledWith(
       expect.objectContaining({ expectedDigest: "sha256:expected" }),
     );

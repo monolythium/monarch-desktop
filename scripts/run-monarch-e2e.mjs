@@ -45,6 +45,14 @@ async function main() {
   await alignTalosconfigForSmoke(osRepo, osConfigDir);
 
   const { smoke, smokeEnv } = await startSmokeAndReadLiveEnv(osRepo, osConfigDir);
+  const desktopRpcEndpoint = firstNonEmpty(
+    options.expectedRpcEndpoint,
+    env("MONARCH_E2E_DESKTOP_RPC_ENDPOINT"),
+    env("MONARCH_E2E_RPC_ENDPOINT"),
+    env("VITE_RPC_ENDPOINT"),
+    env("TAURI_RPC_ENDPOINT"),
+    smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+  );
   try {
     if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
       await runChecked("pnpm", ["tauri", "build", "--debug", "--no-bundle", "--ci"], {
@@ -53,8 +61,8 @@ async function main() {
           ...process.env,
           ...smokeEnv,
           VITE_MONARCH_E2E_RECORDER: "true",
-          VITE_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
-          TAURI_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+          VITE_RPC_ENDPOINT: desktopRpcEndpoint,
+          TAURI_RPC_ENDPOINT: desktopRpcEndpoint,
         },
       });
     }
@@ -70,6 +78,8 @@ async function main() {
       "--talos-config",
       smokeEnv.MONARCH_E2E_TALOSCONFIG,
       "--expected-rpc-endpoint",
+      desktopRpcEndpoint,
+      "--protocore-rpc-endpoint",
       smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
       "--trust-talos-config",
       "--output",
@@ -112,8 +122,8 @@ async function main() {
         ...process.env,
         ...smokeEnv,
         VITE_MONARCH_E2E_RECORDER: "true",
-        VITE_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
-        TAURI_RPC_ENDPOINT: smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+        VITE_RPC_ENDPOINT: desktopRpcEndpoint,
+        TAURI_RPC_ENDPOINT: desktopRpcEndpoint,
       },
     });
   } finally {
@@ -224,6 +234,7 @@ function parseArgs(args) {
     else if (arg === "--os-config-dir") out.osConfigDir = needArg(args, ++i, arg);
     else if (arg === "--output") out.output = needArg(args, ++i, arg);
     else if (arg === "--app") out.app = needArg(args, ++i, arg);
+    else if (arg === "--expected-rpc-endpoint") out.expectedRpcEndpoint = needArg(args, ++i, arg);
     else if (arg === "--expected-digest") out.expectedDigest = needArg(args, ++i, arg);
     else if (arg === "--cluster-id") out.clusterId = needArg(args, ++i, arg);
     else if (arg === "--cluster-name") out.clusterName = needArg(args, ++i, arg);
@@ -265,6 +276,10 @@ Options:
   --skip-smoke-config   Reuse an existing OS smoke config directory.
   --output <path>       Desktop evidence JSON output path.
   --app <path>          Built Tauri app binary for the Desktop harness.
+  --expected-rpc-endpoint <url>
+                         Live chain RPC endpoint Desktop should prove against.
+                         Defaults to the caller's VITE_RPC_ENDPOINT/TAURI_RPC_ENDPOINT,
+                         then the local smoke RPC.
   --expected-digest <sha256>
                          Expected Protocore runtime digest. Defaults to the
                          Monarch OS smoke live env digest when release metadata exists.

@@ -83,6 +83,7 @@ const chatBootstrapPeers = listOption(
 const readinessOptions = {
   expectedChainId: numberOption(options.expectedChainId ?? env("MONARCH_EXPECTED_CHAIN_ID")),
   expectedRpcEndpoint: (options.expectedRpcEndpoint ?? env("MONARCH_E2E_RPC_ENDPOINT")) || undefined,
+  protocoreRpcEndpoint: (options.protocoreRpcEndpoint ?? env("MONARCH_E2E_PROTOCORE_RPC_ENDPOINT")) || undefined,
   expectedDigest: (options.expectedDigest ?? env("MONARCH_E2E_EXPECTED_DIGEST")) || undefined,
   talosEndpoint: (options.talosEndpoint ?? env("MONARCH_E2E_TALOS_ENDPOINT")) || undefined,
   talosConfigPath: (options.talosConfigPath ?? env("MONARCH_E2E_TALOSCONFIG")) || undefined,
@@ -232,6 +233,7 @@ function parseArgs(args) {
     else if (arg === "--timeout-ms") out.timeoutMs = needArg(args, ++i, arg);
     else if (arg === "--expected-chain-id") out.expectedChainId = needArg(args, ++i, arg);
     else if (arg === "--expected-rpc-endpoint") out.expectedRpcEndpoint = needArg(args, ++i, arg);
+    else if (arg === "--protocore-rpc-endpoint") out.protocoreRpcEndpoint = needArg(args, ++i, arg);
     else if (arg === "--expected-digest") out.expectedDigest = needArg(args, ++i, arg);
     else if (arg === "--talos-endpoint") out.talosEndpoint = needArg(args, ++i, arg);
     else if (arg === "--talos-config") out.talosConfigPath = needArg(args, ++i, arg);
@@ -288,6 +290,8 @@ Options:
                          Expected live chain id. Default: 69420.
   --expected-rpc-endpoint <url>
                          RPC endpoint Desktop should prove against.
+  --protocore-rpc-endpoint <url>
+                         RPC endpoint used by the Talos Protocore readiness probe.
   --cluster-id <id>     Cluster channel id to join for chat evidence.
   --cluster-name <name> Optional display name when subscribing the cluster channel.
   --chat-body <text>    Message body to send during chat evidence collection.
