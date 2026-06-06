@@ -211,8 +211,7 @@ async function main() {
     }
   } finally {
     await Promise.allSettled(sessions.map((session) => deleteSession(session.driverUrl, session.id)));
-    if (driver) stopProcess(driver);
-    if (secondaryDriver) stopProcess(secondaryDriver);
+    await Promise.allSettled([stopProcess(driver), stopProcess(secondaryDriver)]);
   }
 }
 
@@ -769,9 +768,17 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function stopProcess(child) {
-  if (child.exitCode !== null) return;
-  child.kill();
+async function stopProcess(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  const stopped = await Promise.race([
+    new Promise((resolve) => child.once("exit", () => resolve(true))),
+    delay(5_000).then(() => false),
+  ]);
+  if (!stopped && child.exitCode === null) {
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.once("exit", resolve));
+  }
 }
 
 function errorMessage(err) {
