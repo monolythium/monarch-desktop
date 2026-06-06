@@ -3,22 +3,27 @@ import childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const DEFAULT_OS_REPO = path.resolve(ROOT, "..", "monarch-os-talos");
 const DEFAULT_OS_CONFIG_DIR = "_out/smoke-qemu-config";
 const DEFAULT_OUTPUT = path.join(ROOT, "_out", "monarch-desktop-e2e-evidence.json");
 
-const options = parseArgs(process.argv.slice(2));
-if (options.help) {
-  printHelp();
-  process.exit(0);
-}
+const mainModule = isMainModule();
+const options = mainModule ? parseArgs(process.argv.slice(2)) : {};
 
-await main().catch((err) => {
-  console.error(errorMessage(err));
-  process.exitCode = 1;
-});
+if (mainModule) {
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  await main().catch((err) => {
+    console.error(errorMessage(err));
+    process.exitCode = 1;
+  });
+}
 
 async function main() {
   const osRepo = path.resolve(firstNonEmpty(options.osRepo, env("MONARCH_OS_REPO"), DEFAULT_OS_REPO));
@@ -45,14 +50,7 @@ async function main() {
   await alignTalosconfigForSmoke(osRepo, osConfigDir);
 
   const { smoke, smokeEnv } = await startSmokeAndReadLiveEnv(osRepo, osConfigDir);
-  const desktopRpcEndpoint = firstNonEmpty(
-    options.expectedRpcEndpoint,
-    env("MONARCH_E2E_DESKTOP_RPC_ENDPOINT"),
-    env("MONARCH_E2E_RPC_ENDPOINT"),
-    env("VITE_RPC_ENDPOINT"),
-    env("TAURI_RPC_ENDPOINT"),
-    smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
-  );
+  const desktopRpcEndpoint = resolveDesktopRpcEndpoint(options, smokeEnv);
   try {
     if (options.buildApp || env("MONARCH_E2E_BUILD_APP") === "true") {
       await runChecked("pnpm", ["tauri", "build", "--debug", "--no-bundle", "--ci"], {
@@ -174,6 +172,17 @@ function smokeTalosNode() {
   }
 }
 
+export function resolveDesktopRpcEndpoint(e2eOptions = {}, smokeEnv = {}, environment = process.env) {
+  return firstNonEmpty(
+    e2eOptions.expectedRpcEndpoint,
+    environment.MONARCH_E2E_DESKTOP_RPC_ENDPOINT,
+    environment.MONARCH_E2E_RPC_ENDPOINT,
+    smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
+    environment.VITE_RPC_ENDPOINT,
+    environment.TAURI_RPC_ENDPOINT,
+  );
+}
+
 async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {
   const configDirPath = path.resolve(osRepo, osConfigDir);
   const liveEnvPath = path.resolve(configDirPath, "..", "smoke-qemu", "live-env.sh");
@@ -278,8 +287,8 @@ Options:
   --app <path>          Built Tauri app binary for the Desktop harness.
   --expected-rpc-endpoint <url>
                          Live chain RPC endpoint Desktop should prove against.
-                         Defaults to the caller's VITE_RPC_ENDPOINT/TAURI_RPC_ENDPOINT,
-                         then the local smoke RPC.
+                         Defaults to the local smoke RPC after explicit
+                         MONARCH_E2E_* overrides, then generic app RPC env.
   --expected-digest <sha256>
                          Expected Protocore runtime digest. Defaults to the
                          Monarch OS smoke live env digest when release metadata exists.
@@ -444,6 +453,11 @@ function env(name) {
 
 function truthyEnv(name) {
   return /^(1|true|yes)$/iu.test(env(name).trim());
+}
+
+function isMainModule() {
+  const entry = process.argv[1];
+  return Boolean(entry) && import.meta.url === pathToFileURL(path.resolve(entry)).href;
 }
 
 function delay(ms) {
