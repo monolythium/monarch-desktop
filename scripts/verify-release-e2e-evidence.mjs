@@ -479,11 +479,26 @@ function checkChat(readiness, out) {
   }
   const distinctSenders = new Set(activeVerifiedMessages
     .map((message) => normalizeHex(stringValue(message.sender_address))));
+  const ownSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me === true)
+    .map((message) => normalizeHex(stringValue(message.sender_address))));
+  const peerSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me === false)
+    .map((message) => normalizeHex(stringValue(message.sender_address))));
+  const localAddress = isRecord(init) ? normalizeHex(stringValue(init.address_hex)) : "";
+  const perspectiveMatchesIdentity = Boolean(localAddress) && activeVerifiedMessages.every((message) =>
+    (normalizeHex(stringValue(message.sender_address)) === localAddress) === (message.from_me === true));
   if (activeVerifiedMessages.length < 2) {
     out.push("Desktop chat-exchange: Chat has not proved a two-party signed exchange.");
   }
   if (distinctSenders.size < 2) {
     out.push("Desktop chat-exchange: Chat has not proved two distinct signed operator identities.");
+  }
+  if (ownSenders.size === 0 || peerSenders.size === 0) {
+    out.push("Desktop chat-exchange: Chat has not proved both local and peer signed messages.");
+  }
+  if (!perspectiveMatchesIdentity) {
+    out.push("Desktop chat-exchange: Chat message perspective does not match the initialized identity.");
   }
   if (!isRecord(chat.membership)) {
     out.push("Desktop chat-exchange: Chat sender membership has not been proven against the cluster registry.");
@@ -541,7 +556,8 @@ function isSignedActiveChatMessage(message, active) {
     isAddressHex(stringValue(message.sender_address)) &&
     stringValue(message.body).length > 0 &&
     typeof message.timestamp_ms === "number" &&
-    Number.isFinite(message.timestamp_ms),
+    Number.isFinite(message.timestamp_ms) &&
+    typeof message.from_me === "boolean",
   );
 }
 

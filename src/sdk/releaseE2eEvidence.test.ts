@@ -583,6 +583,32 @@ describe("Desktop release e2e evidence", () => {
     }
   });
 
+  it("standalone verifier rejects chat evidence without a peer-perspective message", () => {
+    const bad = evidence();
+    const chat = bad.desktop_readiness.chat;
+    if (!chat) throw new Error("fixture chat evidence is required");
+    chat.messages = chat.messages.map((item) => ({ ...item, from_me: true }));
+
+    const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-evidence-"));
+    try {
+      const file = join(dir, "evidence.json");
+      writeRouteScreenshotFiles(dir, bad);
+      writeFileSync(file, JSON.stringify(bad), "utf8");
+      const result = spawnSync(process.execPath, ["scripts/verify-release-e2e-evidence.mjs", file], {
+        cwd: process.cwd(),
+        env: process.env,
+        encoding: "utf8",
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "Desktop chat-exchange: Chat has not proved both local and peer signed messages.",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("standalone verifier rejects missing DKG re-share attestation evidence", () => {
     const bad: Record<string, unknown> = { ...evidence() };
     delete bad.dkg_reshare_attestation;

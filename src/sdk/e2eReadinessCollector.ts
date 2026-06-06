@@ -25,7 +25,7 @@ import {
   talosStatus,
   talosTrustConfig,
 } from "./bridge";
-import type { ChatChannel } from "./chat";
+import type { ChatChannel, ChatMessage } from "./chat";
 import { resolveChatBootstrapPeersForCluster } from "./chatConfig";
 import { rpc, rpcEndpoint } from "./client";
 import { releaseAttestationStatus } from "./releaseAttestation";
@@ -230,9 +230,10 @@ async function collectChatEvidence(
     }).catch(() => null);
   }
 
-  const messages = active
+  const rawMessages = active
     ? await chatGetMessages(active.channel_id, 100).catch(() => [])
     : [];
+  const messages = normalizeMessagePerspective(rawMessages, init?.address_hex);
   const membership = await collectChatMembershipEvidence(endpoint, active, messages);
 
   return {
@@ -244,6 +245,22 @@ async function collectChatEvidence(
     requireBootstrapPeers: options.requireBootstrapPeers ?? true,
     membership,
   };
+}
+
+function normalizeMessagePerspective(
+  messages: ChatMessage[],
+  localAddress?: string | null,
+): ChatMessage[] {
+  const normalizedLocal = localAddress ? normalizeChatAddress(localAddress) : null;
+  if (!normalizedLocal) return messages;
+  return messages.map((message) => {
+    const sender = normalizeChatAddress(message.sender_address);
+    if (!sender) return message;
+    return {
+      ...message,
+      from_me: sender === normalizedLocal,
+    };
+  });
 }
 
 async function collectChatMembershipEvidence(

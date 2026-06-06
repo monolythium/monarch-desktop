@@ -453,6 +453,58 @@ describe("Desktop release readiness gate", () => {
     }));
   });
 
+  it("requires chat evidence to include local and peer messages", () => {
+    const report = desktopReleaseReadiness(input({
+      chat: {
+        init: chatInit(),
+        channels: [channel()],
+        activeChannelId: "cluster-1",
+        messages: [
+          message({ msg_id: hex("a", 32), from_me: true }),
+          message({
+            msg_id: hex("b", 32),
+            from_me: true,
+            sender_address: "0x2222222222222222222222222222222222222222",
+          }),
+        ],
+        bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/peer-a"],
+        membership: membership(),
+      },
+    }));
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      id: "chat-exchange",
+      summary: "Chat has not proved both local and peer signed messages.",
+    }));
+  });
+
+  it("requires chat message perspective to match the initialized identity", () => {
+    const report = desktopReleaseReadiness(input({
+      chat: {
+        init: chatInit(),
+        channels: [channel()],
+        activeChannelId: "cluster-1",
+        messages: [
+          message({ msg_id: hex("a", 32), from_me: false }),
+          message({
+            msg_id: hex("b", 32),
+            from_me: true,
+            sender_address: "0x2222222222222222222222222222222222222222",
+          }),
+        ],
+        bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/peer-a"],
+        membership: membership(),
+      },
+    }));
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      id: "chat-exchange",
+      summary: "Chat message perspective does not match the initialized identity.",
+    }));
+  });
+
   it("requires every signed chat sender to have cluster membership proof", () => {
     const report = desktopReleaseReadiness(input({
       chat: {

@@ -257,12 +257,24 @@ function chatExchangeGate(input: DesktopReleaseReadinessInput): ReleaseGate {
   const distinctSenders = new Set(activeVerifiedMessages.map((message) =>
     normalizeHex(message.sender_address),
   ));
+  const ownSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me)
+    .map((message) => normalizeHex(message.sender_address)));
+  const peerSenders = new Set(activeVerifiedMessages
+    .filter((message) => message.from_me === false)
+    .map((message) => normalizeHex(message.sender_address)));
   const allActiveAndVerified = chat.messages.every((message) =>
     isSignedActiveChatMessage(message, active),
+  );
+  const localAddress = chat.init?.address_hex ? normalizeHex(chat.init.address_hex) : "";
+  const perspectiveMatchesIdentity = Boolean(localAddress) && activeVerifiedMessages.every((message) =>
+    (normalizeHex(message.sender_address) === localAddress) === message.from_me,
   );
 
   evidence.push(`verified-active-messages=${activeVerifiedMessages.length}`);
   evidence.push(`verified-senders=${distinctSenders.size}`);
+  evidence.push(`own-senders=${ownSenders.size}`);
+  evidence.push(`peer-senders=${peerSenders.size}`);
   evidence.push(`membership-source=${chat.membership?.source ?? "missing"}`);
   evidence.push(`membership-proofs=${chat.membership?.proofs.length ?? 0}`);
 
@@ -286,6 +298,12 @@ function chatExchangeGate(input: DesktopReleaseReadinessInput): ReleaseGate {
   }
   if (distinctSenders.size < 2) {
     return fail("chat-exchange", "Chat has not proved two distinct signed operator identities.", evidence);
+  }
+  if (ownSenders.size === 0 || peerSenders.size === 0) {
+    return fail("chat-exchange", "Chat has not proved both local and peer signed messages.", evidence);
+  }
+  if (!perspectiveMatchesIdentity) {
+    return fail("chat-exchange", "Chat message perspective does not match the initialized identity.", evidence);
   }
   if (!chat.membership) {
     return fail(
@@ -360,7 +378,8 @@ function isSignedActiveChatMessage(
     isHexBytes(message.nonce_hex) &&
     isAddressHex(message.sender_address) &&
     message.body.trim().length > 0 &&
-    Number.isFinite(message.timestamp_ms),
+    Number.isFinite(message.timestamp_ms) &&
+    typeof message.from_me === "boolean",
   );
 }
 

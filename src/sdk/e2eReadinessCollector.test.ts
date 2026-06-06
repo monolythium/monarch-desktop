@@ -310,6 +310,30 @@ describe("collectMonarchE2eReadiness", () => {
     });
   });
 
+  it("normalizes chat message perspective to the initialized identity", async () => {
+    vi.mocked(chatGetMessages).mockResolvedValue([
+      ownMessage,
+      { ...peerMessage, from_me: true },
+    ] as never);
+
+    const readiness = await collectMonarchE2eReadiness({
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      expectedDigest: "sha256:expected",
+      clusterId: 42,
+    });
+
+    expect(readiness.chat?.messages).toEqual([
+      expect.objectContaining({
+        sender_address: "0x1111111111111111111111111111111111111111",
+        from_me: true,
+      }),
+      expect.objectContaining({
+        sender_address: "0x2222222222222222222222222222222222222222",
+        from_me: false,
+      }),
+    ]);
+  });
+
   it("falls back to native RPC for chat membership evidence", async () => {
     vi.mocked(rpc.lythClusterStatus).mockReset().mockRejectedValue(new Error("fetch blocked"));
     vi.mocked(rpc.lythOperatorInfo).mockReset().mockRejectedValue(new Error("fetch blocked"));
