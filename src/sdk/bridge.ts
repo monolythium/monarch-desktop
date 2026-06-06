@@ -18,6 +18,7 @@
 
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import type { ChatChannel, ChatInitResult, ChatMessage } from "./chat";
 import { recordE2eCommand } from "./e2eRecorder";
 
@@ -386,6 +387,15 @@ export async function talosProtocoreReadiness(
   return await invoke<ProtocoreReadiness>("talos_protocore_readiness", {
     rpcEndpoint: rpcEndpoint ?? null,
   });
+}
+
+export async function rpcRuntimeProvenance(
+  rpcEndpoint: string,
+): Promise<RuntimeProvenanceResponse> {
+  if (!inTauri()) {
+    throw new Error("rpc_runtime_provenance unavailable — running outside Tauri");
+  }
+  return await invoke<RuntimeProvenanceResponse>("rpc_runtime_provenance", { rpcEndpoint });
 }
 
 export async function talosHostTelemetry(): Promise<TalosHostTelemetry> {

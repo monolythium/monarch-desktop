@@ -14,6 +14,7 @@ import {
   KEYCHAIN_ACCOUNTS,
   keychainGet,
   keychainSet,
+  rpcRuntimeProvenance,
   talosConnect,
   talosConfigInfo,
   talosProtocoreReadiness,
@@ -125,6 +126,13 @@ async function resolveExpectedDigest(options: MonarchE2eReadinessOptions): Promi
 }
 
 async function readRuntimeProvenance(endpoint: string): Promise<RuntimeProvenanceResponse | null> {
+  try {
+    const bridged = await rpcRuntimeProvenance(endpoint);
+    if (bridged?.runtime) return bridged;
+  } catch {
+    // Browser/test fallback below keeps the collector usable without Tauri IPC.
+  }
+
   try {
     const client = trimEndpoint(endpoint) === trimEndpoint(rpcEndpoint)
       ? rpc

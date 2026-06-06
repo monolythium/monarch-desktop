@@ -1621,10 +1621,33 @@ fn readiness_check(name: &str, state: &str, message: impl Into<String>) -> Talos
 }
 
 fn classify_protocore_readiness(
-    service: Option<TalosServiceInfo>,
+    mut service: Option<TalosServiceInfo>,
     rpc_endpoint: String,
     rpc: ProtocoreRpcProbe,
 ) -> ProtocoreReadiness {
+    let rpc_has_chain = rpc.chain_id.is_some() && rpc.block_number.is_some();
+    let rpc_serving = rpc_has_chain && rpc.syncing != Some(true);
+    let p2p_degraded = rpc.listening == Some(false);
+
+    if rpc_serving {
+        if let Some(service) = service.as_mut() {
+            let health_unknown = service.health_unknown == Some(true);
+            if health_unknown
+                && matches!(
+                    service.display_state.as_str(),
+                    "degraded" | "waiting-for-config"
+                )
+            {
+                service.display_state = "running".to_string();
+                service.severity = "ok".to_string();
+                service.summary = format!(
+                    "{} is running; Talos health is pending, RPC is serving chain data",
+                    service.id
+                );
+            }
+        }
+    }
+
     let mut checks = Vec::new();
     match &service {
         Some(service) => checks.push(readiness_check(
@@ -1671,9 +1694,6 @@ fn classify_protocore_readiness(
         .as_ref()
         .map(|service| service.display_state.as_str())
         .unwrap_or("waiting-for-config");
-    let rpc_has_chain = rpc.chain_id.is_some() && rpc.block_number.is_some();
-    let rpc_serving = rpc_has_chain && rpc.syncing != Some(true);
-    let p2p_degraded = rpc.listening == Some(false);
 
     let (display_state, severity, summary) = match service_state {
         "failed" => (
@@ -1752,6 +1772,20 @@ fn classify_protocore_readiness(
         syncing: rpc.syncing,
         checks,
     }
+}
+
+#[tauri::command]
+pub async fn rpc_runtime_provenance(rpc_endpoint: String) -> Result<Value, String> {
+    let parsed =
+        reqwest::Url::parse(&rpc_endpoint).map_err(|err| format!("invalid RPC endpoint: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("RPC endpoint must use http:// or https://".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(PROTOCORE_RPC_TIMEOUT)
+        .build()
+        .map_err(|err| format!("failed to build RPC client: {err}"))?;
+    rpc_call(&client, &rpc_endpoint, "lyth_runtimeProvenance").await
 }
 
 async fn build_status(state: &TalosState) -> Result<TalosStatus, TalosError> {
@@ -2602,6 +2636,38 @@ mod tests {
         assert_eq!(readiness.severity, "ok");
         assert_eq!(readiness.chain_id, Some(69420));
         assert!(readiness.summary.contains("block 42"));
+    }
+
+    #[test]
+    fn protocore_readiness_accepts_health_unknown_when_rpc_serves() {
+        let mut service = service("degraded", "err");
+        service.state = "Running".to_string();
+        service.healthy = Some(false);
+        service.health_unknown = Some(true);
+        service.summary = "ext-protocore degraded (raw state: Running)".to_string();
+
+        let readiness = classify_protocore_readiness(
+            Some(service),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                chain_id: Some(69420),
+                block_number: Some(42),
+                client_version: Some("protocore/test".to_string()),
+                listening: Some(true),
+                syncing: Some(false),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(readiness.display_state, "serving-rpc");
+        assert_eq!(readiness.severity, "ok");
+        assert_eq!(
+            readiness
+                .service
+                .as_ref()
+                .map(|service| service.severity.as_str()),
+            Some("ok")
+        );
     }
 
     #[test]

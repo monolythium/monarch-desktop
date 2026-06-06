@@ -31,6 +31,7 @@ vi.mock("./bridge", () => ({
   chatSubscribeChannel: vi.fn(),
   keychainGet: vi.fn(),
   keychainSet: vi.fn(),
+  rpcRuntimeProvenance: vi.fn(),
   talosConnect: vi.fn(),
   talosConfigInfo: vi.fn(),
   talosProtocoreReadiness: vi.fn(),
@@ -73,6 +74,7 @@ import {
   chatSubscribeChannel,
   keychainGet,
   keychainSet,
+  rpcRuntimeProvenance,
   talosConnect,
   talosConfigInfo,
   talosProtocoreReadiness,
@@ -157,6 +159,9 @@ describe("collectMonarchE2eReadiness", () => {
     vi.mocked(rpc.lythRuntimeProvenance).mockResolvedValue({
       runtime: { binarySha256: "sha256:expected" },
     } as never);
+    vi.mocked(rpcRuntimeProvenance).mockResolvedValue({
+      runtime: { binarySha256: "sha256:expected" },
+    } as never);
     vi.mocked(rpc.lythClusterStatus).mockResolvedValue({
       clusterId: 42,
       threshold: 7,
@@ -230,6 +235,7 @@ describe("collectMonarchE2eReadiness", () => {
       configPath: "/tmp/talosconfig",
     });
     expect(talosProtocoreReadiness).toHaveBeenCalledWith("http://127.0.0.1:18545");
+    expect(rpcRuntimeProvenance).toHaveBeenCalledWith("https://rpc.monolythium.test");
     expect(releaseAttestationStatus).toHaveBeenCalledWith(
       expect.objectContaining({ expectedDigest: "sha256:expected" }),
     );

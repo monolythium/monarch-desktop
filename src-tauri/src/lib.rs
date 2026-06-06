@@ -18,10 +18,10 @@
 //     `talos_protocore_readiness` / `talos_host_telemetry` /
 //     `talos_upgrade` / `talos_rollback` / `talos_service_action` /
 //     `talos_export_protocore_backup` / `talos_logs` /
-//     `talos_log_stream` — Monarch OS control bridge over Talos API
-//     mTLS via the operator's `talosconfig`. This is the production
-//     control plane for Monarch OS nodes; SSH remains a development
-//     bridge for plain Linux hosts.
+//     `talos_log_stream` / `rpc_runtime_provenance` — Monarch OS control
+//     and release evidence bridge. Talos API calls use mTLS via the
+//     operator's `talosconfig`; runtime provenance is read over JSON-RPC.
+//     SSH remains a development bridge for plain Linux hosts.
 //   * `ask_monarch` / `set_ai_config` / `get_ai_config` — advisory
 //     bridge. Streams a configured hosted endpoint or a local chat endpoint
 //     replies to the React side as Tauri events on
@@ -30,8 +30,8 @@
 //     proposed action is handed to the Operations drawer at the
 //     `preview` stage — never auto-executed.
 //
-// Runtime and indexer hooks return explicit unavailable states until the
-// corresponding mono-core surface is exposed.
+// Indexer hooks return explicit unavailable states until the corresponding
+// mono-core surface is exposed.
 
 mod ai;
 mod chat;
@@ -78,6 +78,7 @@ pub fn run() {
             talos::talos_trust_config,
             talos::talos_service,
             talos::talos_protocore_readiness,
+            talos::rpc_runtime_provenance,
             talos::talos_host_telemetry,
             talos::talos_upgrade,
             talos::talos_rollback,
