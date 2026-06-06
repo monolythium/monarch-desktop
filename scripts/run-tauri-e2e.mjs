@@ -151,27 +151,31 @@ async function main() {
     fs.rmSync(screenshotsDir, { recursive: true, force: true });
     fs.mkdirSync(screenshotsDir, { recursive: true });
     const routeScreenshots = await visitRoutes(primary, REQUIRED_ROUTES, screenshotsDir, path.dirname(outputPath));
+    let discoveredChatBootstrapPeers = [];
     if (!readinessPath && peerOperatorMnemonic) {
       if (!secondary) throw new Error("peer chat evidence requires two Tauri windows");
       if (typeof readinessOptions.clusterId !== "number") {
         throw new Error("peer chat evidence requires --cluster-id or MONARCH_E2E_CLUSTER_ID");
       }
-      await collectReadiness(primary, {
+      const primaryProbe = await collectReadiness(primary, {
         ...readinessOptions,
         executeRestart: false,
         sendChatMessage: false,
       });
+      discoveredChatBootstrapPeers = chatListenAddresses(primaryProbe);
+      const peerReadinessOptions = withAdditionalChatBootstrapPeers(readinessOptions, discoveredChatBootstrapPeers);
       await collectReadiness(secondary, {
-        ...readinessOptions,
+        ...peerReadinessOptions,
         operatorMnemonic: peerOperatorMnemonic,
         executeRestart: false,
         chatBody: (options.peerChatBody ?? env("MONARCH_E2E_PEER_CHAT_BODY")) || "monarch desktop e2e peer",
       });
       await delay(peerWaitMs);
     }
+    const finalReadinessOptions = withAdditionalChatBootstrapPeers(readinessOptions, discoveredChatBootstrapPeers);
     const desktopReadiness = readinessPath
       ? readJson(readinessPath)
-      : await collectReadiness(primary, readinessOptions);
+      : await collectReadiness(primary, finalReadinessOptions);
     const primarySnapshot = await snapshot(primary);
     const secondarySnapshot = secondary ? await snapshot(secondary) : emptySnapshot();
     const merged = mergeSnapshots(primarySnapshot, secondarySnapshot, windowsObserved);
@@ -210,6 +214,27 @@ async function main() {
     if (driver) stopProcess(driver);
     if (secondaryDriver) stopProcess(secondaryDriver);
   }
+}
+
+function chatListenAddresses(readiness) {
+  const addresses = readiness?.chat?.init?.listen_addresses;
+  if (!Array.isArray(addresses)) return [];
+  return addresses
+    .filter((addr) => typeof addr === "string")
+    .map((addr) => addr.trim())
+    .filter(Boolean);
+}
+
+function withAdditionalChatBootstrapPeers(options, peers) {
+  if (!Array.isArray(peers) || peers.length === 0) return options;
+  const merged = [
+    ...(Array.isArray(options.chatBootstrapPeers) ? options.chatBootstrapPeers : []),
+    ...peers,
+  ];
+  return {
+    ...options,
+    chatBootstrapPeers: [...new Set(merged)],
+  };
 }
 
 function parseArgs(args) {

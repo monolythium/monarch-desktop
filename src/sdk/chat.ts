@@ -48,4 +48,6 @@ export type ChatInitResult = {
   /** Hex ML-DSA-65 public key gossiped on every message. */
   public_key_hex: string;
   rpc_endpoint: string;
+  /** Local libp2p listen multiaddrs, including `/p2p/<peer-id>`, for e2e/bootstrap discovery. */
+  listen_addresses?: string[];
 };

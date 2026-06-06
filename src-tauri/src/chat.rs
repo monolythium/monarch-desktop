@@ -41,13 +41,14 @@ use std::time::Duration;
 
 use libp2p::futures::StreamExt;
 use libp2p::gossipsub::{self, IdentTopic, MessageAuthenticity, ValidationMode};
+use libp2p::multiaddr::Protocol;
 use libp2p::swarm::SwarmEvent;
 use libp2p::{noise, tcp, yamux, Multiaddr, Swarm};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Keccak256};
 use tauri::{AppHandle, Emitter, Manager, State};
 use thiserror::Error;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use zeroize::Zeroizing;
 
 use crate::chat_store::{ChannelRecord, ChatStore, MessageRecord};
@@ -396,6 +397,7 @@ pub struct ChatManagerInner {
     swarm_tx: Option<mpsc::UnboundedSender<SwarmCommand>>,
     /// RPC endpoint used for the live membership read.
     rpc_endpoint: String,
+    listen_addresses: Vec<String>,
     initialized: bool,
 }
 
@@ -406,6 +408,7 @@ impl ChatManagerInner {
             identity: None,
             swarm_tx: None,
             rpc_endpoint: default_rpc_endpoint(),
+            listen_addresses: Vec::new(),
             initialized: false,
         }
     }
@@ -596,15 +599,18 @@ fn normalize_address_hex(s: &str) -> Option<String> {
 ///   * applies Subscribe / Unsubscribe / Publish commands,
 ///   * verifies inbound gossip, persists it, and emits a Tauri event,
 ///   * dials the configured bootstrap peers on startup.
-fn spawn_swarm(
+async fn spawn_swarm(
     app: AppHandle,
     state: ChatState,
     identity: Arc<ChatIdentity>,
     bootstrap_peers: Vec<Multiaddr>,
-) -> Result<mpsc::UnboundedSender<SwarmCommand>, ChatError> {
+) -> Result<(mpsc::UnboundedSender<SwarmCommand>, Vec<String>), ChatError> {
     let (tx, mut rx) = mpsc::unbounded_channel::<SwarmCommand>();
+    let (listen_tx, listen_rx) = oneshot::channel::<String>();
+    let mut listen_tx = Some(listen_tx);
 
     let mut swarm = build_gossipsub_swarm(Duration::from_secs(1))?;
+    let local_peer_id = *swarm.local_peer_id();
 
     // Listen on an ephemeral TCP port on all interfaces. AF_NETLINK
     // hardening (see memory/harden-netlink-required) only applies to
@@ -653,17 +659,45 @@ fn spawn_swarm(
                     }
                 }
                 event = swarm.select_next_some() => {
-                    if let SwarmEvent::Behaviour(gossipsub::Event::Message {
-                        message, ..
-                    }) = event {
-                        handle_inbound(&app, &state, &identity, &message.data).await;
+                    match event {
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            if let Some(sender) = listen_tx.take() {
+                                let mut addr = normalize_advertised_listen_addr(address);
+                                addr.push(Protocol::P2p(local_peer_id));
+                                let _ = sender.send(addr.to_string());
+                            }
+                        }
+                        SwarmEvent::Behaviour(gossipsub::Event::Message {
+                            message, ..
+                        }) => {
+                            handle_inbound(&app, &state, &identity, &message.data).await;
+                        }
+                        _ => {}
                     }
                 }
             }
         }
     });
 
-    Ok(tx)
+    let listen_addresses = match tokio::time::timeout(Duration::from_secs(5), listen_rx).await {
+        Ok(Ok(addr)) => vec![addr],
+        _ => Vec::new(),
+    };
+
+    Ok((tx, listen_addresses))
+}
+
+fn normalize_advertised_listen_addr(address: Multiaddr) -> Multiaddr {
+    let mut out = Multiaddr::empty();
+    for protocol in &address {
+        match protocol.clone() {
+            Protocol::Ip4(addr) if addr.is_unspecified() => {
+                out.push(Protocol::Ip4(std::net::Ipv4Addr::LOCALHOST));
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn build_gossipsub_swarm(
@@ -842,6 +876,7 @@ pub struct ChatInitResult {
     pub address_hex: String,
     pub public_key_hex: String,
     pub rpc_endpoint: String,
+    pub listen_addresses: Vec<String>,
 }
 
 // ---- Tauri commands ------------------------------------------------
@@ -884,6 +919,7 @@ async fn chat_initialize_impl(
                 address_hex: identity.address_hex().to_string(),
                 public_key_hex: identity.public_key_hex(),
                 rpc_endpoint: guard.rpc_endpoint.clone(),
+                listen_addresses: guard.listen_addresses.clone(),
             });
         }
     }
@@ -920,7 +956,8 @@ async fn chat_initialize_impl(
         }
     }
 
-    let swarm_tx = spawn_swarm(app.clone(), (*state).clone(), identity.clone(), peers)?;
+    let (swarm_tx, listen_addresses) =
+        spawn_swarm(app.clone(), (*state).clone(), identity.clone(), peers).await?;
 
     // Re-subscribe channels persisted as subscribed from a prior launch,
     // but only after re-proving the local operator still belongs to the
@@ -952,6 +989,7 @@ async fn chat_initialize_impl(
         address_hex: identity.address_hex().to_string(),
         public_key_hex: identity.public_key_hex(),
         rpc_endpoint: resolved_rpc_endpoint.clone(),
+        listen_addresses: listen_addresses.clone(),
     };
 
     let mut guard = state.lock().await;
@@ -959,6 +997,7 @@ async fn chat_initialize_impl(
     guard.identity = Some(identity);
     guard.swarm_tx = Some(swarm_tx);
     guard.rpc_endpoint = resolved_rpc_endpoint;
+    guard.listen_addresses = listen_addresses;
     guard.initialized = true;
 
     Ok(result)
