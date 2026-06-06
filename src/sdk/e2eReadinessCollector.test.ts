@@ -31,6 +31,7 @@ vi.mock("./bridge", () => ({
   chatSubscribeChannel: vi.fn(),
   keychainGet: vi.fn(),
   keychainSet: vi.fn(),
+  rpcCallJson: vi.fn(),
   rpcRuntimeProvenance: vi.fn(),
   talosConnect: vi.fn(),
   talosConfigInfo: vi.fn(),
@@ -74,6 +75,7 @@ import {
   chatSubscribeChannel,
   keychainGet,
   keychainSet,
+  rpcCallJson,
   rpcRuntimeProvenance,
   talosConnect,
   talosConfigInfo,
@@ -162,6 +164,7 @@ describe("collectMonarchE2eReadiness", () => {
     vi.mocked(rpcRuntimeProvenance).mockResolvedValue({
       runtime: { binarySha256: "sha256:expected" },
     } as never);
+    vi.mocked(rpcCallJson).mockReset();
     vi.mocked(rpc.lythClusterStatus).mockResolvedValue({
       clusterId: 42,
       threshold: 7,
@@ -305,5 +308,59 @@ describe("collectMonarchE2eReadiness", () => {
         ],
       },
     });
+  });
+
+  it("falls back to native RPC for chat membership evidence", async () => {
+    vi.mocked(rpc.lythClusterStatus).mockReset().mockRejectedValue(new Error("fetch blocked"));
+    vi.mocked(rpc.lythOperatorInfo).mockReset().mockRejectedValue(new Error("fetch blocked"));
+    vi.mocked(rpcCallJson)
+      .mockResolvedValueOnce({
+        clusterId: 42,
+        threshold: 7,
+        size: 10,
+        live: 10,
+        lagging: 0,
+        offline: 0,
+        maintenance: 0,
+        members: [
+          { operatorId: "0x" + "c".repeat(64), blsPubkey: "0x" + "a".repeat(96), state: "nominal" },
+          { operatorId: "0x" + "d".repeat(64), blsPubkey: "0x" + "b".repeat(96), state: "nominal" },
+        ],
+        epoch: 1n,
+        round: 1n,
+        quorum: "7/10",
+        reputationScore: null,
+        livenessScore: null,
+        lastUpdateHeight: 42n,
+      })
+      .mockResolvedValueOnce({
+        operatorId: "0x" + "c".repeat(64),
+        chainAddress: "mono1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg357f9at",
+      })
+      .mockResolvedValueOnce({
+        operatorId: "0x" + "d".repeat(64),
+        chainAddress: "0x2222222222222222222222222222222222222222",
+      });
+
+    const readiness = await collectMonarchE2eReadiness({
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      expectedDigest: "sha256:expected",
+      clusterId: 42,
+    });
+
+    expect(rpcCallJson).toHaveBeenNthCalledWith(
+      1,
+      "https://rpc.monolythium.test",
+      "lyth_clusterStatus",
+      [42],
+    );
+    expect(rpcCallJson).toHaveBeenNthCalledWith(
+      2,
+      "https://rpc.monolythium.test",
+      "lyth_operatorInfo",
+      ["0x" + "c".repeat(64)],
+    );
+    expect(readiness.chat?.membership?.membersChecked).toBe(2);
+    expect(readiness.chat?.membership?.proofs).toHaveLength(2);
   });
 });

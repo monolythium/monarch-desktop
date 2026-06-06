@@ -1,6 +1,8 @@
 import {
   normalizeAddressHex,
   RpcClient,
+  type ClusterStatusResponse,
+  type OperatorInfoResponse,
   type RuntimeProvenanceResponse,
 } from "@monolythium/core-sdk";
 import type { OperationReceipt } from "../ops/receipts";
@@ -14,6 +16,7 @@ import {
   KEYCHAIN_ACCOUNTS,
   keychainGet,
   keychainSet,
+  rpcCallJson,
   rpcRuntimeProvenance,
   talosConnect,
   talosConfigInfo,
@@ -258,8 +261,7 @@ async function collectChatMembershipEvidence(
   );
   if (senderAddresses.size === 0) return null;
 
-  const client = rpcForEndpoint(endpoint);
-  const cluster = await client.lythClusterStatus(active.cluster_id).catch(() => null);
+  const cluster = await readClusterStatus(endpoint, active.cluster_id).catch(() => null);
   if (!cluster) {
     return {
       source: "lyth_clusterStatus+lyth_operatorInfo",
@@ -272,7 +274,7 @@ async function collectChatMembershipEvidence(
 
   const operatorInfos = await Promise.all(
     cluster.members.map((member) =>
-      client.lythOperatorInfo(member.operatorId)
+      readOperatorInfo(endpoint, member.operatorId)
         .then((operator) => ({ member, operator }))
         .catch(() => null),
     ),
@@ -298,6 +300,36 @@ async function collectChatMembershipEvidence(
         }];
       }),
   };
+}
+
+async function readClusterStatus(
+  endpoint: string,
+  clusterId: number,
+): Promise<ClusterStatusResponse> {
+  try {
+    return await rpcForEndpoint(endpoint).lythClusterStatus(clusterId);
+  } catch (directError) {
+    try {
+      return await rpcCallJson<ClusterStatusResponse>(endpoint, "lyth_clusterStatus", [clusterId]);
+    } catch {
+      throw directError;
+    }
+  }
+}
+
+async function readOperatorInfo(
+  endpoint: string,
+  operatorId: string,
+): Promise<OperatorInfoResponse> {
+  try {
+    return await rpcForEndpoint(endpoint).lythOperatorInfo(operatorId);
+  } catch (directError) {
+    try {
+      return await rpcCallJson<OperatorInfoResponse>(endpoint, "lyth_operatorInfo", [operatorId]);
+    } catch {
+      throw directError;
+    }
+  }
 }
 
 function chooseActiveChannel(

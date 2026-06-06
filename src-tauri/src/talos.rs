@@ -1652,7 +1652,12 @@ fn parse_rpc_syncing(value: &Value) -> Option<bool> {
     }
 }
 
-async fn rpc_call(client: &reqwest::Client, endpoint: &str, method: &str) -> Result<Value, String> {
+async fn rpc_call_with_params(
+    client: &reqwest::Client,
+    endpoint: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     let response = timeout(
         PROTOCORE_RPC_TIMEOUT,
         client
@@ -1661,7 +1666,7 @@ async fn rpc_call(client: &reqwest::Client, endpoint: &str, method: &str) -> Res
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": method,
-                "params": [],
+                "params": params,
             }))
             .send(),
     )
@@ -1684,6 +1689,10 @@ async fn rpc_call(client: &reqwest::Client, endpoint: &str, method: &str) -> Res
     body.get("result")
         .cloned()
         .ok_or_else(|| format!("{method} response missing result"))
+}
+
+async fn rpc_call(client: &reqwest::Client, endpoint: &str, method: &str) -> Result<Value, String> {
+    rpc_call_with_params(client, endpoint, method, json!([])).await
 }
 
 async fn fetch_protocore_rpc_probe(endpoint: &str) -> ProtocoreRpcProbe {
@@ -1938,6 +1947,37 @@ pub async fn rpc_runtime_provenance(rpc_endpoint: String) -> Result<Value, Strin
         .build()
         .map_err(|err| format!("failed to build RPC client: {err}"))?;
     rpc_call(&client, &rpc_endpoint, "lyth_runtimeProvenance").await
+}
+
+#[tauri::command]
+pub async fn rpc_call_json(
+    rpc_endpoint: String,
+    method: String,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    let parsed =
+        reqwest::Url::parse(&rpc_endpoint).map_err(|err| format!("invalid RPC endpoint: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("RPC endpoint must use http:// or https://".to_string());
+    }
+    let method = method.trim();
+    if method.is_empty() {
+        return Err("RPC method is required".to_string());
+    }
+    if !matches!(method, "lyth_clusterStatus" | "lyth_operatorInfo") {
+        return Err(format!(
+            "RPC method {method} is not allowed through this bridge"
+        ));
+    }
+    let params = params.unwrap_or_else(|| json!([]));
+    if !params.is_array() {
+        return Err("RPC params must be a JSON array".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(PROTOCORE_RPC_TIMEOUT)
+        .build()
+        .map_err(|err| format!("failed to build RPC client: {err}"))?;
+    rpc_call_with_params(&client, &rpc_endpoint, method, params).await
 }
 
 async fn build_status(state: &TalosState) -> Result<TalosStatus, TalosError> {

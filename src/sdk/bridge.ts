@@ -407,6 +407,17 @@ export async function rpcRuntimeProvenance(
   return await invoke<RuntimeProvenanceResponse>("rpc_runtime_provenance", { rpcEndpoint });
 }
 
+export async function rpcCallJson<T = unknown>(
+  rpcEndpoint: string,
+  method: string,
+  params: unknown[] = [],
+): Promise<T> {
+  if (!inTauri()) {
+    throw new Error("rpc_call_json unavailable — running outside Tauri");
+  }
+  return await invoke<T>("rpc_call_json", { rpcEndpoint, method, params });
+}
+
 export async function talosHostTelemetry(): Promise<TalosHostTelemetry> {
   if (!inTauri()) {
     throw new Error("talos_host_telemetry unavailable — running outside Tauri");
