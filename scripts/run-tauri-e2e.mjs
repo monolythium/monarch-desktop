@@ -777,7 +777,10 @@ async function stopProcess(child) {
   ]);
   if (!stopped && child.exitCode === null) {
     child.kill("SIGKILL");
-    await new Promise((resolve) => child.once("exit", resolve));
+    await Promise.race([
+      new Promise((resolve) => child.once("exit", resolve)),
+      delay(5_000),
+    ]);
   }
 }
 

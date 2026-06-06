@@ -223,11 +223,14 @@ async function collectChatEvidence(
   }
 
   if (active && options.sendChatMessage !== false) {
-    await chatSendMessage({
+    const sent = await chatSendMessage({
       channelId: active.channel_id,
       clusterId: active.cluster_id,
       body: options.chatBody ?? `monarch desktop e2e ${new Date().toISOString()}`,
     }).catch(() => null);
+    if (sent) {
+      await waitForChatMessage(active.channel_id, sent.msg_id);
+    }
   }
 
   const rawMessages = active
@@ -324,6 +327,13 @@ async function readClusterStatus(
   clusterId: number,
 ): Promise<ClusterStatusResponse> {
   try {
+    const raw = await rpcCallJson<ClusterStatusResponse>(endpoint, "lyth_clusterStatus", [clusterId]);
+    if (isClusterStatusResponse(raw)) return raw;
+  } catch {
+    // The native bridge is only available in Tauri; browser/unit contexts use the SDK client below.
+  }
+
+  try {
     return await rpcForEndpoint(endpoint).lythClusterStatus(clusterId);
   } catch (directError) {
     try {
@@ -339,6 +349,13 @@ async function readOperatorInfo(
   operatorId: string,
 ): Promise<OperatorInfoResponse> {
   try {
+    const raw = await rpcCallJson<OperatorInfoResponse>(endpoint, "lyth_operatorInfo", [operatorId]);
+    if (isOperatorInfoResponse(raw)) return raw;
+  } catch {
+    // The native bridge is only available in Tauri; browser/unit contexts use the SDK client below.
+  }
+
+  try {
     return await rpcForEndpoint(endpoint).lythOperatorInfo(operatorId);
   } catch (directError) {
     try {
@@ -347,6 +364,23 @@ async function readOperatorInfo(
       throw directError;
     }
   }
+}
+
+async function waitForChatMessage(channelId: string, msgId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const messages = await chatGetMessages(channelId, 100).catch(() => []);
+    if (messages.some((message) => message.msg_id === msgId)) return;
+    await delay(250);
+  }
+}
+
+function isClusterStatusResponse(value: unknown): value is ClusterStatusResponse {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as { members?: unknown }).members));
+}
+
+function isOperatorInfoResponse(value: unknown): value is OperatorInfoResponse {
+  return Boolean(value && typeof value === "object" && typeof (value as { chainAddress?: unknown }).chainAddress === "string");
 }
 
 function chooseActiveChannel(
@@ -391,6 +425,10 @@ function stringOption(value: unknown): string | undefined {
 
 function booleanOption(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }
 
 function stringListOption(value: unknown): string[] | undefined {
