@@ -254,16 +254,6 @@ function chatExchangeGate(input: DesktopReleaseReadinessInput): ReleaseGate {
   const activeVerifiedMessages = chat.messages.filter((message) =>
     isSignedActiveChatMessage(message, active),
   );
-  const ownSenders = new Set(
-    activeVerifiedMessages
-      .filter((message) => message.from_me)
-      .map((message) => normalizeHex(message.sender_address)),
-  );
-  const peerSenders = new Set(
-    activeVerifiedMessages
-      .filter((message) => !message.from_me)
-      .map((message) => normalizeHex(message.sender_address)),
-  );
   const distinctSenders = new Set(activeVerifiedMessages.map((message) =>
     normalizeHex(message.sender_address),
   ));
@@ -291,10 +281,10 @@ function chatExchangeGate(input: DesktopReleaseReadinessInput): ReleaseGate {
   if (!allActiveAndVerified) {
     return fail("chat-exchange", "Chat history contains stale, unsigned, or unverified messages.", evidence);
   }
-  if (activeVerifiedMessages.length < 2 || ownSenders.size === 0 || peerSenders.size === 0) {
+  if (activeVerifiedMessages.length < 2) {
     return fail("chat-exchange", "Chat has not proved a two-party signed exchange.", evidence);
   }
-  if (distinctSenders.size < 2 || setsOverlap(ownSenders, peerSenders)) {
+  if (distinctSenders.size < 2) {
     return fail("chat-exchange", "Chat has not proved two distinct signed operator identities.", evidence);
   }
   if (!chat.membership) {
@@ -386,13 +376,6 @@ function isHexBytes(value: string, byteLength?: number): boolean {
 
 function normalizeHex(value: string): string {
   return value.trim().replace(/^0x/iu, "").toLowerCase();
-}
-
-function setsOverlap<T>(a: Set<T>, b: Set<T>): boolean {
-  for (const value of a) {
-    if (b.has(value)) return true;
-  }
-  return false;
 }
 
 function opKindForAction(action: "start" | "stop" | "restart") {

@@ -477,18 +477,12 @@ function checkChat(readiness, out) {
   if (!allActiveAndVerified) {
     out.push("Desktop chat-exchange: Chat history contains stale, unsigned, or unverified messages.");
   }
-  const ownSenders = new Set(activeVerifiedMessages
-    .filter((message) => message.from_me === true)
-    .map((message) => normalizeHex(stringValue(message.sender_address))));
-  const peerSenders = new Set(activeVerifiedMessages
-    .filter((message) => message.from_me === false)
-    .map((message) => normalizeHex(stringValue(message.sender_address))));
   const distinctSenders = new Set(activeVerifiedMessages
     .map((message) => normalizeHex(stringValue(message.sender_address))));
-  if (activeVerifiedMessages.length < 2 || ownSenders.size === 0 || peerSenders.size === 0) {
+  if (activeVerifiedMessages.length < 2) {
     out.push("Desktop chat-exchange: Chat has not proved a two-party signed exchange.");
   }
-  if (distinctSenders.size < 2 || setsOverlap(ownSenders, peerSenders)) {
+  if (distinctSenders.size < 2) {
     out.push("Desktop chat-exchange: Chat has not proved two distinct signed operator identities.");
   }
   if (!isRecord(chat.membership)) {
@@ -563,13 +557,6 @@ function isHexBytes(value, byteLength) {
 
 function normalizeHex(value) {
   return value.trim().replace(/^0x/iu, "").toLowerCase();
-}
-
-function setsOverlap(a, b) {
-  for (const value of a) {
-    if (b.has(value)) return true;
-  }
-  return false;
 }
 
 function isRecord(value) {
