@@ -37,6 +37,7 @@ import {
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
 import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
 import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
+import { submitOperatorSealKey } from "../sdk/operatorSealKeyOps";
 import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
@@ -78,6 +79,7 @@ import type {
   ClusterVoteAdmitInput,
   OtaApplyInput,
   OperatorDisplayInput,
+  OperatorSealKeyInput,
   PendingChangeInput,
   RedelegateInput,
   RegisterInput,
@@ -112,6 +114,8 @@ type OpsContextValue = OpsState & {
   setChatBootstrapPeersInput: (patch: Partial<ChatBootstrapPeersInput>) => void;
   /** Update the operator display metadata declaration payload. */
   setOperatorDisplayInput: (patch: Partial<OperatorDisplayInput>) => void;
+  /** Update the operator LythiumSeal EK publication payload. */
+  setOperatorSealKeyInput: (patch: Partial<OperatorSealKeyInput>) => void;
   /** Update the cluster-name registration payload. */
   setClusterNameInput: (patch: Partial<ClusterNameInput>) => void;
   /** Update the pending-change request payload for cluster invite/swap. */
@@ -449,6 +453,58 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           req,
           { ok: false, message },
           { transport: "operator-display-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runOperatorSealKeyFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.operatorSealKeyInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Operator seal key form is missing required fields." },
+          { transport: "operator-seal-key-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting publishOperatorSealKey.",
+            },
+            { transport: "operator-seal-key-tx" },
+          );
+          return;
+        }
+        const res = await submitOperatorSealKey({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          peerIdHex: input.peerIdHex,
+          sealEkHex: input.sealEkHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Published operator seal key for ${res.peerIdHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "operator-seal-key-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "operator-seal-key-tx" },
         );
       }
     },
@@ -1054,6 +1110,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "operator-seal-key") {
+      if (inTauri()) {
+        await runOperatorSealKeyFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-name-register") {
       if (inTauri()) {
         await runClusterNameFlow(req);
@@ -1205,6 +1269,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runOtaApplyFlow,
     runOtaRollbackFlow,
     runOperatorDisplayFlow,
+    runOperatorSealKeyFlow,
     runPendingChangeFlow,
     runRedelegateFlow,
     runRegisterFlow,
@@ -1320,6 +1385,24 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           request: { ...s.request, operatorDisplayInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setOperatorSealKeyInput = useCallback(
+    (patch: Partial<OperatorSealKeyInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "operator-seal-key") return s;
+        const base: OperatorSealKeyInput = s.request.operatorSealKeyInput ?? {
+          peerIdHex: "",
+          sealEkHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, operatorSealKeyInput: next },
         };
       });
     },
@@ -1514,6 +1597,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
+      setOperatorSealKeyInput,
       setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
@@ -1536,6 +1620,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
+      setOperatorSealKeyInput,
       setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,

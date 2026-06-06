@@ -45,7 +45,7 @@ describe("operation catalog", () => {
     });
     expect(request?.intro).toContain("requestClusterJoin(uint32,bytes)");
     expect(request?.effects).toContain(
-      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+      "Fails before signing if the operator's public LythiumSeal EK has not been published.",
     );
 
     expect(vote).toMatchObject({
@@ -55,7 +55,7 @@ describe("operation catalog", () => {
     });
     expect(vote?.intro).toContain("voteClusterAdmit(uint32,bytes32,bytes)");
     expect(vote?.effects).toContain(
-      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+      "Fails before signing if the candidate request is missing, closed, or already admitted.",
     );
   });
 
@@ -95,6 +95,19 @@ describe("operation catalog", () => {
     expect(display?.intro).toContain("setOperatorDisplay(bytes32,string,string)");
     expect(display?.effects).toContain(
       "Builds setOperatorDisplay(peerId, moniker, alias) calldata against node-registry 0x1005.",
+    );
+  });
+
+  it("routes operator seal key publication through an operator registry tx", () => {
+    const sealKey = OP_CATALOG.find((entry) => entry.kind === "operator-seal-key");
+
+    expect(sealKey).toMatchObject({
+      title: "Publish seal key",
+      confirmLabel: "Sign seal key tx",
+    });
+    expect(sealKey?.intro).toContain("publishOperatorSealKey(bytes32,bytes)");
+    expect(sealKey?.effects).toContain(
+      "Builds publishOperatorSealKey(peerId, sealEk) calldata against node-registry 0x1005.",
     );
   });
 

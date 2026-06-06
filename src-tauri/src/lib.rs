@@ -84,6 +84,7 @@ pub fn run() {
             talos::talos_rollback,
             talos::talos_service_action,
             talos::talos_export_protocore_backup,
+            talos::talos_operator_seal_ek,
             talos::talos_logs,
             talos::talos_log_stream,
             talos::talos_log_cancel,

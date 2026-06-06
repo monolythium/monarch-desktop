@@ -131,11 +131,38 @@ export function Operator() {
             className="btn btn--ghost"
             onClick={() =>
               ops.requestOp({
+                kind: "operator-seal-key",
+                title: "Publish seal key",
+                sub: "Submit LythiumSeal EK",
+                intro:
+                  "Posts publishOperatorSealKey(bytes32,bytes) from the operator's PQM-1 mnemonic. Desktop can load the public ML-KEM-768 EK from the connected Monarch OS node before signing.",
+                fields: [
+                  { key: "operator", label: "Operator", value: moniker },
+                  { key: "peer-id", label: "Peer id", value: operatorId ?? "derived from keychain" },
+                  { key: "executor", label: "Executor", value: "publishOperatorSealKey(bytes32,bytes)" },
+                ],
+                operatorSealKeyInput: operatorId
+                  ? { peerIdHex: operatorId, sealEkHex: "" }
+                  : undefined,
+                icon: "SK",
+                risk: "medium",
+                needsPasskey: true,
+                confirmLabel: "Sign seal key tx",
+              })
+            }
+          >
+            Publish seal key
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() =>
+              ops.requestOp({
                 kind: "cluster-request-join",
                 title: `Request join for ${activeClusterLabel}`,
                 sub: "Prepare CJ-1 join request",
                 intro:
-                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits on CJ-1 runtimes.",
+                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits after the operator seal key is published.",
                 fields: [
                   { key: "cluster", label: "Cluster", value: activeClusterLabel },
                   {
@@ -144,9 +171,9 @@ export function Operator() {
                     value: "cluster vote admission; runtime preflight gated",
                   },
                   {
-                    key: "seal-roster",
-                    label: "Seal roster",
-                    value: "consensus-only until the decrypt roster updates",
+                    key: "seal-key",
+                    label: "Seal key",
+                    value: "publish before requesting admission",
                   },
                 ],
                 clusterJoinRequestInput: {

@@ -25,8 +25,8 @@ const MAX_UINT32 = (1n << 32n) - 1n;
 const CLUSTER_JOIN_RUNTIME_NOTICE =
   "Submission is guarded by a live CJ-1 view preflight. Current chains that do not expose the request and vote methods fail before signing or broadcast.";
 
-export const CLUSTER_JOIN_SEAL_ROSTER_CAVEAT =
-  "CJ-1 admission changes consensus membership only on this chain generation. The LythiumSeal decrypt roster stays fixed by genesis until the seal roster is regenerated or live roster updates ship, so newly admitted operators may be consensus-only for sealed mempool work.";
+export const CLUSTER_JOIN_SEAL_KEY_REQUIREMENT =
+  "Publish the operator LythiumSeal EK before submitting requestClusterJoin; the runtime reads published EKs into live seal rosters after admission.";
 
 type LocalConsensusKeyState = {
   status: "checking" | "ready" | "missing" | "error";
@@ -263,7 +263,7 @@ function ClusterAdmissionDisclosure({ localKey }: { localKey: LocalConsensusKeyS
       <div className="halo halo--warn" style={haloStyle}>
         <span className="dot" style={dotStyle} />
         <span style={textStyle}>
-          {CLUSTER_JOIN_SEAL_ROSTER_CAVEAT} {CLUSTER_JOIN_RUNTIME_NOTICE}
+          {CLUSTER_JOIN_SEAL_KEY_REQUIREMENT} {CLUSTER_JOIN_RUNTIME_NOTICE}
         </span>
       </div>
       <div className={keyTone} style={haloStyle}>

@@ -18,5 +18,6 @@ export type {
   OtaApplyInput,
   OtaRebootMode,
   OperatorDisplayInput,
+  OperatorSealKeyInput,
   PendingChangeInput,
 } from "./types";

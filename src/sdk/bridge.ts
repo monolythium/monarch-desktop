@@ -226,6 +226,15 @@ export type TalosBackupResult = {
   service: TalosServiceInfo | null;
 };
 
+export type TalosOperatorSealEkResult = {
+  endpoint: string;
+  nodeAddress: string;
+  command: string;
+  path: string;
+  sealEkHex: string;
+  sha256: string;
+};
+
 export type TalosReadinessCheck = {
   name: string;
   state: "ok" | "warn" | "err" | "info" | string;
@@ -410,6 +419,13 @@ export async function talosExportProtocoreBackup(): Promise<TalosBackupResult> {
     throw new Error("talos_export_protocore_backup unavailable — running outside Tauri");
   }
   return await invoke<TalosBackupResult>("talos_export_protocore_backup");
+}
+
+export async function talosOperatorSealEk(): Promise<TalosOperatorSealEkResult> {
+  if (!inTauri()) {
+    throw new Error("talos_operator_seal_ek unavailable — running outside Tauri");
+  }
+  return await invoke<TalosOperatorSealEkResult>("talos_operator_seal_ek");
 }
 
 export async function talosUpgrade(input: TalosUpgradeInput): Promise<TalosTextResult> {

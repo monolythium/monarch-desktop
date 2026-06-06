@@ -147,6 +147,23 @@ export type {
   SubmitOperatorDisplayResult,
 } from "./operatorDisplayOps";
 export {
+  buildPublishOperatorSealKeyTxFields,
+  DEFAULT_OPERATOR_SEAL_KEY_EXECUTION_UNIT_LIMIT,
+  encodeGetOperatorSealKeyCalldata,
+  encodePublishOperatorSealKeyCalldata,
+  GET_OPERATOR_SEAL_KEY_SELECTOR,
+  normalizeOperatorSealKey,
+  OPERATOR_SEAL_EK_BYTES,
+  operatorSealEkHexToBytes,
+  operatorSealKeyPeerIdHexToBytes,
+  PUBLISH_OPERATOR_SEAL_KEY_SELECTOR,
+  submitOperatorSealKey,
+} from "./operatorSealKeyOps";
+export type {
+  SubmitOperatorSealKeyArgs,
+  SubmitOperatorSealKeyResult,
+} from "./operatorSealKeyOps";
+export {
   buildEmergencyKeyRotationTxFields,
   buildFreezeAdmissionTxFields,
   DEFAULT_INCIDENT_EXECUTION_UNIT_LIMIT,
@@ -336,6 +353,7 @@ export {
   talosLogCancel,
   talosLogStream,
   talosLogs,
+  talosOperatorSealEk,
   talosProtocoreReadiness,
   talosRollback,
   talosService,
@@ -363,6 +381,7 @@ export type {
   TalosMemoryTelemetry,
   TalosMountTelemetry,
   TalosNetworkTelemetry,
+  TalosOperatorSealEkResult,
   TalosReadinessCheck,
   ProtocoreReadiness,
   TalosServiceEvent,

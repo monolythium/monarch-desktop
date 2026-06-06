@@ -243,6 +243,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "operator-start",
   "operator-stop",
   "operator-display",
+  "operator-seal-key",
   "chat-bootstrap-peers",
   "cluster-name-register",
   "cluster-form",

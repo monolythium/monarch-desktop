@@ -55,9 +55,11 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 # matching Roaming dir on Windows). `toml` parses + emits that file.
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
+flate2 = "1"
 tokio-util = { version = "0.7", features = ["io"] }
 dirs = "5"
 toml = "0.8"
+tar = "0.4"
 tauri-plugin-dialog = "2"
 x509-parser = "0.17"
 sha2 = "0.10"

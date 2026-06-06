@@ -108,6 +108,34 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "operator-seal-key",
+    category: "cluster",
+    icon: "SK",
+    risk: "medium",
+    title: "Publish seal key",
+    sub: "Submit LythiumSeal EK",
+    intro:
+      "Posts a signed publishOperatorSealKey(bytes32,bytes) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The public ML-KEM-768 encapsulation key comes from Monarch OS and lets live LythiumSeal rosters include the operator before requestClusterJoin or formCluster.",
+    destructive: false,
+    needsPasskey: true,
+    confirmLabel: "Sign seal key tx",
+    keywords: ["seal", "lythiumseal", "ek", "ml-kem", "operator", "join"],
+    effects: [
+      "Builds publishOperatorSealKey(peerId, sealEk) calldata against node-registry 0x1005.",
+      "Signs the zero-value native tx from the operator keychain mnemonic.",
+      "Publishes the public EK required before cluster admission can activate sealed mempool participation.",
+    ],
+    diff: [
+      { key: "seal", label: "Seal EK", value: "+ public ML-KEM-768 EK" },
+      { key: "source", label: "Discovery", value: "getOperatorSealKey / lyth_getClusterSealKeys" },
+    ],
+    fields: [
+      { key: "peer-id", label: "Peer id", value: "32-byte node-registry peer id" },
+      { key: "seal-ek", label: "Seal EK", value: "1184-byte ML-KEM-768 public key" },
+      { key: "executor", label: "Executor", value: "publishOperatorSealKey(bytes32,bytes)" },
+    ],
+  },
+  {
     kind: "chat-bootstrap-peers",
     category: "cluster",
     icon: "CP",
@@ -399,7 +427,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Request cluster join",
     sub: "Prepare CJ-1 join request",
     intro:
-      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Once CJ-1 is live on the connected chain, Desktop will sign this from the operator PQM-1 mnemonic, attach the bond as native value, and publish the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
+      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator PQM-1 mnemonic, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting. The operator seal key must be published first.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign join request",
@@ -407,7 +435,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Builds requestClusterJoin(clusterId, operatorPubkey) calldata against node-registry 0x1005.",
       "Preflights getClusterJoinRequest, then signs with the joining operator's PQM-1 mnemonic and attaches the configured bond on CJ-1 runtimes.",
-      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+      "Fails before signing if the operator's public LythiumSeal EK has not been published.",
     ],
     diff: [
       { key: "request", label: "Join request", value: "+ pending cluster vote" },
@@ -435,7 +463,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Builds voteClusterAdmit(clusterId, operatorId, voterPubkey) calldata against node-registry 0x1005.",
       "Preflights that the candidate request is open, then signs with a current cluster member's PQM-1 mnemonic on CJ-1 runtimes.",
-      "Fails before signing on current chains that do not expose the CJ-1 cluster-vote precompile.",
+      "Fails before signing if the candidate request is missing, closed, or already admitted.",
     ],
     diff: [
       { key: "vote", label: "Admission vote", value: "+ one member vote" },

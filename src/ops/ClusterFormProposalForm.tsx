@@ -16,7 +16,7 @@ import type { ClusterFormInput } from "./types";
 const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
 
 export const CLUSTER_FORM_RUNTIME_NOTICE =
-  "Submits formCluster(bytes,bytes,bytes) on compatible runtimes. Requires ten ML-DSA-65 consent signatures in roster order.";
+  "Submits formCluster(bytes,bytes,bytes) on compatible runtimes. Requires ten ML-DSA-65 consent signatures in roster order and a published LythiumSeal EK for every proposed operator.";
 
 export type ClusterFormRosterRole = "active" | "standby";
 
