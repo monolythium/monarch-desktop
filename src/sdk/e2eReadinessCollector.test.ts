@@ -264,6 +264,11 @@ describe("collectMonarchE2eReadiness", () => {
       clusterId: 42,
       body: "hello",
     });
+    const chatSendCall = vi.mocked(chatSendMessage).mock.invocationCallOrder[0];
+    const restartCall = vi.mocked(talosServiceAction).mock.invocationCallOrder[0];
+    expect(chatSendCall).toBeDefined();
+    expect(restartCall).toBeDefined();
+    expect(chatSendCall!).toBeLessThan(restartCall!);
     const receipt = readiness.operationReceipts[0];
     expect(receipt).toBeDefined();
     expect(receipt).toMatchObject({

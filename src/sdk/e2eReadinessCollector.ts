@@ -81,8 +81,10 @@ export async function collectMonarchE2eReadiness(
     rpcEndpoint: endpoint,
   });
 
-  const operationReceipts = await collectOperationReceipts(options);
+  // Prove chat before service operations. A restart can briefly leave the
+  // isolated smoke node without synced cluster registry data.
   const chat = await collectChatEvidence(options, endpoint);
+  const operationReceipts = await collectOperationReceipts(options);
 
   return {
     expectedChainId: options.expectedChainId ?? 69420,
