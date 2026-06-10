@@ -42,6 +42,7 @@ import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
 } from "../sdk/clusterJoinOps";
+import { submitClusterResignation } from "../sdk/clusterResignations";
 import { submitFormCluster } from "../sdk/clusterFormOps";
 import { submitRedelegate } from "../sdk/delegationOps";
 import { submitDkgReshareAttestation } from "../sdk/dkgReshareOps";
@@ -77,6 +78,7 @@ import type {
   ClusterFormInput,
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,
+  ClusterResignationInput,
   OtaApplyInput,
   OperatorDisplayInput,
   OperatorSealKeyInput,
@@ -124,6 +126,8 @@ type OpsContextValue = OpsState & {
   setClusterJoinRequestInput: (patch: Partial<ClusterJoinRequestInput>) => void;
   /** Update the CJ-1 admit vote payload. */
   setClusterVoteAdmitInput: (patch: Partial<ClusterVoteAdmitInput>) => void;
+  /** Update the Q120 cluster resignation payload. */
+  setClusterResignationInput: (patch: Partial<ClusterResignationInput>) => void;
   /** Update the cluster-formation roster proposal payload. */
   setClusterFormInput: (patch: Partial<ClusterFormInput>) => void;
   /** Update the DKG re-share attestation payload for rotate-keys. */
@@ -770,6 +774,58 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runClusterResignationFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterResignationInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Cluster resignation form is missing required fields." },
+          { transport: "cluster-resignation-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting the cluster resignation.",
+            },
+            { transport: "cluster-resignation-tx" },
+          );
+          return;
+        }
+        const res = await submitClusterResignation({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          nonce: input.nonce,
+          expedite: input.expedite,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Submitted cluster resignation nonce ${res.nonce} for operator ${res.operatorPubkeyHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-resignation-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "cluster-resignation-tx" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
   const runClusterFormFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.clusterFormInput;
@@ -1150,6 +1206,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "cluster-resign") {
+      if (inTauri()) {
+        await runClusterResignationFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-form") {
       if (inTauri()) {
         await runClusterFormFlow(req);
@@ -1262,6 +1326,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runClusterNameFlow,
     runClusterJoinRequestFlow,
     runClusterVoteAdmitFlow,
+    runClusterResignationFlow,
     runDkgReshareFlow,
     runEmergencyKeyRotationFlow,
     runExportBackupFlow,
@@ -1491,6 +1556,25 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setClusterResignationInput = useCallback(
+    (patch: Partial<ClusterResignationInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "cluster-resign") return s;
+        const base: ClusterResignationInput = s.request.clusterResignationInput ?? {
+          clusterId: "",
+          nonce: "1",
+          expedite: false,
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, clusterResignationInput: next },
+        };
+      });
+    },
+    [],
+  );
+
   const setClusterFormInput = useCallback(
     (patch: Partial<ClusterFormInput>) => {
       setState((s) => {
@@ -1602,6 +1686,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
+      setClusterResignationInput,
       setClusterFormInput,
       setDkgReshareInput,
       setFreezeAdmissionInput,
@@ -1625,6 +1710,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
+      setClusterResignationInput,
       setClusterFormInput,
       setDkgReshareInput,
       setFreezeAdmissionInput,

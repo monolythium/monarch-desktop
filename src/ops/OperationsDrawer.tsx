@@ -23,6 +23,10 @@ import {
   isClusterVoteAdmitInputComplete,
 } from "./ClusterJoinForms";
 import {
+  ClusterResignationForm,
+  isClusterResignationInputComplete,
+} from "./ClusterResignationForm";
+import {
   DkgReshareAttestationForm,
   isDkgReshareAttestationInputComplete,
 } from "./DkgReshareAttestationForm";
@@ -113,6 +117,10 @@ export function OperationsDrawer() {
     request?.kind === "cluster-vote-admit" &&
     stage === "preview" &&
     !isClusterVoteAdmitInputComplete(request.clusterVoteAdmitInput);
+  const clusterResignationNeedsInput =
+    request?.kind === "cluster-resign" &&
+    stage === "preview" &&
+    !isClusterResignationInputComplete(request.clusterResignationInput);
   const clusterFormNeedsInput =
     request?.kind === "cluster-form" &&
     stage === "preview" &&
@@ -140,6 +148,7 @@ export function OperationsDrawer() {
     pendingChangeNeedsInput ||
     clusterJoinRequestNeedsInput ||
     clusterVoteAdmitNeedsInput ||
+    clusterResignationNeedsInput ||
     clusterFormNeedsInput ||
     dkgReshareNeedsInput ||
     freezeAdmissionNeedsInput ||
@@ -165,17 +174,19 @@ export function OperationsDrawer() {
                     ? "Fill every CJ-1 join request input first"
                     : clusterVoteAdmitNeedsInput
                       ? "Fill every CJ-1 admit vote input first"
-                      : clusterFormNeedsInput
-                        ? "Fill the 7 active + 3 standby roster and consent signatures first"
-                        : dkgReshareNeedsInput
-                          ? "Fill every DKG attestation input first"
-                          : freezeAdmissionNeedsInput
-                            ? "Enter the incident reason hash first"
-                            : emergencyKeyRotationNeedsInput
-                              ? "Fill every emergency key-rotation input first"
-                              : otaApplyNeedsInput
-                                ? "Enter the signed image reference first"
-                                : undefined;
+                      : clusterResignationNeedsInput
+                        ? "Enter a valid resignation nonce first"
+                        : clusterFormNeedsInput
+                          ? "Fill the 7 active + 3 standby roster and consent signatures first"
+                          : dkgReshareNeedsInput
+                            ? "Fill every DKG attestation input first"
+                            : freezeAdmissionNeedsInput
+                              ? "Enter the incident reason hash first"
+                              : emergencyKeyRotationNeedsInput
+                                ? "Fill every emergency key-rotation input first"
+                                : otaApplyNeedsInput
+                                  ? "Enter the signed image reference first"
+                                  : undefined;
 
   return (
     <>
@@ -332,6 +343,7 @@ function DrawerBody() {
         ) : null}
         {request.kind === "cluster-request-join" ? <ClusterJoinRequestForm /> : null}
         {request.kind === "cluster-vote-admit" ? <ClusterVoteAdmitForm /> : null}
+        {request.kind === "cluster-resign" ? <ClusterResignationForm /> : null}
         {request.kind === "cluster-form" ? <ClusterFormProposalForm /> : null}
         {request.kind === "rotate-keys" ? <DkgReshareAttestationForm /> : null}
         {request.kind === "freeze-admission" ? <FreezeAdmissionForm /> : null}

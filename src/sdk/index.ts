@@ -65,12 +65,20 @@ export type {
 export { normalizeOperatorIdList } from "./hooks";
 export {
   clusterResignationSummary,
+  clusterResignationSigningPreimage,
+  encodeClusterResignationTx,
   formatResignationHeight,
   resignationStatusTone,
+  submitClusterResignation,
+  CLUSTER_RESIGNATION_PAYLOAD_LEN,
+  FLAG_EXPEDITE_REQUESTED,
+  TX_KIND_CLUSTER_RESIGNATION,
 } from "./clusterResignations";
 export type {
+  ClusterResignationSubmitResult,
   ClusterResignationSummary,
   ClusterResignationTone,
+  SubmitClusterResignationArgs,
 } from "./clusterResignations";
 export {
   MONARCH_METRIC_SELECTORS,

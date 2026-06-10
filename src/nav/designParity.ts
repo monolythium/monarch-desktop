@@ -249,6 +249,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "cluster-form",
   "cluster-request-join",
   "cluster-vote-admit",
+  "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
   "ota-rollback",

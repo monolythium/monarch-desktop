@@ -14,6 +14,7 @@ export type {
   ClusterFormInput,
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,
+  ClusterResignationInput,
   DkgReshareAttestationInput,
   OtaApplyInput,
   OtaRebootMode,

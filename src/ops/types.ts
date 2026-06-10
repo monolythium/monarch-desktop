@@ -19,6 +19,7 @@ export const OP_KINDS = [
   "cluster-form",
   "cluster-request-join",
   "cluster-vote-admit",
+  "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
   "ota-apply",
@@ -120,6 +121,20 @@ export type ClusterFormInput = {
   signaturesHex: string;
 };
 
+// Inputs for the Q120 voluntary cluster resignation
+// (`Tx::ClusterResignation`). The resigning operator signs the native
+// frame with the PQM-1-derived ML-DSA-65 consensus key; the runtime
+// resolves the cluster from on-chain membership, so `clusterId` is a
+// display-only context field and is NOT part of the signed payload.
+// `nonce` is the operator-local resignation nonce (strictly greater than
+// the last accepted one). `expedite` requests a foundation expedite; the
+// executor still enforces the actual authority.
+export type ClusterResignationInput = {
+  clusterId: string;
+  nonce: string;
+  expedite: boolean;
+};
+
 // Inputs for the operator-callable `attestDkgReshare(uint64,bytes,bytes)`.
 export type DkgReshareAttestationInput = {
   intentId: string;
@@ -192,6 +207,9 @@ export type OpRequest = {
   clusterJoinRequestInput?: ClusterJoinRequestInput;
   /** Present only when `kind === "cluster-vote-admit"`. */
   clusterVoteAdmitInput?: ClusterVoteAdmitInput;
+  /** Present only when `kind === "cluster-resign"`. Carries the
+   *  operator-local resignation nonce and the foundation-expedite flag. */
+  clusterResignationInput?: ClusterResignationInput;
   /** Present only when `kind === "cluster-form"`. */
   clusterFormInput?: ClusterFormInput;
   /** Present only when `kind === "rotate-keys"`. Carries the DKG re-share

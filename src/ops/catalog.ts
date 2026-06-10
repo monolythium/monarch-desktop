@@ -476,6 +476,34 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "cluster-resign",
+    category: "cluster",
+    icon: "RN",
+    risk: "high",
+    title: "Resign from cluster",
+    sub: "Submit Q120 cluster resignation",
+    intro:
+      "Submits a self-signed Tx::ClusterResignation (kind 0x05) from the operator's PQM-1 mnemonic. The resigning operator's ML-DSA-65 consensus key signs the canonical frame and the chain resolves the cluster from on-chain membership — no cluster id is part of the signed payload. After a delay (24h on mainnet, shortened on fast-epoch testnet) the operator's slot is freed and the bond-refund window opens. This is the GUI equivalent of the `operator resign` CLI verb.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign resignation",
+    keywords: ["resign", "leave", "cluster", "step-down", "step down", "exit", "quit", "operator"],
+    effects: [
+      "Builds the canonical Tx::ClusterResignation frame (operator || nonce || flags || ML-DSA-65 sig).",
+      "Signs the native frame with the operator keychain PQM-1 mnemonic and submits via lyth_submitClusterResignation.",
+      "Queues the step-down; the slot frees and the bond-refund window opens after the resignation delay.",
+    ],
+    diff: [
+      { key: "membership", label: "Membership", value: "- queued resignation" },
+      { key: "bond", label: "Bond refund", value: "window opens after delay" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster id", value: "context only (resolved on-chain)" },
+      { key: "nonce", label: "Resignation nonce", value: "operator-local, > last accepted" },
+      { key: "expedite", label: "Foundation expedite", value: "off (executor-enforced)" },
+    ],
+  },
+  {
     kind: "cluster-accept-invite",
     category: "cluster",
     icon: "IN",
