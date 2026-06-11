@@ -105,7 +105,12 @@ const dkgReshareAttestationJson =
 
 await main().catch((err) => {
   console.error(errorMessage(err));
-  process.exitCode = 1;
+  // Hard-exit: `main`'s finally blocks have already run their cleanup by the
+  // time this catch fires, but a lingering child handle (driver session /
+  // spawned window) can keep the event loop alive indefinitely — which turns
+  // a verifier failure into a 45-minute CI step timeout. Failures must
+  // terminate the process immediately.
+  process.exit(1);
 });
 
 async function main() {
