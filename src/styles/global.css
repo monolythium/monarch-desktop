@@ -182,12 +182,35 @@ input, textarea, select { font: inherit; color: inherit; }
   padding: 6px 8px 18px;
 }
 
+/* Brand mark — gold-gradient diamond ported from design_handoff_monarch
+   (.brand__mark): gold→#ff8a4c 45°-rotated square + inner ink diamond.
+   Scaled to fit the 28px box so the points never overflow the sidenav. */
 .monarch-sidenav__mark {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: var(--gold);
+  position: relative;
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.monarch-sidenav__mark::before,
+.monarch-sidenav__mark::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+}
+
+.monarch-sidenav__mark::before {
+  background: linear-gradient(135deg, var(--gold) 0%, #ff8a4c 100%);
+  transform: rotate(45deg) scale(0.72);
+  box-shadow: 0 0 20px rgba(var(--gold-glow), 0.4);
+}
+
+.monarch-sidenav__mark::after {
+  background: var(--ink-100);
+  transform: rotate(45deg) scale(0.4);
 }
 
 .monarch-sidenav__name {
