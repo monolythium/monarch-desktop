@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   discoverClusterChatBootstrapPeers,
+  discoverOperatorChatBootstrapPeers,
   extractChatBootstrapPeersFromOperatorMetadata,
   parseChatBootstrapPeers,
   resolveChatBootstrapPeersForCluster,
@@ -92,6 +93,60 @@ describe("chat bootstrap peer config", () => {
     ]);
     expect(client.lythClusterStatus).toHaveBeenCalledWith(7);
     expect(client.lythGetOperatorNetworkMetadata).toHaveBeenCalledTimes(2);
+  });
+
+  it("discovers operator-keyed peers without a cluster roster walk", async () => {
+    // Ceremony lobbies: participants are cluster-less, so discovery is
+    // keyed by operator id straight into lyth_getOperatorNetworkMetadata.
+    const client = {
+      lythClusterStatus: vi.fn(async () => ({ members: [] })),
+      lythGetOperatorNetworkMetadata: vi.fn(async (operatorId: string) =>
+        operatorId.endsWith("a")
+          ? {
+            operatorId,
+            chat: {
+              bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWChatA"],
+            },
+          }
+          : {
+            operatorId,
+            chatBootstrapPeers: [
+              "/ip4/127.0.0.1/tcp/41002/p2p/12D3KooWChatB",
+              "/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWChatA",
+            ],
+          }),
+    };
+
+    await expect(discoverOperatorChatBootstrapPeers(
+      ["0x" + "a".repeat(64), "0x" + "b".repeat(64)],
+      { client },
+    )).resolves.toEqual([
+      "/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWChatA",
+      "/ip4/127.0.0.1/tcp/41002/p2p/12D3KooWChatB",
+    ]);
+    // No cluster roster walk for operator-keyed discovery.
+    expect(client.lythClusterStatus).not.toHaveBeenCalled();
+    expect(client.lythGetOperatorNetworkMetadata).toHaveBeenCalledTimes(2);
+  });
+
+  it("operator-keyed discovery tolerates per-operator failures and empty input", async () => {
+    const client = {
+      lythClusterStatus: vi.fn(async () => ({ members: [] })),
+      lythGetOperatorNetworkMetadata: vi.fn(async (operatorId: string) => {
+        if (operatorId.endsWith("b")) throw new Error("operator not found");
+        return {
+          chatBootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWChatA"],
+        };
+      }),
+    };
+
+    await expect(discoverOperatorChatBootstrapPeers(
+      ["0x" + "a".repeat(64), "0x" + "b".repeat(64)],
+      { client },
+    )).resolves.toEqual(["/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWChatA"]);
+
+    await expect(discoverOperatorChatBootstrapPeers([], { client }))
+      .resolves.toEqual([]);
   });
 
   it("merges configured peers with discovered peers", async () => {

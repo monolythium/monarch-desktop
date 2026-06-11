@@ -96,6 +96,8 @@ const activeChannel: ChatChannel = {
   kind: "cluster",
   cluster_id: 42,
   subscribed: true,
+  last_read_ts: 0,
+  unread_count: 0,
 };
 
 const ownMessage: ChatMessage = {

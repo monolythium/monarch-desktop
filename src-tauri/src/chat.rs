@@ -75,10 +75,56 @@ const PQM1_ALGO_TAG_MLDSA65: u8 = 1;
 /// PQM-1 v1 version byte.
 const PQM1_VERSION_V1: u8 = 1;
 
-/// Max body size accepted on send / receive (design spec: ≤4 KB).
+/// Max body size accepted on send / receive for CLUSTER channels
+/// (design spec: ≤4 KB).
 const MAX_BODY_BYTES: usize = 4096;
+/// Max body size for CEREMONY channels. One ML-DSA-65 consent signature
+/// is 3309 bytes = 6620 hex chars, so the cluster cap cannot carry a
+/// ceremony `consent` message; 12 KiB fits one consent sig + JSON
+/// framing. Enforced in LOCKSTEP on send (`chat_send_impl`) and on
+/// inbound verify (`verify_envelope`) — both call
+/// `max_body_bytes_for_kind` — or consents would silently drop.
+const CEREMONY_MAX_BODY_BYTES: usize = 12_288;
+/// Sentinel `cluster_id` for ceremony channels. NEVER 0 — `cluster-0`
+/// is a real cluster channel.
+const CEREMONY_SENTINEL_CLUSTER_ID: i64 = -1;
+/// Max hex chars accepted in a ceremony id (a 32-byte id is 64 chars).
+const CEREMONY_ID_MAX_HEX_CHARS: usize = 64;
 /// How many recent messages a `chat_get_messages` call returns.
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
+/// Roster-cache TTL for the membership gate. The gate is N+1 RPC calls
+/// per check; caching for ~30 s bounds inbound-gossip amplification
+/// while still tracking roster changes quickly.
+const ROSTER_CACHE_TTL: Duration = Duration::from_secs(30);
+/// Per-sender inbound token bucket: 10 messages per 10 seconds.
+const INBOUND_BUCKET_CAPACITY: f64 = 10.0;
+const INBOUND_BUCKET_REFILL_PER_SEC: f64 = 1.0;
+/// Cap on distinct senders tracked by the rate limiter before idle
+/// (full-bucket) entries are pruned.
+const INBOUND_BUCKET_MAX_SENDERS: usize = 4096;
+
+// ---- formCluster consent digest (mirrors mono-core) -----------------
+//
+// Byte-for-byte mirror of mono-core
+// `crates/economics/node-registry/src/cluster_form.rs::form_cluster_message`
+// (V1) and the planned V2 charter extension. A parity fixture digest is
+// pinned in the tests module (and the identical fixture is pinned on the
+// TS side in `src/sdk/chatTransport.test.ts` against
+// `clusterFormOps.formClusterConsentMessageHex`).
+const FORM_CLUSTER_CONSENT_DOMAIN_V1: &[u8] = b"PROTOCORE_NODE_REGISTRY_CLUSTER_FORM_V1\x00";
+const FORM_CLUSTER_CONSENT_DOMAIN_V2: &[u8] = b"PROTOCORE_NODE_REGISTRY_CLUSTER_FORM_V2\x00";
+const FORM_CLUSTER_ACTIVE_COUNT: u16 = 7;
+const FORM_CLUSTER_STANDBY_COUNT: u16 = 3;
+const FORM_CLUSTER_THRESHOLD: u16 = 7;
+/// ML-DSA-65 consensus pubkey length (SDK `NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES`).
+const CONSENSUS_PUBKEY_BYTES: usize = 1952;
+/// Fixed byte width of the V2 charter wire payload, mirroring mono-core
+/// `cluster_form.rs::CLUSTER_CHARTER_LEN`: 10×u16 BE `member_share_bps`
+/// ‖ u16 BE `delegator_share_bps` ‖ u64 BE `expires_ms`. The chain
+/// remains the authoritative validator of the charter's CONTENTS; the
+/// signer only enforces the shape so the operator can never be handed
+/// an arbitrary-length blob to bind into the digest.
+const FORM_CLUSTER_CHARTER_LEN: usize = 30;
 
 // ---- errors --------------------------------------------------------
 
@@ -94,16 +140,24 @@ pub enum ChatError {
     NotInitialized,
     #[error("chat: libp2p error: {0}")]
     Libp2p(String),
-    #[error("chat: message body exceeds {MAX_BODY_BYTES} bytes")]
-    BodyTooLarge,
+    #[error("chat: message body exceeds {0} bytes")]
+    BodyTooLarge(usize),
     #[error("chat: channel {0} is not subscribed for cluster {1}")]
     NotSubscribed(String, i64),
     #[error("chat: channel {0} does not match cluster {1}")]
     ChannelClusterMismatch(String, i64),
+    #[error("chat: unrecognized channel id {0}")]
+    UnknownChannel(String),
+    #[error("chat: invalid ceremony id: {0}")]
+    BadCeremonyId(String),
     #[error("chat: not a member of cluster {0}")]
     NotMember(i64),
+    #[error("chat: sender is not a registered operator")]
+    NotRegisteredOperator,
     #[error("chat: membership read failed: {0}")]
     Membership(String),
+    #[error("chat: invalid formCluster consent input: {0}")]
+    BadConsentInput(String),
     #[error("chat: io error: {0}")]
     Io(String),
 }
@@ -215,14 +269,30 @@ fn derive_address_hex(public_key_bytes: &[u8]) -> String {
 
 /// Verify an envelope's signature against its embedded public key, and
 /// confirm the derived address matches the claimed `sender_address`.
+/// The channel binding and the body cap are dispatched per channel
+/// KIND: cluster channels keep the original `cluster-{id}` ↔
+/// `cluster_id` binding byte-identically; ceremony channels require the
+/// sentinel `cluster_id == -1` and get the larger ceremony body cap.
 fn verify_envelope(env: &ChatEnvelope) -> bool {
     use fips204::traits::{SerDes, Verifier};
 
-    if env.body.len() > MAX_BODY_BYTES {
+    let Some(kind) = parse_channel_kind(&env.channel_id) else {
+        return false;
+    };
+    if env.body.len() > max_body_bytes_for_kind(&kind) {
         return false;
     }
-    if env.channel_id != channel_id_for_cluster(env.cluster_id) {
-        return false;
+    match kind {
+        ChannelKind::Cluster(cluster_id) => {
+            if env.cluster_id != cluster_id {
+                return false;
+            }
+        }
+        ChannelKind::Ceremony(_) => {
+            if env.cluster_id != CEREMONY_SENTINEL_CLUSTER_ID {
+                return false;
+            }
+        }
     }
     let Some(pk_bytes) = hex_to_bytes(&env.sender_pubkey_hex) else {
         return false;
@@ -350,7 +420,72 @@ pub fn channel_id_for_cluster(cluster_id: i64) -> String {
     format!("cluster-{cluster_id}")
 }
 
-/// gossipsub topic for a cluster channel.
+/// Channel id for a formCluster ceremony lobby: `ceremony-{hex}`. The
+/// id must already be normalized (`normalize_ceremony_id`).
+pub fn channel_id_for_ceremony(ceremony_id: &str) -> String {
+    format!("ceremony-{ceremony_id}")
+}
+
+/// Normalize a ceremony id: strip an optional `0x` prefix, lowercase,
+/// and require 1..=64 hex chars. Returns `None` when malformed.
+fn normalize_ceremony_id(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let stripped = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    let lower = stripped.to_lowercase();
+    if lower.is_empty()
+        || lower.len() > CEREMONY_ID_MAX_HEX_CHARS
+        || !lower.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(lower)
+}
+
+/// The two channel kinds the transport understands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ChannelKind {
+    /// `cluster-{id}` — gated on live cluster membership.
+    Cluster(i64),
+    /// `ceremony-{hex}` — gated on registered-operator status, with the
+    /// sentinel `cluster_id = -1` (never 0; `cluster-0` is real).
+    Ceremony(String),
+}
+
+/// Parse a channel id into its kind. Strict: a cluster id must
+/// round-trip through `channel_id_for_cluster` (rejecting `cluster-007`
+/// / `cluster-+1` / negative ids) and a ceremony id must be well-formed
+/// normalized hex.
+fn parse_channel_kind(channel_id: &str) -> Option<ChannelKind> {
+    if let Some(rest) = channel_id.strip_prefix("cluster-") {
+        let id: i64 = rest.parse().ok()?;
+        if id < 0 || channel_id != channel_id_for_cluster(id) {
+            return None;
+        }
+        return Some(ChannelKind::Cluster(id));
+    }
+    if let Some(rest) = channel_id.strip_prefix("ceremony-") {
+        let normalized = normalize_ceremony_id(rest)?;
+        if normalized != rest {
+            return None; // ids are stored normalized; reject aliases
+        }
+        return Some(ChannelKind::Ceremony(normalized));
+    }
+    None
+}
+
+/// Per-kind body cap. MUST stay in lockstep between the send path and
+/// the inbound verify path (both call this).
+fn max_body_bytes_for_kind(kind: &ChannelKind) -> usize {
+    match kind {
+        ChannelKind::Cluster(_) => MAX_BODY_BYTES,
+        ChannelKind::Ceremony(_) => CEREMONY_MAX_BODY_BYTES,
+    }
+}
+
+/// gossipsub topic for a channel.
 fn topic_for_channel(channel_id: &str) -> IdentTopic {
     IdentTopic::new(channel_id)
 }
@@ -363,7 +498,14 @@ fn topic_for_channel(channel_id: &str) -> IdentTopic {
 enum SwarmCommand {
     Subscribe(String),
     Unsubscribe(String),
-    Publish { channel_id: String, bytes: Vec<u8> },
+    Publish {
+        channel_id: String,
+        bytes: Vec<u8>,
+    },
+    /// Dial a peer after init. Bootstrap peers are dialed once at
+    /// spawn; ceremony lobbies of cluster-less strangers need post-init
+    /// dialing (`chat_dial_peers`) or they never mesh.
+    Dial(Multiaddr),
 }
 
 #[derive(Debug)]
@@ -539,11 +681,140 @@ async fn fetch_operator_chain_address_hex(
     })
 }
 
+/// One resolved roster entry: the operator id, its registered chain
+/// address (normalized hex), and the on-chain moniker when set. Cached
+/// by the membership gate and reused by `chat_get_member_monikers`.
+#[derive(Debug, Clone)]
+struct OperatorDirEntry {
+    operator_id: String,
+    chain_address_hex: String,
+    moniker: Option<String>,
+}
+
+/// Resolve one operator's `lyth_operatorInfo` to a directory entry
+/// (chainAddress + moniker) in a single RPC call. Fail-closed on any
+/// RPC or decoding error.
+async fn fetch_operator_directory_entry(
+    rpc_endpoint: &str,
+    operator_id: &str,
+) -> Result<OperatorDirEntry, ChatError> {
+    let value = rpc_json_result(
+        rpc_endpoint,
+        "lyth_operatorInfo",
+        serde_json::json!([operator_id]),
+    )
+    .await?;
+    let raw = value
+        .get("chainAddress")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            ChatError::Membership(format!(
+                "lyth_operatorInfo({operator_id}): missing chainAddress"
+            ))
+        })?;
+    let chain_address_hex = normalize_address_hex(raw).ok_or_else(|| {
+        ChatError::Membership(format!(
+            "lyth_operatorInfo({operator_id}): invalid chainAddress"
+        ))
+    })?;
+    let moniker = value
+        .get("moniker")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+    Ok(OperatorDirEntry {
+        operator_id: operator_id.to_string(),
+        chain_address_hex,
+        moniker,
+    })
+}
+
+/// Roster cache for the membership gate (~30 s TTL). The gate is N+1
+/// RPC calls per check, which would otherwise be an inbound-gossip DoS
+/// amplifier. Keyed by (endpoint, cluster_id) so tests against distinct
+/// mock endpoints never cross-pollute.
+struct RosterCache {
+    entries: std::sync::Mutex<
+        std::collections::HashMap<(String, i64), (std::time::Instant, Arc<Vec<OperatorDirEntry>>)>,
+    >,
+}
+
+impl RosterCache {
+    fn new() -> Self {
+        Self {
+            entries: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn get(
+        &self,
+        rpc_endpoint: &str,
+        cluster_id: i64,
+        now: std::time::Instant,
+        ttl: Duration,
+    ) -> Option<Arc<Vec<OperatorDirEntry>>> {
+        let entries = self.entries.lock().ok()?;
+        let (fetched_at, members) = entries.get(&(rpc_endpoint.to_string(), cluster_id))?;
+        if now.duration_since(*fetched_at) >= ttl {
+            return None;
+        }
+        Some(members.clone())
+    }
+
+    fn put(
+        &self,
+        rpc_endpoint: &str,
+        cluster_id: i64,
+        members: Arc<Vec<OperatorDirEntry>>,
+        now: std::time::Instant,
+    ) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.insert((rpc_endpoint.to_string(), cluster_id), (now, members));
+        }
+    }
+}
+
+fn roster_cache() -> &'static RosterCache {
+    static CACHE: std::sync::OnceLock<RosterCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(RosterCache::new)
+}
+
+/// Read the cluster's member directory (operator id + chainAddress +
+/// moniker), serving from the ~30 s roster cache when fresh. A cache
+/// MISS performs the full N+1 RPC walk; errors are never cached.
+async fn cluster_member_directory(
+    rpc_endpoint: &str,
+    cluster_id: i64,
+) -> Result<Arc<Vec<OperatorDirEntry>>, ChatError> {
+    if let Some(hit) = roster_cache().get(
+        rpc_endpoint,
+        cluster_id,
+        std::time::Instant::now(),
+        ROSTER_CACHE_TTL,
+    ) {
+        return Ok(hit);
+    }
+    let operator_ids = fetch_cluster_member_ids(rpc_endpoint, cluster_id).await?;
+    let mut members = Vec::with_capacity(operator_ids.len());
+    for operator_id in operator_ids {
+        members.push(fetch_operator_directory_entry(rpc_endpoint, &operator_id).await?);
+    }
+    let members = Arc::new(members);
+    roster_cache().put(
+        rpc_endpoint,
+        cluster_id,
+        members.clone(),
+        std::time::Instant::now(),
+    );
+    Ok(members)
+}
+
 /// Confirm the signed sender belongs to the active cluster. The roster
 /// read returns operator ids; each id is resolved through
 /// `lyth_operatorInfo.chainAddress` and compared to the signed address.
 /// Any RPC or decoding failure fails closed because chat membership is a
-/// security boundary.
+/// security boundary. Roster reads are served from the ~30 s cache.
 async fn assert_cluster_member(
     rpc_endpoint: &str,
     cluster_id: i64,
@@ -551,17 +822,120 @@ async fn assert_cluster_member(
 ) -> Result<(), ChatError> {
     let sender_hex =
         normalize_address_hex(sender_address).ok_or(ChatError::NotMember(cluster_id))?;
-    let operator_ids = fetch_cluster_member_ids(rpc_endpoint, cluster_id).await?;
-    if operator_ids.is_empty() {
+    let members = cluster_member_directory(rpc_endpoint, cluster_id).await?;
+    if members.is_empty() {
         return Err(ChatError::NotMember(cluster_id));
     }
-    for operator_id in operator_ids {
-        let chain_address = fetch_operator_chain_address_hex(rpc_endpoint, &operator_id).await?;
-        if normalize_hex(&chain_address) == normalize_hex(&sender_hex) {
+    for member in members.iter() {
+        if normalize_hex(&member.chain_address_hex) == normalize_hex(&sender_hex) {
             return Ok(());
         }
     }
     Err(ChatError::NotMember(cluster_id))
+}
+
+/// Ceremony-channel gate: confirm the signed sender is a REGISTERED
+/// operator. operator_id = BLAKE3(consensus pubkey) (mirrors the SDK's
+/// `operatorPubkeyHash`); the pubkey is already address-bound by
+/// `verify_envelope`, so resolving `lyth_operatorInfo(operator_id)` and
+/// comparing its chainAddress to the signed sender address proves the
+/// sender holds a live registry record. Fail-closed on any RPC error.
+/// NEVER gate via `lyth_listProviders` — mask=0 returns `[]`.
+async fn assert_registered_operator(
+    rpc_endpoint: &str,
+    sender_address: &str,
+    sender_pubkey_hex: &str,
+) -> Result<(), ChatError> {
+    let sender_hex =
+        normalize_address_hex(sender_address).ok_or(ChatError::NotRegisteredOperator)?;
+    let pk_bytes = hex_to_bytes(sender_pubkey_hex).ok_or(ChatError::NotRegisteredOperator)?;
+    if pk_bytes.len() != fips204::ml_dsa_65::PK_LEN {
+        return Err(ChatError::NotRegisteredOperator);
+    }
+    let operator_id = bytes_to_hex(blake3::hash(&pk_bytes).as_bytes());
+    let chain_address = fetch_operator_chain_address_hex(rpc_endpoint, &operator_id).await?;
+    if normalize_hex(&chain_address) == normalize_hex(&sender_hex) {
+        Ok(())
+    } else {
+        Err(ChatError::NotRegisteredOperator)
+    }
+}
+
+/// Kind-dispatched sender gate used by every gate site (inbound, send,
+/// re-subscribe). The cluster path calls `assert_cluster_member`
+/// unchanged; the ceremony path requires a registered operator.
+async fn assert_channel_sender_allowed(
+    rpc_endpoint: &str,
+    kind: &ChannelKind,
+    sender_address: &str,
+    sender_pubkey_hex: &str,
+) -> Result<(), ChatError> {
+    match kind {
+        ChannelKind::Cluster(cluster_id) => {
+            assert_cluster_member(rpc_endpoint, *cluster_id, sender_address).await
+        }
+        ChannelKind::Ceremony(_) => {
+            assert_registered_operator(rpc_endpoint, sender_address, sender_pubkey_hex).await
+        }
+    }
+}
+
+// ---- inbound rate limiting ------------------------------------------
+
+/// Per-sender token bucket (capacity 10, refill 1/s ⇒ 10 msgs / 10 s).
+/// Applied to inbound gossip BEFORE the membership RPC so a flood of
+/// signed envelopes cannot amplify into unbounded registry reads.
+struct SenderRateLimiter {
+    capacity: f64,
+    refill_per_sec: f64,
+    buckets: std::collections::HashMap<String, (f64, std::time::Instant)>,
+}
+
+impl SenderRateLimiter {
+    fn new(capacity: f64, refill_per_sec: f64) -> Self {
+        Self {
+            capacity,
+            refill_per_sec,
+            buckets: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Take one token for `sender` at time `now`. Returns false when
+    /// the bucket is empty (the message should be dropped).
+    fn allow_at(&mut self, sender: &str, now: std::time::Instant) -> bool {
+        if self.buckets.len() > INBOUND_BUCKET_MAX_SENDERS {
+            let capacity = self.capacity;
+            let refill_per_sec = self.refill_per_sec;
+            // Prune idle senders (bucket refilled to capacity).
+            self.buckets.retain(|_, (tokens, last)| {
+                *tokens + now.duration_since(*last).as_secs_f64() * refill_per_sec < capacity
+            });
+        }
+        let entry = self
+            .buckets
+            .entry(normalize_hex(sender))
+            .or_insert((self.capacity, now));
+        let elapsed = now.duration_since(entry.1).as_secs_f64();
+        entry.0 = (entry.0 + elapsed * self.refill_per_sec).min(self.capacity);
+        entry.1 = now;
+        if entry.0 >= 1.0 {
+            entry.0 -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn inbound_rate_limiter() -> &'static std::sync::Mutex<SenderRateLimiter> {
+    static LIMITER: std::sync::OnceLock<std::sync::Mutex<SenderRateLimiter>> =
+        std::sync::OnceLock::new();
+    LIMITER.get_or_init(|| {
+        std::sync::Mutex::new(SenderRateLimiter::new(
+            INBOUND_BUCKET_CAPACITY,
+            INBOUND_BUCKET_REFILL_PER_SEC,
+        ))
+    })
 }
 
 fn hex_to_address_20(s: &str) -> Option<[u8; 20]> {
@@ -653,6 +1027,11 @@ async fn spawn_swarm(
                                 // operator is the only node online; the
                                 // message is still persisted locally.
                                 log_warn(&format!("chat: publish to {channel_id} deferred: {e}"));
+                            }
+                        }
+                        Some(SwarmCommand::Dial(addr)) => {
+                            if let Err(e) = swarm.dial(addr.clone()) {
+                                log_warn(&format!("chat: dial {addr} failed: {e}"));
                             }
                         }
                         None => break, // sender dropped — manager torn down
@@ -760,9 +1139,35 @@ async fn handle_inbound(
     }
     drop(guard);
 
-    if let Err(e) = assert_cluster_member(&rpc_endpoint, env.cluster_id, &env.sender_address).await
+    // verify_envelope (inside the preflight) guarantees the channel id
+    // parses, but stay fail-closed if it somehow does not.
+    let Some(kind) = parse_channel_kind(&env.channel_id) else {
+        return;
+    };
+
+    // Token bucket BEFORE the membership RPC: a flood of validly-signed
+    // envelopes must not amplify into unbounded registry reads.
+    let allowed = inbound_rate_limiter()
+        .lock()
+        .map(|mut limiter| limiter.allow_at(&env.sender_address, std::time::Instant::now()))
+        .unwrap_or(false);
+    if !allowed {
+        log_warn(&format!(
+            "chat: rate-limited inbound from {}",
+            env.sender_address
+        ));
+        return;
+    }
+
+    if let Err(e) = assert_channel_sender_allowed(
+        &rpc_endpoint,
+        &kind,
+        &env.sender_address,
+        &env.sender_pubkey_hex,
+    )
+    .await
     {
-        log_warn(&format!("chat: dropped non-member message: {e}"));
+        log_warn(&format!("chat: dropped unauthorized message: {e}"));
         return;
     }
 
@@ -829,6 +1234,11 @@ fn emit_message(app: &AppHandle, channel_id: &str, record: &MessageRecord) {
     if let Err(e) = app.emit(&channel, record) {
         log_warn(&format!("chat: emit {channel} failed: {e}"));
     }
+    // Channel-agnostic firehose so app-level listeners (unread badges,
+    // notifications) hear every message without a per-channel listener.
+    if let Err(e) = app.emit("monarch://chat/any", record) {
+        log_warn(&format!("chat: emit monarch://chat/any failed: {e}"));
+    }
 }
 
 fn log_warn(msg: &str) {
@@ -867,6 +1277,123 @@ fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
         out.push(((hi << 4) | lo) as u8);
     }
     Some(out)
+}
+
+/// Encode a 20-byte operator address (hex) as the bech32m `mono1…`
+/// display form (ADR-0038: bech32m-only at display surfaces).
+fn address_hex_to_bech32m(address_hex: &str) -> Option<String> {
+    let bytes = hex_to_address_20(address_hex)?;
+    let hrp = bech32::Hrp::parse("mono").ok()?;
+    bech32::encode::<bech32::Bech32m>(hrp, &bytes).ok()
+}
+
+// ---- formCluster consent signing ------------------------------------
+
+/// Compute the formCluster roster-consent digest. Without a charter
+/// this is a byte-for-byte mirror of mono-core
+/// `cluster_form.rs::form_cluster_message` (domain V1); with a charter
+/// it uses the V2 domain and appends `len(charter) u32 BE ‖ charter`.
+fn form_cluster_consent_digest(
+    active_pubkeys: &[u8],
+    standby_pubkeys: &[u8],
+    charter: Option<&[u8]>,
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(match charter {
+        Some(_) => FORM_CLUSTER_CONSENT_DOMAIN_V2,
+        None => FORM_CLUSTER_CONSENT_DOMAIN_V1,
+    });
+    h.update(&FORM_CLUSTER_ACTIVE_COUNT.to_be_bytes());
+    h.update(&FORM_CLUSTER_STANDBY_COUNT.to_be_bytes());
+    h.update(&FORM_CLUSTER_THRESHOLD.to_be_bytes());
+    h.update(&(active_pubkeys.len() as u32).to_be_bytes());
+    h.update(active_pubkeys);
+    h.update(&(standby_pubkeys.len() as u32).to_be_bytes());
+    h.update(standby_pubkeys);
+    if let Some(charter) = charter {
+        h.update(&(charter.len() as u32).to_be_bytes());
+        h.update(charter);
+    }
+    h.finalize().into()
+}
+
+/// Parse + validate the consent inputs and derive the digest. Strict
+/// structural validation (7 + 3 ML-DSA-65 pubkeys, no duplicates) keeps
+/// this a CONSENT signer, not a blind-signing oracle: the digest is
+/// always BLAKE3 over a domain-separated, well-formed roster — the
+/// webview can never feed an arbitrary 32-byte digest to the key.
+fn build_form_cluster_consent_digest(
+    active_pubkeys_hex: &[String],
+    standby_pubkeys_hex: &[String],
+    charter_hex: Option<&str>,
+) -> Result<[u8; 32], ChatError> {
+    let parse_roster = |list: &[String], label: &str, expected: usize| {
+        if list.len() != expected {
+            return Err(ChatError::BadConsentInput(format!(
+                "{label}: expected {expected} pubkeys, got {}",
+                list.len()
+            )));
+        }
+        let mut concat = Vec::with_capacity(expected * CONSENSUS_PUBKEY_BYTES);
+        for (idx, entry) in list.iter().enumerate() {
+            let bytes = hex_to_bytes(entry).ok_or_else(|| {
+                ChatError::BadConsentInput(format!("{label}[{idx}]: invalid hex"))
+            })?;
+            if bytes.len() != CONSENSUS_PUBKEY_BYTES {
+                return Err(ChatError::BadConsentInput(format!(
+                    "{label}[{idx}]: expected {CONSENSUS_PUBKEY_BYTES} bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            concat.extend_from_slice(&bytes);
+        }
+        Ok(concat)
+    };
+    let active = parse_roster(
+        active_pubkeys_hex,
+        "activePubkeys",
+        FORM_CLUSTER_ACTIVE_COUNT as usize,
+    )?;
+    let standby = parse_roster(
+        standby_pubkeys_hex,
+        "standbyPubkeys",
+        FORM_CLUSTER_STANDBY_COUNT as usize,
+    )?;
+
+    // Reject duplicate roster entries (mirrors the chain + TS SDK).
+    let mut seen = HashSet::new();
+    for (idx, entry) in active_pubkeys_hex
+        .iter()
+        .chain(standby_pubkeys_hex.iter())
+        .enumerate()
+    {
+        if !seen.insert(normalize_hex(entry)) {
+            return Err(ChatError::BadConsentInput(format!(
+                "roster: duplicate pubkey at position {idx}"
+            )));
+        }
+    }
+
+    let charter_bytes = match charter_hex {
+        Some(raw) => {
+            let bytes = hex_to_bytes(raw)
+                .ok_or_else(|| ChatError::BadConsentInput("charter: invalid hex".to_string()))?;
+            if bytes.len() != FORM_CLUSTER_CHARTER_LEN {
+                return Err(ChatError::BadConsentInput(format!(
+                    "charter: expected exactly {FORM_CLUSTER_CHARTER_LEN} bytes, got {}",
+                    bytes.len()
+                )));
+            }
+            Some(bytes)
+        }
+        None => None,
+    };
+
+    Ok(form_cluster_consent_digest(
+        &active,
+        &standby,
+        charter_bytes.as_deref(),
+    ))
 }
 
 // ---- DTOs over the Tauri boundary ---------------------------------
@@ -960,23 +1487,30 @@ async fn chat_initialize_impl(
         spawn_swarm(app.clone(), (*state).clone(), identity.clone(), peers).await?;
 
     // Re-subscribe channels persisted as subscribed from a prior launch,
-    // but only after re-proving the local operator still belongs to the
-    // cluster. Stale local state never overrides the live registry.
+    // but only after re-proving the local operator is still allowed in
+    // (cluster channels: live membership; ceremony channels: registered
+    // operator). Stale local state never overrides the live registry.
     if let Ok(channels) = store.list_channels() {
         for ch in channels.iter().filter(|c| c.subscribed) {
-            match assert_cluster_member(
-                &resolved_rpc_endpoint,
-                ch.cluster_id,
-                identity.address_hex(),
-            )
-            .await
-            {
+            let gate = match parse_channel_kind(&ch.channel_id) {
+                Some(kind) => {
+                    assert_channel_sender_allowed(
+                        &resolved_rpc_endpoint,
+                        &kind,
+                        identity.address_hex(),
+                        &identity.public_key_hex(),
+                    )
+                    .await
+                }
+                None => Err(ChatError::UnknownChannel(ch.channel_id.clone())),
+            };
+            match gate {
                 Ok(()) => {
                     let _ = swarm_tx.send(SwarmCommand::Subscribe(ch.channel_id.clone()));
                 }
                 Err(e) => {
                     log_warn(&format!(
-                        "chat: not re-subscribing {} without membership proof: {e}",
+                        "chat: not re-subscribing {} without authorization proof: {e}",
                         ch.channel_id
                     ));
                     let _ = store.set_subscribed(&ch.channel_id, false);
@@ -1051,7 +1585,7 @@ async fn chat_subscribe_impl(
     name: Option<String>,
 ) -> Result<ChannelRecord, ChatError> {
     // Read the live membership / endpoint outside the manager lock.
-    let (rpc_endpoint, sender_address) = {
+    let (rpc_endpoint, sender_address, sender_pubkey_hex) = {
         let guard = state.lock().await;
         if !guard.initialized {
             return Err(ChatError::NotInitialized);
@@ -1060,9 +1594,18 @@ async fn chat_subscribe_impl(
         (
             guard.rpc_endpoint.clone(),
             identity.address_hex().to_string(),
+            identity.public_key_hex(),
         )
     };
-    assert_cluster_member(&rpc_endpoint, cluster_id, &sender_address).await?;
+    // Kind dispatch (trivially the cluster arm here) so every gate site
+    // goes through the same dispatcher.
+    assert_channel_sender_allowed(
+        &rpc_endpoint,
+        &ChannelKind::Cluster(cluster_id),
+        &sender_address,
+        &sender_pubkey_hex,
+    )
+    .await?;
 
     let channel_id = channel_id_for_cluster(cluster_id);
     let record = ChannelRecord {
@@ -1072,6 +1615,8 @@ async fn chat_subscribe_impl(
         kind: "cluster".to_string(),
         cluster_id,
         subscribed: true,
+        last_read_ts: 0,
+        unread_count: 0,
     };
 
     let guard = state.lock().await;
@@ -1081,6 +1626,239 @@ async fn chat_subscribe_impl(
         let _ = tx.send(SwarmCommand::Subscribe(channel_id));
     }
     Ok(record)
+}
+
+/// Join a CEREMONY channel: gate on the local operator being a
+/// registered operator (formers are cluster-less by definition), persist
+/// the channel row with the sentinel cluster_id = -1, and subscribe the
+/// gossipsub topic. `ceremony_id` is hex (an optional `0x` prefix is
+/// accepted and normalized away).
+#[tauri::command]
+pub async fn chat_subscribe_ceremony(
+    state: State<'_, ChatState>,
+    ceremony_id: String,
+    name: Option<String>,
+) -> Result<ChannelRecord, String> {
+    chat_subscribe_ceremony_impl(state, ceremony_id, name)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn chat_subscribe_ceremony_impl(
+    state: State<'_, ChatState>,
+    ceremony_id: String,
+    name: Option<String>,
+) -> Result<ChannelRecord, ChatError> {
+    let normalized =
+        normalize_ceremony_id(&ceremony_id).ok_or(ChatError::BadCeremonyId(ceremony_id))?;
+
+    // Read the live registration / endpoint outside the manager lock.
+    let (rpc_endpoint, sender_address, sender_pubkey_hex) = {
+        let guard = state.lock().await;
+        if !guard.initialized {
+            return Err(ChatError::NotInitialized);
+        }
+        let identity = guard.identity.as_ref().ok_or(ChatError::NotInitialized)?;
+        (
+            guard.rpc_endpoint.clone(),
+            identity.address_hex().to_string(),
+            identity.public_key_hex(),
+        )
+    };
+    assert_registered_operator(&rpc_endpoint, &sender_address, &sender_pubkey_hex).await?;
+
+    let channel_id = channel_id_for_ceremony(&normalized);
+    let short = &normalized[..normalized.len().min(8)];
+    let record = ChannelRecord {
+        channel_id: channel_id.clone(),
+        name: name.unwrap_or_else(|| format!("Ceremony {short}")),
+        sub: format!("{channel_id} · signed"),
+        kind: "ceremony".to_string(),
+        cluster_id: CEREMONY_SENTINEL_CLUSTER_ID,
+        subscribed: true,
+        last_read_ts: 0,
+        unread_count: 0,
+    };
+
+    let guard = state.lock().await;
+    let store = guard.store.as_ref().ok_or(ChatError::NotInitialized)?;
+    store.upsert_channel(&record)?;
+    if let Some(tx) = guard.swarm_tx.as_ref() {
+        let _ = tx.send(SwarmCommand::Subscribe(channel_id));
+    }
+    Ok(record)
+}
+
+/// Dial additional libp2p peers after init. Ceremony lobbies are made
+/// of cluster-less strangers whose multiaddrs are only discovered after
+/// the swarm has spawned; without post-init dialing the lobby never
+/// meshes. Returns the number of well-formed multiaddrs handed to the
+/// swarm (dial results are asynchronous and best-effort).
+#[tauri::command]
+pub async fn chat_dial_peers(
+    state: State<'_, ChatState>,
+    peers: Vec<String>,
+) -> Result<usize, String> {
+    let guard = state.lock().await;
+    if !guard.initialized {
+        return Err(ChatError::NotInitialized.to_string());
+    }
+    let tx = guard
+        .swarm_tx
+        .as_ref()
+        .ok_or(ChatError::NotInitialized)
+        .map_err(|e| e.to_string())?;
+    let mut dialed = 0usize;
+    for raw in peers {
+        match raw.trim().parse::<Multiaddr>() {
+            Ok(addr) => {
+                if tx.send(SwarmCommand::Dial(addr)).is_ok() {
+                    dialed += 1;
+                }
+            }
+            Err(e) => log_warn(&format!("chat: bad dial multiaddr {raw}: {e}")),
+        }
+    }
+    Ok(dialed)
+}
+
+/// Advance the read cursor for a channel (defaults to now). Unread
+/// counts are recomputed by the next `chat_get_channels` call.
+#[tauri::command]
+pub async fn chat_mark_read(
+    state: State<'_, ChatState>,
+    channel_id: String,
+    timestamp_ms: Option<i64>,
+) -> Result<(), String> {
+    let guard = state.lock().await;
+    let store = guard
+        .store
+        .as_ref()
+        .ok_or(ChatError::NotInitialized)
+        .map_err(|e| e.to_string())?;
+    store
+        .set_last_read(&channel_id, timestamp_ms.unwrap_or_else(now_ms))
+        .map_err(|e| ChatError::from(e).to_string())
+}
+
+/// One roster member's display identity for the chat UI. The address is
+/// bech32m (`mono1…`) — never raw hex — per ADR-0038.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemberMonikerRecord {
+    pub operator_id: String,
+    /// bech32m `mono1…` address (ADR-0038: no raw hex at display surfaces).
+    pub address: String,
+    pub moniker: Option<String>,
+}
+
+/// Member display identities (moniker + bech32m address) for a cluster
+/// channel, served from the membership gate's roster cache. Ceremony
+/// channels have no fixed roster — they return an empty list.
+#[tauri::command]
+pub async fn chat_get_member_monikers(
+    state: State<'_, ChatState>,
+    channel_id: String,
+) -> Result<Vec<MemberMonikerRecord>, String> {
+    let kind = parse_channel_kind(&channel_id)
+        .ok_or_else(|| ChatError::UnknownChannel(channel_id.clone()).to_string())?;
+    let cluster_id = match kind {
+        ChannelKind::Cluster(cluster_id) => cluster_id,
+        ChannelKind::Ceremony(_) => return Ok(Vec::new()),
+    };
+    let rpc_endpoint = {
+        let guard = state.lock().await;
+        if !guard.initialized {
+            return Err(ChatError::NotInitialized.to_string());
+        }
+        guard.rpc_endpoint.clone()
+    };
+    let members = cluster_member_directory(&rpc_endpoint, cluster_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(members.len());
+    for member in members.iter() {
+        let address = address_hex_to_bech32m(&member.chain_address_hex).ok_or_else(|| {
+            ChatError::Membership(format!(
+                "invalid chainAddress for operator {}",
+                member.operator_id
+            ))
+            .to_string()
+        })?;
+        out.push(MemberMonikerRecord {
+            operator_id: member.operator_id.clone(),
+            address,
+            moniker: member.moniker.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Result of `chat_sign_form_cluster_consent`.
+#[derive(Debug, Clone, Serialize)]
+pub struct FormClusterConsentSignature {
+    /// Hex BLAKE3 consent digest the signature covers (32 bytes).
+    pub digest_hex: String,
+    /// Hex ML-DSA-65 signature (3309 bytes) by the operator key.
+    pub signature_hex: String,
+}
+
+/// Sign a formCluster roster consent with the operator's key. The
+/// BLAKE3 consent digest is RE-DERIVED IN RUST from the structured
+/// roster inputs (mirroring mono-core `form_cluster_message`); the
+/// webview never supplies a raw digest. NEVER expose a generic
+/// sign-arbitrary-digest command — the consensus key is also the wallet
+/// key, so a raw-digest signer would be a blind-signing oracle.
+///
+/// `charter_hex` (optional) switches the digest to the V2 domain and
+/// appends the length-prefixed charter bytes.
+#[tauri::command]
+pub async fn chat_sign_form_cluster_consent(
+    state: State<'_, ChatState>,
+    active_pubkeys_hex: Vec<String>,
+    standby_pubkeys_hex: Vec<String>,
+    charter_hex: Option<String>,
+) -> Result<FormClusterConsentSignature, String> {
+    chat_sign_form_cluster_consent_impl(state, active_pubkeys_hex, standby_pubkeys_hex, charter_hex)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn chat_sign_form_cluster_consent_impl(
+    state: State<'_, ChatState>,
+    active_pubkeys_hex: Vec<String>,
+    standby_pubkeys_hex: Vec<String>,
+    charter_hex: Option<String>,
+) -> Result<FormClusterConsentSignature, ChatError> {
+    let digest = build_form_cluster_consent_digest(
+        &active_pubkeys_hex,
+        &standby_pubkeys_hex,
+        charter_hex.as_deref(),
+    )?;
+
+    // Prefer the already-derived chat identity; fall back to a one-shot
+    // keychain derivation so the ceremony view works even before
+    // chat_initialize has run.
+    let identity = {
+        let guard = state.lock().await;
+        guard.identity.clone()
+    };
+    let identity = match identity {
+        Some(identity) => identity,
+        None => {
+            let mnemonic = match keychain::read_credential(OPERATOR_MNEMONIC_ACCOUNT) {
+                Ok(m) => Zeroizing::new(m),
+                Err(keychain::KeychainError::NotFound) => return Err(ChatError::MissingMnemonic),
+                Err(e) => return Err(ChatError::BadMnemonic(e.to_string())),
+            };
+            Arc::new(ChatIdentity::from_mnemonic(&mnemonic)?)
+        }
+    };
+
+    let signature = identity.sign(&digest)?;
+    Ok(FormClusterConsentSignature {
+        digest_hex: bytes_to_hex(&digest),
+        signature_hex: bytes_to_hex(&signature),
+    })
 }
 
 #[tauri::command]
@@ -1126,11 +1904,28 @@ async fn chat_send_impl(
     cluster_id: i64,
     body: String,
 ) -> Result<MessageRecord, ChatError> {
-    if body.len() > MAX_BODY_BYTES {
-        return Err(ChatError::BodyTooLarge);
+    let kind = parse_channel_kind(&channel_id)
+        .ok_or_else(|| ChatError::UnknownChannel(channel_id.clone()))?;
+    // Channel ↔ cluster_id binding, by kind: cluster channels bind to
+    // their numeric id (unchanged); ceremony channels bind to the -1
+    // sentinel.
+    match &kind {
+        ChannelKind::Cluster(channel_cluster_id) => {
+            if cluster_id != *channel_cluster_id {
+                return Err(ChatError::ChannelClusterMismatch(channel_id, cluster_id));
+            }
+        }
+        ChannelKind::Ceremony(_) => {
+            if cluster_id != CEREMONY_SENTINEL_CLUSTER_ID {
+                return Err(ChatError::ChannelClusterMismatch(channel_id, cluster_id));
+            }
+        }
     }
-    if channel_id != channel_id_for_cluster(cluster_id) {
-        return Err(ChatError::ChannelClusterMismatch(channel_id, cluster_id));
+    // Per-kind body cap — in LOCKSTEP with the inbound verify path
+    // (`verify_envelope` calls the same helper).
+    let max_body = max_body_bytes_for_kind(&kind);
+    if body.len() > max_body {
+        return Err(ChatError::BodyTooLarge(max_body));
     }
 
     let (identity, rpc_endpoint) = {
@@ -1144,9 +1939,15 @@ async fn chat_send_impl(
         )
     };
 
-    // Live membership gate (don't post to a cluster unless the sender
-    // address is in the active roster).
-    assert_cluster_member(&rpc_endpoint, cluster_id, identity.address_hex()).await?;
+    // Live sender gate, by kind: cluster channels require active
+    // roster membership; ceremony channels require a registered operator.
+    assert_channel_sender_allowed(
+        &rpc_endpoint,
+        &kind,
+        identity.address_hex(),
+        &identity.public_key_hex(),
+    )
+    .await?;
 
     {
         let guard = state.lock().await;
@@ -1318,14 +2119,34 @@ mod tests {
             kind: "cluster".to_string(),
             cluster_id,
             subscribed,
+            last_read_ts: 0,
+            unread_count: 0,
         }
     }
 
-    fn signed_envelope(id: &ChatIdentity, body: &str) -> ChatEnvelope {
+    fn sample_ceremony_channel(ceremony_id: &str, subscribed: bool) -> ChannelRecord {
+        ChannelRecord {
+            channel_id: channel_id_for_ceremony(ceremony_id),
+            name: format!("Ceremony {ceremony_id}"),
+            sub: format!("ceremony-{ceremony_id} · signed"),
+            kind: "ceremony".to_string(),
+            cluster_id: CEREMONY_SENTINEL_CLUSTER_ID,
+            subscribed,
+            last_read_ts: 0,
+            unread_count: 0,
+        }
+    }
+
+    fn signed_envelope_in(
+        id: &ChatIdentity,
+        channel_id: &str,
+        cluster_id: i64,
+        body: &str,
+    ) -> ChatEnvelope {
         let mut env = ChatEnvelope {
             msg_id: String::new(),
-            channel_id: "cluster-1".to_string(),
-            cluster_id: 1,
+            channel_id: channel_id.to_string(),
+            cluster_id,
             sender_address: id.address_hex().to_string(),
             sender_pubkey_hex: id.public_key_hex(),
             timestamp_ms: 1_700_000_000_000,
@@ -1339,16 +2160,22 @@ mod tests {
         env
     }
 
+    fn signed_envelope(id: &ChatIdentity, body: &str) -> ChatEnvelope {
+        signed_envelope_in(id, "cluster-1", 1, body)
+    }
+
+    /// Mock node-registry RPC. `operators` rows are
+    /// `(operator_id, chain_address, optional moniker)`; `operator_ids`
+    /// is the cluster roster served by `lyth_clusterStatus`.
     async fn spawn_membership_rpc(
-        operator_ids: Vec<&'static str>,
-        chain_addresses: Vec<(&'static str, &'static str)>,
+        operator_ids: Vec<String>,
+        operators: Vec<(String, String, Option<String>)>,
     ) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let operator_ids: Vec<String> = operator_ids.into_iter().map(ToOwned::to_owned).collect();
-        let chain_addresses: HashMap<String, String> = chain_addresses
+        let chain_addresses: HashMap<String, (String, Option<String>)> = operators
             .into_iter()
-            .map(|(id, address)| (id.to_string(), address.to_string()))
+            .map(|(id, address, moniker)| (id, (address, moniker)))
             .collect();
 
         tokio::spawn(async move {
@@ -1381,13 +2208,14 @@ mod tests {
                     }),
                     "lyth_operatorInfo" => {
                         let operator_id = params.first().and_then(|v| v.as_str()).unwrap_or("");
-                        if let Some(chain_address) = chain_addresses.get(operator_id) {
+                        if let Some((chain_address, moniker)) = chain_addresses.get(operator_id) {
                             serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
                                 "result": {
                                     "operatorId": operator_id,
-                                    "chainAddress": chain_address
+                                    "chainAddress": chain_address,
+                                    "moniker": moniker
                                 }
                             })
                         } else {
@@ -1541,10 +2369,11 @@ mod tests {
     #[tokio::test]
     async fn cluster_membership_proves_sender_via_operator_info() {
         let endpoint = spawn_membership_rpc(
-            vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()],
             vec![(
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4".to_string(),
+                None,
             )],
         )
         .await;
@@ -1557,10 +2386,11 @@ mod tests {
     #[tokio::test]
     async fn cluster_membership_rejects_sender_without_roster_match() {
         let endpoint = spawn_membership_rpc(
-            vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()],
             vec![(
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "0x123456789abcdef0112233445566778899aabbcc",
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "0x123456789abcdef0112233445566778899aabbcc".to_string(),
+                None,
             )],
         )
         .await;
@@ -1569,6 +2399,132 @@ mod tests {
             assert_cluster_member(&endpoint, 42, "0xffffffffffffffffffffffffffffffffffffffff",)
                 .await,
             Err(ChatError::NotMember(42))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cluster_member_directory_serves_monikers_from_one_fetch() {
+        let endpoint = spawn_membership_rpc(
+            vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()],
+            vec![(
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "0x123456789abcdef0112233445566778899aabbcc".to_string(),
+                Some("atlas-node".to_string()),
+            )],
+        )
+        .await;
+
+        let members = cluster_member_directory(&endpoint, 7).await.unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].moniker.as_deref(), Some("atlas-node"));
+        assert_eq!(
+            members[0].chain_address_hex,
+            "0x123456789abcdef0112233445566778899aabbcc"
+        );
+
+        // Second read is served from the roster cache (same endpoint).
+        let cached = cluster_member_directory(&endpoint, 7).await.unwrap();
+        assert_eq!(cached.len(), 1);
+    }
+
+    /// Registered-operator gate: operator_id = blake3(pubkey), resolved
+    /// through lyth_operatorInfo, chainAddress must equal the signed
+    /// sender address.
+    #[tokio::test]
+    async fn registered_operator_gate_accepts_matching_registration() {
+        let id = make_identity();
+        let pk_bytes = hex_to_bytes(&id.public_key_hex()).unwrap();
+        let operator_id = bytes_to_hex(blake3::hash(&pk_bytes).as_bytes());
+        let endpoint = spawn_membership_rpc(
+            vec![],
+            vec![(operator_id, id.address_hex().to_string(), None)],
+        )
+        .await;
+
+        assert_registered_operator(&endpoint, id.address_hex(), &id.public_key_hex())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn registered_operator_gate_rejects_address_mismatch() {
+        let id = make_identity();
+        let pk_bytes = hex_to_bytes(&id.public_key_hex()).unwrap();
+        let operator_id = bytes_to_hex(blake3::hash(&pk_bytes).as_bytes());
+        // Registry record exists but is owned by a DIFFERENT address.
+        let endpoint = spawn_membership_rpc(
+            vec![],
+            vec![(
+                operator_id,
+                "0xffffffffffffffffffffffffffffffffffffffff".to_string(),
+                None,
+            )],
+        )
+        .await;
+
+        assert!(matches!(
+            assert_registered_operator(&endpoint, id.address_hex(), &id.public_key_hex()).await,
+            Err(ChatError::NotRegisteredOperator)
+        ));
+    }
+
+    #[tokio::test]
+    async fn registered_operator_gate_fails_closed_when_unregistered() {
+        let id = make_identity();
+        // Empty registry: lyth_operatorInfo errors → fail closed.
+        let endpoint = spawn_membership_rpc(vec![], vec![]).await;
+
+        assert!(matches!(
+            assert_registered_operator(&endpoint, id.address_hex(), &id.public_key_hex()).await,
+            Err(ChatError::Membership(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn registered_operator_gate_rejects_malformed_pubkey() {
+        let endpoint = spawn_membership_rpc(vec![], vec![]).await;
+        assert!(matches!(
+            assert_registered_operator(
+                &endpoint,
+                "0x123456789abcdef0112233445566778899aabbcc",
+                "0xdeadbeef",
+            )
+            .await,
+            Err(ChatError::NotRegisteredOperator)
+        ));
+    }
+
+    /// The kind dispatch routes ceremony channels through the
+    /// registered-operator gate (no lyth_clusterStatus involved) and
+    /// cluster channels through the membership gate.
+    #[tokio::test]
+    async fn gate_dispatch_routes_by_channel_kind() {
+        let id = make_identity();
+        let pk_bytes = hex_to_bytes(&id.public_key_hex()).unwrap();
+        let operator_id = bytes_to_hex(blake3::hash(&pk_bytes).as_bytes());
+        // Registered operator, but NOT a member of any cluster (the
+        // mock's roster is empty).
+        let endpoint = spawn_membership_rpc(
+            vec![],
+            vec![(operator_id, id.address_hex().to_string(), None)],
+        )
+        .await;
+
+        let ceremony = ChannelKind::Ceremony("abc123".to_string());
+        assert_channel_sender_allowed(&endpoint, &ceremony, id.address_hex(), &id.public_key_hex())
+            .await
+            .unwrap();
+
+        let cluster = ChannelKind::Cluster(9);
+        assert!(matches!(
+            assert_channel_sender_allowed(
+                &endpoint,
+                &cluster,
+                id.address_hex(),
+                &id.public_key_hex(),
+            )
+            .await,
+            Err(ChatError::NotMember(9))
         ));
     }
 
@@ -1670,6 +2626,331 @@ mod tests {
             .messages_for_channel("cluster-1", 10)
             .unwrap()
             .is_empty());
+    }
+
+    // ---- channel kinds (ceremony vs cluster) ------------------------
+
+    fn signed_ceremony_envelope(id: &ChatIdentity, ceremony_id: &str, body: &str) -> ChatEnvelope {
+        signed_envelope_in(
+            id,
+            &channel_id_for_ceremony(ceremony_id),
+            CEREMONY_SENTINEL_CLUSTER_ID,
+            body,
+        )
+    }
+
+    #[test]
+    fn parse_channel_kind_dispatches_cluster_and_ceremony() {
+        assert_eq!(
+            parse_channel_kind("cluster-0"),
+            Some(ChannelKind::Cluster(0))
+        );
+        assert_eq!(
+            parse_channel_kind("cluster-42"),
+            Some(ChannelKind::Cluster(42))
+        );
+        assert_eq!(
+            parse_channel_kind("ceremony-abc123"),
+            Some(ChannelKind::Ceremony("abc123".to_string()))
+        );
+        // Strict round-trips only: no negatives, padding, signs, or
+        // non-normalized ceremony ids (aliases would split gossip topics).
+        assert_eq!(parse_channel_kind("cluster--1"), None);
+        assert_eq!(parse_channel_kind("cluster-007"), None);
+        assert_eq!(parse_channel_kind("cluster-+1"), None);
+        assert_eq!(parse_channel_kind("ceremony-"), None);
+        assert_eq!(parse_channel_kind("ceremony-ABC123"), None);
+        assert_eq!(parse_channel_kind("ceremony-0xabc123"), None);
+        assert_eq!(
+            parse_channel_kind(&format!("ceremony-{}", "a".repeat(65))),
+            None
+        );
+        assert_eq!(parse_channel_kind("dm-1"), None);
+        assert_eq!(parse_channel_kind(""), None);
+    }
+
+    #[test]
+    fn normalize_ceremony_id_strips_prefix_and_lowercases() {
+        assert_eq!(normalize_ceremony_id("0xAbC123").as_deref(), Some("abc123"));
+        assert_eq!(normalize_ceremony_id("  fee1  ").as_deref(), Some("fee1"));
+        let max = "a".repeat(CEREMONY_ID_MAX_HEX_CHARS);
+        assert_eq!(normalize_ceremony_id(&max).as_deref(), Some(max.as_str()));
+        assert!(normalize_ceremony_id("").is_none());
+        assert!(normalize_ceremony_id("0x").is_none());
+        assert!(normalize_ceremony_id("xyz").is_none()); // non-hex
+        assert!(normalize_ceremony_id(&"a".repeat(CEREMONY_ID_MAX_HEX_CHARS + 1)).is_none());
+    }
+
+    #[test]
+    fn verify_accepts_ceremony_envelope_with_sentinel() {
+        let id = make_identity();
+        let env = signed_ceremony_envelope(&id, "abc123", "hello formers");
+        assert!(verify_envelope(&env));
+    }
+
+    #[test]
+    fn verify_rejects_ceremony_envelope_without_sentinel() {
+        let id = make_identity();
+        // cluster_id 0 is a REAL cluster — it must never bind to a
+        // ceremony channel (and any non-sentinel id is rejected).
+        for cluster_id in [0, 1, 7] {
+            let env = signed_envelope_in(&id, "ceremony-abc123", cluster_id, "wrong binding");
+            assert!(
+                !verify_envelope(&env),
+                "cluster_id {cluster_id} must not bind"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_rejects_unknown_channel_prefix() {
+        let id = make_identity();
+        let env = signed_envelope_in(&id, "dm-1", 1, "no such kind");
+        assert!(!verify_envelope(&env));
+    }
+
+    /// Per-kind body caps stay in LOCKSTEP between send and inbound
+    /// verify (both call `max_body_bytes_for_kind`): a consent-sized
+    /// ceremony body passes, a >12 KiB ceremony body drops, and the
+    /// cluster cap stays at the original 4 KiB.
+    #[test]
+    fn body_caps_dispatch_by_kind_in_lockstep() {
+        let id = make_identity();
+        let consent_sized = "c".repeat(MAX_BODY_BYTES + 1);
+        assert!(verify_envelope(&signed_ceremony_envelope(
+            &id,
+            "abc123",
+            &consent_sized
+        )));
+        let at_cap = "c".repeat(CEREMONY_MAX_BODY_BYTES);
+        assert!(verify_envelope(&signed_ceremony_envelope(
+            &id, "abc123", &at_cap
+        )));
+        let too_big = "c".repeat(CEREMONY_MAX_BODY_BYTES + 1);
+        assert!(!verify_envelope(&signed_ceremony_envelope(
+            &id, "abc123", &too_big
+        )));
+        // Cluster channels keep the original cap byte-identically.
+        assert!(!verify_envelope(&signed_envelope(&id, &consent_sized)));
+        assert_eq!(
+            max_body_bytes_for_kind(&ChannelKind::Cluster(1)),
+            MAX_BODY_BYTES
+        );
+        assert_eq!(
+            max_body_bytes_for_kind(&ChannelKind::Ceremony("abc123".to_string())),
+            CEREMONY_MAX_BODY_BYTES
+        );
+    }
+
+    #[test]
+    fn inbound_accepts_ceremony_message_for_subscribed_channel() {
+        let local = make_identity();
+        let remote = make_identity_variant(19);
+        let store = ChatStore::open_in_memory().unwrap();
+        store
+            .upsert_channel(&sample_ceremony_channel("abc123", true))
+            .unwrap();
+
+        let env = signed_ceremony_envelope(&remote, "abc123", "{\"v\":1,\"t\":\"propose\"}");
+        let result = accept_inbound_envelope(&store, local.address_hex(), env).unwrap();
+
+        let InboundAccept::Accepted(record) = result else {
+            panic!("expected ceremony envelope to be accepted");
+        };
+        assert_eq!(record.channel_id, "ceremony-abc123");
+        assert_eq!(record.cluster_id, CEREMONY_SENTINEL_CLUSTER_ID);
+        assert!(record.verified);
+        assert_eq!(
+            store
+                .messages_for_channel("ceremony-abc123", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn inbound_ignores_unsubscribed_ceremony_channel() {
+        let local = make_identity();
+        let remote = make_identity_variant(19);
+        let store = ChatStore::open_in_memory().unwrap();
+        store
+            .upsert_channel(&sample_ceremony_channel("abc123", false))
+            .unwrap();
+
+        let env = signed_ceremony_envelope(&remote, "abc123", "late joiner");
+        assert!(matches!(
+            accept_inbound_envelope(&store, local.address_hex(), env).unwrap(),
+            InboundAccept::Ignored
+        ));
+        assert!(store
+            .messages_for_channel("ceremony-abc123", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    // ---- inbound rate limiting ---------------------------------------
+
+    #[test]
+    fn rate_limiter_allows_burst_then_drops_and_refills() {
+        let mut limiter =
+            SenderRateLimiter::new(INBOUND_BUCKET_CAPACITY, INBOUND_BUCKET_REFILL_PER_SEC);
+        let t0 = std::time::Instant::now();
+        for n in 0..10 {
+            assert!(limiter.allow_at("0xAA", t0), "message {n} within the burst");
+        }
+        assert!(
+            !limiter.allow_at("0xAA", t0),
+            "11th message in the window must drop"
+        );
+        // Other senders are unaffected.
+        assert!(limiter.allow_at("0xBB", t0));
+        // Two seconds later two tokens have refilled (1 token/s).
+        let t2 = t0 + Duration::from_secs(2);
+        assert!(limiter.allow_at("0xAA", t2));
+        assert!(limiter.allow_at("0xAA", t2));
+        assert!(!limiter.allow_at("0xAA", t2));
+        // Sender keys are normalized — case aliases share one bucket.
+        assert!(!limiter.allow_at("0xaa", t2));
+    }
+
+    // ---- formCluster consent digest (mono-core parity) -----------------
+
+    fn fixture_roster_hex() -> (Vec<String>, Vec<String>) {
+        let active = (0u8..7)
+            .map(|i| bytes_to_hex(&vec![0x10 + i; CONSENSUS_PUBKEY_BYTES]))
+            .collect();
+        let standby = (0u8..3)
+            .map(|j| bytes_to_hex(&vec![0x20 + j; CONSENSUS_PUBKEY_BYTES]))
+            .collect();
+        (active, standby)
+    }
+
+    /// 30-byte charter wire fixture: 10×u16 BE shares of 1,000 bps
+    /// (sum 10,000) ‖ u16 BE delegator 5,000 bps ‖ u64 BE
+    /// expires_ms = 1,750,000,000,000.
+    const FIXTURE_CHARTER_HEX: &str =
+        "0x03e803e803e803e803e803e803e803e803e803e81388000001977420dc00";
+
+    /// PARITY FIXTURE — pins the Rust consent digest to mono-core
+    /// `cluster_form.rs::form_cluster_message` (V1) and
+    /// `form_cluster_message_v2` (V2 = V1 layout + fresh domain +
+    /// `len(charter) u32 BE ‖ charter`). The identical fixture digests
+    /// are pinned on the TS side in `src/sdk/chatTransport.test.ts`,
+    /// where V1 is additionally cross-checked against
+    /// `clusterFormOps.formClusterConsentMessageHex`. The expected
+    /// values were computed with an independent implementation of the
+    /// mono-core byte layout (@noble/hashes blake3 in Node).
+    #[test]
+    fn consent_digest_matches_mono_core_parity_fixture() {
+        let (active, standby) = fixture_roster_hex();
+        let v1 = build_form_cluster_consent_digest(&active, &standby, None).unwrap();
+        assert_eq!(
+            bytes_to_hex(&v1),
+            "0xf73436fbf014fea20304103fe1d48d2f0120f08f9ac64ed76fb27381f7752507",
+            "V1 digest must match mono-core form_cluster_message"
+        );
+        let v2 = build_form_cluster_consent_digest(&active, &standby, Some(FIXTURE_CHARTER_HEX))
+            .unwrap();
+        assert_eq!(
+            bytes_to_hex(&v2),
+            "0xbfcfc213e135d53b9ff4ccfea08e2f5bc5ec7e8f2e1e4cff8ea0838d1f868029",
+            "V2 digest must match mono-core form_cluster_message_v2"
+        );
+        // Domain separation: a V1 consent can never replay as V2.
+        assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn consent_digest_rejects_malformed_input() {
+        let (active, standby) = fixture_roster_hex();
+
+        // Wrong roster counts.
+        let six = active[..6].to_vec();
+        assert!(matches!(
+            build_form_cluster_consent_digest(&six, &standby, None),
+            Err(ChatError::BadConsentInput(_))
+        ));
+
+        // Wrong pubkey length.
+        let mut short = active.clone();
+        short[0] = "0xdeadbeef".to_string();
+        assert!(matches!(
+            build_form_cluster_consent_digest(&short, &standby, None),
+            Err(ChatError::BadConsentInput(_))
+        ));
+
+        // Non-hex pubkey.
+        let mut bad_hex = active.clone();
+        bad_hex[0] = format!("0x{}", "zz".repeat(CONSENSUS_PUBKEY_BYTES));
+        assert!(matches!(
+            build_form_cluster_consent_digest(&bad_hex, &standby, None),
+            Err(ChatError::BadConsentInput(_))
+        ));
+
+        // Duplicate roster entry (mirrors the chain + TS SDK).
+        let mut dup = active.clone();
+        dup[1] = dup[0].clone();
+        assert!(matches!(
+            build_form_cluster_consent_digest(&dup, &standby, None),
+            Err(ChatError::BadConsentInput(_))
+        ));
+
+        // Charter must be exactly the 30-byte wire payload.
+        assert!(matches!(
+            build_form_cluster_consent_digest(&active, &standby, Some("0x0102")),
+            Err(ChatError::BadConsentInput(_))
+        ));
+        assert!(matches!(
+            build_form_cluster_consent_digest(&active, &standby, Some("0xzz")),
+            Err(ChatError::BadConsentInput(_))
+        ));
+        // Empty charter must be Some-rejected, not silently treated as V1.
+        assert!(matches!(
+            build_form_cluster_consent_digest(&active, &standby, Some("")),
+            Err(ChatError::BadConsentInput(_))
+        ));
+    }
+
+    /// The signature produced over the derived digest verifies under the
+    /// operator's ML-DSA-65 pubkey — i.e. exactly what the chain's
+    /// `verify_member_consent` will check at formCluster execution.
+    #[test]
+    fn consent_signature_verifies_over_the_derived_digest() {
+        use fips204::traits::{SerDes, Verifier};
+
+        let id = make_identity();
+        let (active, standby) = fixture_roster_hex();
+        let digest = build_form_cluster_consent_digest(&active, &standby, None).unwrap();
+        let sig = id.sign(&digest).unwrap();
+        assert_eq!(sig.len(), fips204::ml_dsa_65::SIG_LEN);
+
+        let pk_arr: [u8; fips204::ml_dsa_65::PK_LEN] =
+            id.public_key_bytes.clone().try_into().unwrap();
+        let pk = fips204::ml_dsa_65::PublicKey::try_from_bytes(pk_arr).unwrap();
+        let sig_arr: [u8; fips204::ml_dsa_65::SIG_LEN] = sig.try_into().unwrap();
+        assert!(pk.verify(&digest, &sig_arr, &[]));
+
+        // A different roster yields a different digest → sig won't verify.
+        let (mut other_active, _) = fixture_roster_hex();
+        other_active[0] = bytes_to_hex(&vec![0x77; CONSENSUS_PUBKEY_BYTES]);
+        let other = build_form_cluster_consent_digest(&other_active, &standby, None).unwrap();
+        assert!(!pk.verify(&other, &sig_arr, &[]));
+    }
+
+    // ---- display addresses ---------------------------------------------
+
+    #[test]
+    fn member_moniker_addresses_render_bech32m() {
+        // Round-trips the pinned hex ↔ mono1 vector used by
+        // normalize_address_hex (ADR-0038: bech32m-only display).
+        let bech = address_hex_to_bech32m("0x123456789abcdef0112233445566778899aabbcc").unwrap();
+        assert_eq!(bech, "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4");
+        assert_eq!(
+            normalize_address_hex(&bech).unwrap(),
+            "0x123456789abcdef0112233445566778899aabbcc"
+        );
+        assert!(address_hex_to_bech32m("0x1234").is_none());
     }
 
     async fn wait_for_listen_addr(swarm: &mut Swarm<gossipsub::Behaviour>) -> Multiaddr {

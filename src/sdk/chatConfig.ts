@@ -137,6 +137,37 @@ export async function discoverClusterChatBootstrapPeers(
   return dedupePeers(rows.flat()).filter(isChatBootstrapPeer);
 }
 
+export type DiscoverOperatorChatBootstrapPeersOptions = {
+  endpoint?: string;
+  client?: ChatPeerDiscoveryClient;
+};
+
+/**
+ * Operator-keyed sibling of `discoverClusterChatBootstrapPeers` for
+ * ceremony lobbies: the participants are cluster-less by definition, so
+ * peers are discovered straight from each operator id's
+ * `lyth_getOperatorNetworkMetadata` (skipping the `lyth_clusterStatus`
+ * roster walk). Precondition: each participant must have published
+ * their multiaddrs on-chain via the registration-gated
+ * `setChatBootstrapPeers` — surface that as a ceremony checklist step.
+ */
+export async function discoverOperatorChatBootstrapPeers(
+  operatorIds: readonly string[],
+  options: DiscoverOperatorChatBootstrapPeersOptions = {},
+): Promise<string[]> {
+  if (operatorIds.length === 0) return [];
+  const client = options.client ?? clientForEndpoint(options.endpoint);
+
+  const rows = await Promise.all(
+    operatorIds.map((operatorId) =>
+      client.lythGetOperatorNetworkMetadata(operatorId)
+        .then(extractChatBootstrapPeersFromOperatorMetadata)
+        .catch(() => []),
+    ),
+  );
+  return dedupePeers(rows.flat()).filter(isChatBootstrapPeer);
+}
+
 export async function resolveChatBootstrapPeersForCluster(
   options: ResolveClusterChatBootstrapPeersOptions = {},
 ): Promise<string[]> {

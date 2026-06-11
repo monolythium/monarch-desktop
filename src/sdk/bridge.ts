@@ -19,7 +19,13 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
-import type { ChatChannel, ChatInitResult, ChatMessage } from "./chat";
+import type {
+  ChatChannel,
+  ChatFormClusterConsentSignature,
+  ChatInitResult,
+  ChatMemberMoniker,
+  ChatMessage,
+} from "./chat";
 import { recordE2eCommand } from "./e2eRecorder";
 
 // ---- environment helpers ------------------------------------------
@@ -715,7 +721,13 @@ export async function listenAskStream(
 // Deferred beyond the current cluster-channel release: DMs, challenge-sign
 // login, backfill, attachments, reactions, and E2E encryption.
 
-export type { ChatChannel, ChatInitResult, ChatMessage } from "./chat";
+export type {
+  ChatChannel,
+  ChatFormClusterConsentSignature,
+  ChatInitResult,
+  ChatMemberMoniker,
+  ChatMessage,
+} from "./chat";
 
 /**
  * Initialize the chat subsystem on app mount. Derives the operator
@@ -776,9 +788,104 @@ export async function chatSubscribeChannel(args: {
   });
 }
 
+/**
+ * Join a formCluster CEREMONY lobby channel. Gated Rust-side on the
+ * local operator holding a live registry record (formers are
+ * cluster-less by definition — never cluster-membership-gated). The
+ * returned channel carries `kind: "ceremony"` and the sentinel
+ * `cluster_id: -1`. `ceremonyId` is hex (optional `0x` prefix accepted).
+ */
+export async function chatSubscribeCeremony(args: {
+  ceremonyId: string;
+  name?: string;
+}): Promise<ChatChannel> {
+  if (!inTauri()) {
+    throw new Error("chat_subscribe_ceremony unavailable — running outside Tauri");
+  }
+  recordE2eCommand("chat_subscribe_ceremony");
+  return await invoke<ChatChannel>("chat_subscribe_ceremony", {
+    ceremonyId: args.ceremonyId,
+    name: args.name ?? null,
+  });
+}
+
 export async function chatUnsubscribeChannel(channelId: string): Promise<void> {
   if (!inTauri()) return;
   await invoke<void>("chat_unsubscribe_channel", { channelId });
+}
+
+/**
+ * Dial additional libp2p peers after init (ceremony lobbies are made of
+ * cluster-less strangers discovered after the swarm spawned — without
+ * post-init dialing the lobby never meshes). `peers` are multiaddrs,
+ * e.g. from `discoverOperatorChatBootstrapPeers`. Returns how many
+ * well-formed multiaddrs were handed to the swarm; dial results are
+ * asynchronous and best-effort.
+ */
+export async function chatDialPeers(peers: string[]): Promise<number> {
+  if (!inTauri()) return 0;
+  recordE2eCommand("chat_dial_peers");
+  return await invoke<number>("chat_dial_peers", { peers });
+}
+
+/**
+ * Advance a channel's read cursor (defaults to now, Rust-side).
+ * Monotonic — a stale mark never moves the cursor backwards. Unread
+ * counts refresh on the next `chatGetChannels` call.
+ */
+export async function chatMarkRead(
+  channelId: string,
+  timestampMs?: number,
+): Promise<void> {
+  if (!inTauri()) return;
+  await invoke<void>("chat_mark_read", {
+    channelId,
+    timestampMs: timestampMs ?? null,
+  });
+}
+
+/**
+ * Member display identities (moniker + bech32m `mono1…` address — never
+ * raw hex, per ADR-0038) for a cluster channel, served from the Rust
+ * roster cache. Ceremony channels have no fixed roster → empty list.
+ */
+export async function chatGetMemberMonikers(
+  channelId: string,
+): Promise<ChatMemberMoniker[]> {
+  if (!inTauri()) return [];
+  return await invoke<ChatMemberMoniker[]>("chat_get_member_monikers", {
+    channelId,
+  });
+}
+
+/**
+ * Sign a formCluster roster consent with the operator key. The BLAKE3
+ * consent digest is re-derived IN RUST from the structured roster
+ * (mirroring mono-core `form_cluster_message`); the webview never
+ * supplies a raw digest — there is intentionally NO generic
+ * sign-this-digest command (the consensus key is also the wallet key).
+ * `charterHex` (30-byte V2 charter wire payload) switches the digest to
+ * the `…CLUSTER_FORM_V2` domain.
+ */
+export async function chatSignFormClusterConsent(args: {
+  activePubkeysHex: string[];
+  standbyPubkeysHex: string[];
+  charterHex?: string;
+}): Promise<ChatFormClusterConsentSignature> {
+  if (!inTauri()) {
+    throw new Error(
+      "chat_sign_form_cluster_consent unavailable — running outside Tauri",
+    );
+  }
+  recordE2eCommand("chat_sign_form_cluster_consent");
+  return await invoke<ChatFormClusterConsentSignature>(
+    "chat_sign_form_cluster_consent",
+    {
+      activePubkeysHex: args.activePubkeysHex,
+      standbyPubkeysHex: args.standbyPubkeysHex,
+      charterHex: args.charterHex ?? null,
+    },
+  );
 }
 
 /** Sign + publish a message. Returns the optimistic local record. */
@@ -814,5 +921,21 @@ export async function listenChatMessages(
   return await listen<ChatMessage>(
     `monarch://chat/message/${channelId}`,
     (event) => onMessage(event.payload),
+  );
+}
+
+/**
+ * Subscribe to EVERY chat message regardless of channel (the Rust side
+ * mirrors each per-channel emit onto `monarch://chat/any`). Powers
+ * app-level unread badges/notifications without a per-channel listener.
+ */
+export async function listenChatAnyMessage(
+  onMessage: (message: ChatMessage) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri()) {
+    return () => {};
+  }
+  return await listen<ChatMessage>("monarch://chat/any", (event) =>
+    onMessage(event.payload),
   );
 }

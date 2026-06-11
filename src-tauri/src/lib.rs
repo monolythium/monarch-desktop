@@ -96,7 +96,12 @@ pub fn run() {
             chat::chat_get_messages,
             chat::chat_send_message,
             chat::chat_subscribe_channel,
+            chat::chat_subscribe_ceremony,
             chat::chat_unsubscribe_channel,
+            chat::chat_dial_peers,
+            chat::chat_mark_read,
+            chat::chat_get_member_monikers,
+            chat::chat_sign_form_cluster_consent,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

@@ -156,6 +156,8 @@ function channel(overrides: Partial<ChatChannel> = {}): ChatChannel {
     kind: "cluster",
     cluster_id: 1,
     subscribed: true,
+    last_read_ts: 0,
+    unread_count: 0,
     ...overrides,
   };
 }

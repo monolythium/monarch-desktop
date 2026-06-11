@@ -10,7 +10,12 @@ CREATE TABLE IF NOT EXISTS channels (
     sub        TEXT NOT NULL DEFAULT '',
     kind       TEXT NOT NULL DEFAULT 'cluster',
     cluster_id INTEGER NOT NULL,
-    subscribed INTEGER NOT NULL DEFAULT 0
+    subscribed INTEGER NOT NULL DEFAULT 0,
+    -- Additive (2026-06-11): unread tracking. Timestamp (ms) of the last
+    -- message the operator has seen in this channel; `chat_mark_read`
+    -- advances it. Existing databases gain the column via
+    -- `ensure_channel_column` in chat_store.rs.
+    last_read_ts INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS messages (
