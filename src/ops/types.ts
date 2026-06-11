@@ -115,10 +115,15 @@ export type ClusterVoteAdmitInput = {
 // Inputs for the self-service `formCluster(bytes,bytes,bytes)` call.
 // Signatures are ten ML-DSA-65 consent signatures over the canonical
 // roster digest, in roster order: seven active first, then three standby.
+// When `charterHex` (the 30-byte V2 economics charter) is present the
+// executor encodes `formCluster(bytes,bytes,bytes,bytes)` and the ten
+// signatures must verify over the charter-committing V2 digest; absent,
+// the V1 flow stays byte-identical.
 export type ClusterFormInput = {
   activePubkeysHex: string;
   standbyPubkeysHex: string;
   signaturesHex: string;
+  charterHex?: string;
 };
 
 // Inputs for the Q120 voluntary cluster resignation

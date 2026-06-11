@@ -849,6 +849,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           activePubkeysHex: input.activePubkeysHex,
           standbyPubkeysHex: input.standbyPubkeysHex,
           signaturesHex: input.signaturesHex,
+          // Optional 30-byte V2 economics charter — present selects the
+          // formCluster(bytes,bytes,bytes,bytes) path; absent stays V1.
+          charterHex: input.charterHex,
         });
         settleOperation(
           req,

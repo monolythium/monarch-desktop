@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import { blake3 } from "@noble/hashes/blake3.js";
+import { formClusterMessageV2Hex } from "@monolythium/core-sdk";
 import {
   FORM_CLUSTER_ACTIVE_COUNT,
   FORM_CLUSTER_STANDBY_COUNT,
@@ -126,6 +127,24 @@ describe("formCluster consent digest parity (Rust chat.rs ↔ TS SDK ↔ mono-co
     // Domain separation: V1 consents can never replay as V2.
     expect(EXPECTED_V1_DIGEST).not.toBe(EXPECTED_V2_DIGEST);
     expect(referenceDigest(V1_DOMAIN, charter)).not.toBe(EXPECTED_V2_DIGEST);
+  });
+
+  it("V2: the live wiring (core-sdk + desktop mirror) matches the pinned fixture", () => {
+    const { active, standby } = fixtureRoster();
+    // The core-sdk encoder the ceremony reducer/exporter rides on.
+    expect(
+      formClusterMessageV2Hex(concat(active), concat(standby), hexToBytes(FIXTURE_CHARTER_HEX)),
+    ).toBe(EXPECTED_V2_DIGEST);
+    // The desktop mirror used by the ops drawer summary/executor — the
+    // same digest `chat_sign_form_cluster_consent` signs Rust-side for
+    // this exact fixture (chat.rs parity test).
+    expect(
+      formClusterConsentMessageHex({
+        activePubkeysHex: active.map(bytesToHex).join("\n"),
+        standbyPubkeysHex: standby.map(bytesToHex).join("\n"),
+        charterHex: FIXTURE_CHARTER_HEX,
+      }),
+    ).toBe(EXPECTED_V2_DIGEST);
   });
 
   it("pins the topology constants the digest commits to", () => {

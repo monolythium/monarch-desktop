@@ -142,6 +142,17 @@ export function liveDiffRows(request: OpRequest): OpField[] | null {
           "Roster",
           `${summary.activeCount} active + ${summary.standbyCount} standby (${summary.signatureCount} consents)`,
         ),
+        ...(input.charterHex
+          ? [
+              row(
+                "charter",
+                "Charter (V2)",
+                summary.charter
+                  ? `delegators ${(summary.charter.delegatorShareBps / 100).toFixed(1)}% · consent expires ${new Date(summary.charter.expiresMs).toISOString()}`
+                  : "(malformed charter)",
+              ),
+            ]
+          : []),
         row(
           "digest",
           "Consent digest",

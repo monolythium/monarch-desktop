@@ -22,8 +22,13 @@
 // exactly "10 distinct seats whose claimed sender published a verified
 // consent over the CURRENT digest".
 //
-// V1 digest only: the charter-bearing V2 digest is parameterized in
-// `computeCeremonyConsentDigestHex` but refused until the fleet swap.
+// CHARTER (V2): a propose MAY carry the 30-byte economics charter in
+// `terms.charter` (with `terms.charter_hash` = SHA-256 over the charter
+// bytes). With a charter present the consent digest is the V2
+// `formClusterMessageV2` (fresh domain, charter committed) and the
+// submit encodes `formCluster(bytes,bytes,bytes,bytes)`; without one,
+// every path stays byte-identical V1. A charter change is a terms
+// change: the digest shifts and every collected consent goes stale.
 //
 // Transport runs over Tauri `invoke()` directly (no bridge.ts) so this
 // module stays standalone; missing commands degrade to a typed
@@ -33,6 +38,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex as nobleBytesToHex } from "@noble/hashes/utils.js";
 import {
   formClusterMessageHex,
+  formClusterMessageV2Hex,
   verifyNoEvmArchiveProofSignatures,
   NO_EVM_ARCHIVE_PROOF_SCHEMA,
   NO_EVM_ARCHIVE_SIGNATURE_SCHEME,
@@ -46,6 +52,9 @@ import {
   FORM_CLUSTER_MEMBER_COUNT,
   FORM_CLUSTER_THRESHOLD,
   FORM_CLUSTER_SIGNATURE_BYTES,
+  FORM_CLUSTER_CHARTER_BYTES,
+  decodeClusterCharterHex,
+  validateClusterCharterHex,
 } from "./clusterFormOps";
 import {
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
@@ -133,8 +142,12 @@ export type CeremonyTerms = {
   threshold: number;
   bond_lythoshi: string;
   commission_bps: number;
-  /** 22-byte charter hex — V2 only; refused by this build. */
+  /** 30-byte V2 charter wire hex: 10×u16 BE member_share_bps (sum
+   *  10,000) ‖ u16 BE delegator_share_bps ‖ u64 BE expires_ms.
+   *  Present → the consent digest is the charter-committing V2 digest. */
   charter?: string;
+  /** SHA-256 over the 30 charter bytes (0x hex). MUST match `charter`
+   *  when a charter is present; MUST be "" when there is none. */
   charter_hash: string;
 };
 
@@ -374,26 +387,22 @@ export function ceremonyChannelId(ceremonyId: string): string {
   return `${CEREMONY_CHANNEL_PREFIX}${ceremonyId}`;
 }
 
-// ---- consent digest (V1 now, V2 parameterized) -----------------------
+// ---- consent digest (V1 without charter, V2 with) ---------------------
 
 export type CeremonyDigestArgs = {
   /** Exactly 7 per-key hex strings (1952 bytes each), roster order. */
   activePubkeysHex: string[];
   /** Exactly 3 per-key hex strings (1952 bytes each), roster order. */
   standbyPubkeysHex: string[];
-  /** V2 charter bytes — refused until the charter fleet swap lands. */
+  /** Optional 30-byte V2 charter hex — switches to the charter-committing
+   *  V2 digest domain (`formClusterMessageV2Hex`). */
   charterHex?: string;
 };
 
-/** Locally recompute the formCluster consent digest. V1 layout via the
- *  core-sdk mirror (`formClusterMessageHex`); the charter argument is the
- *  V2 slot and is refused fail-closed in this build. */
+/** Locally recompute the formCluster consent digest via the core-sdk
+ *  mirrors: `formClusterMessageHex` (V1) without a charter,
+ *  `formClusterMessageV2Hex` (charter committed, fresh domain) with one. */
 export function computeCeremonyConsentDigestHex(args: CeremonyDigestArgs): string {
-  if (args.charterHex) {
-    throw new Error(
-      "charter (V2) consent digests are not enabled in this build — ceremony runs the V1 digest until the fleet swap",
-    );
-  }
   if (args.activePubkeysHex.length !== FORM_CLUSTER_ACTIVE_COUNT) {
     throw new Error(`expected ${FORM_CLUSTER_ACTIVE_COUNT} active operator pubkeys`);
   }
@@ -412,12 +421,57 @@ export function computeCeremonyConsentDigestHex(args: CeremonyDigestArgs): strin
         return hexToBytes(clean);
       }),
     );
-  return normalizeHex(
-    formClusterMessageHex(
-      toBlob(args.activePubkeysHex, "activePubkeys"),
-      toBlob(args.standbyPubkeysHex, "standbyPubkeys"),
-    ),
-  );
+  const activeBlob = toBlob(args.activePubkeysHex, "activePubkeys");
+  const standbyBlob = toBlob(args.standbyPubkeysHex, "standbyPubkeys");
+  if (args.charterHex) {
+    const charterHex = normalizeHex(args.charterHex);
+    if (!isHexOfBytes(charterHex, FORM_CLUSTER_CHARTER_BYTES)) {
+      throw new Error(
+        `charter must be the ${FORM_CLUSTER_CHARTER_BYTES}-byte charter wire payload`,
+      );
+    }
+    return normalizeHex(
+      formClusterMessageV2Hex(activeBlob, standbyBlob, hexToBytes(charterHex)),
+    );
+  }
+  return normalizeHex(formClusterMessageHex(activeBlob, standbyBlob));
+}
+
+// ---- charter terms ------------------------------------------------------
+
+/** `terms.charter_hash` scheme: 0x-hex SHA-256 over the 30 charter
+ *  bytes. A propose-body integrity pin only — the consent digest itself
+ *  commits to the raw charter bytes via the V2 domain. */
+export function ceremonyCharterHashHex(charterHex: string): string {
+  const clean = normalizeHex(charterHex);
+  if (!isHexOfBytes(clean, FORM_CLUSTER_CHARTER_BYTES)) {
+    throw new Error(`charter must be the ${FORM_CLUSTER_CHARTER_BYTES}-byte charter wire payload`);
+  }
+  return bytesToHex0x(sha256(hexToBytes(clean)));
+}
+
+/** Validate the charter slot of ceremony terms. Returns a human-readable
+ *  rejection or null when acceptable. Structural only (no clock) — the
+ *  charter expiry is enforced at sign/submit time, where a clock exists. */
+export function validateCeremonyCharterTerms(terms: CeremonyTerms): string | null {
+  if (!terms.charter) {
+    return terms.charter_hash
+      ? "terms.charter_hash is set but no charter bytes are present"
+      : null;
+  }
+  const charterHex = normalizeHex(terms.charter);
+  if (!isHexOfBytes(charterHex, FORM_CLUSTER_CHARTER_BYTES)) {
+    return `terms.charter must be the ${FORM_CLUSTER_CHARTER_BYTES}-byte charter wire payload`;
+  }
+  try {
+    validateClusterCharterHex(charterHex);
+  } catch (err) {
+    return `terms.charter is invalid: ${(err as Error)?.message ?? String(err)}`;
+  }
+  if (normalizeHex(terms.charter_hash) !== ceremonyCharterHashHex(charterHex)) {
+    return "terms.charter_hash does not match SHA-256 of the charter bytes";
+  }
+  return null;
 }
 
 // ---- ML-DSA-65 consent signature verification ------------------------
@@ -571,9 +625,8 @@ function validateProposeBody(body: CeremonyProposeBody): string | null {
   if (body.terms.threshold !== FORM_CLUSTER_THRESHOLD) {
     return `terms.threshold must be ${FORM_CLUSTER_THRESHOLD}`;
   }
-  if (body.terms.charter) {
-    return "charter terms (V2) are not supported by this build — refuse to participate";
-  }
+  const charterError = validateCeremonyCharterTerms(body.terms);
+  if (charterError) return charterError;
   if (!Number.isFinite(body.expires_ms) || body.expires_ms <= 0) {
     return "propose expiry is malformed";
   }
@@ -877,6 +930,9 @@ export function reduceCeremony(
       localDigest = computeCeremonyConsentDigestHex({
         activePubkeysHex: activePubkeys,
         standbyPubkeysHex: standbyPubkeys,
+        // A charter is part of the terms: its presence (and every byte
+        // of it) shifts the digest, staling all previous consents.
+        charterHex: lobby.terms?.charter || undefined,
       });
     } catch (err) {
       lobby.warnings.push(
@@ -1016,6 +1072,16 @@ export function canSubmitCeremony(
   if (ceremonyExpired(state, nowMs)) {
     return { allowed: false, reason: "this ceremony has expired — propose a fresh one" };
   }
+  if (state.terms?.charter) {
+    try {
+      validateClusterCharterHex(state.terms.charter, { nowMs });
+    } catch (err) {
+      return {
+        allowed: false,
+        reason: `charter refuses submission: ${(err as Error)?.message ?? String(err)}`,
+      };
+    }
+  }
   if (state.digestMismatch) {
     return {
       allowed: false,
@@ -1051,10 +1117,12 @@ export function buildClusterFormInput(state: CeremonyState): ClusterFormInput | 
     else standby.push(row.participant.pubkeyHex);
     sigs.push(row.consent.sigHex);
   }
+  const charterHex = state.terms?.charter ? normalizeHex(state.terms.charter) : "";
   return {
     activePubkeysHex: active.join("\n"),
     standbyPubkeysHex: standby.join("\n"),
     signaturesHex: sigs.join("\n"),
+    ...(charterHex ? { charterHex } : {}),
   };
 }
 
@@ -1062,12 +1130,31 @@ export function buildClusterFormInput(state: CeremonyState): ClusterFormInput | 
 export function buildClusterFormOpRequest(state: CeremonyState): OpRequest | null {
   const input = buildClusterFormInput(state);
   if (!input || !state.localDigest) return null;
+  const executor = input.charterHex
+    ? "formCluster(bytes,bytes,bytes,bytes)"
+    : "formCluster(bytes,bytes,bytes)";
+  let charterDiff: { key: string; label: string; value: string }[] = [];
+  if (input.charterHex) {
+    try {
+      const charter = decodeClusterCharterHex(input.charterHex);
+      charterDiff = [
+        {
+          key: "charter",
+          label: "Charter (V2)",
+          value: `+ delegators ${(charter.delegatorShareBps / 100).toFixed(1)}% · consent expires ${new Date(charter.expiresMs).toISOString()}`,
+        },
+      ];
+    } catch {
+      charterDiff = [{ key: "charter", label: "Charter (V2)", value: "+ (malformed)" }];
+    }
+  }
   return {
     kind: "cluster-form",
     title: "Form cluster",
     sub: "Submit ceremony roster",
-    intro:
-      "Submits the ceremony room's fully consented formCluster(bytes,bytes,bytes) roster: 10 operator seats, 7-of-10 threshold, 7 active and 3 standby operators, with all ten ML-DSA-65 consent signatures collected live. The drawer preflights through lyth_previewFormCluster before signing.",
+    intro: input.charterHex
+      ? "Submits the ceremony room's fully consented formCluster(bytes,bytes,bytes,bytes) roster with its 30-byte economics charter: 10 operator seats, 7-of-10 threshold, with all ten ML-DSA-65 consent signatures over the charter-committing V2 digest. The drawer preflights through lyth_previewFormCluster before signing."
+      : "Submits the ceremony room's fully consented formCluster(bytes,bytes,bytes) roster: 10 operator seats, 7-of-10 threshold, 7 active and 3 standby operators, with all ten ML-DSA-65 consent signatures collected live. The drawer preflights through lyth_previewFormCluster before signing.",
     icon: "FC",
     risk: "high",
     destructive: true,
@@ -1076,17 +1163,23 @@ export function buildClusterFormOpRequest(state: CeremonyState): OpRequest | nul
     effects: [
       "Validates exactly 7 active and 3 standby ML-DSA-65 consensus pubkeys.",
       "Verifies all ten roster consent signatures against the ceremony consent digest.",
+      ...(input.charterHex
+        ? [
+            "Encodes the 30-byte economics charter (member shares, delegator share, consent expiry) — the signed V2 digest commits to these exact terms.",
+          ]
+        : []),
       "Preflights formCluster, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
     ],
     diff: [
       { key: "cluster", label: "Cluster", value: "+ roster proposal" },
       { key: "topology", label: "Topology", value: "7 active + 3 standby, 7-of-10" },
+      ...charterDiff,
       { key: "digest", label: "Consent digest", value: state.localDigest },
     ],
     fields: [
       { key: "ceremony", label: "Ceremony", value: state.cid ?? "—" },
       { key: "digest", label: "Consent digest", value: state.localDigest },
-      { key: "executor", label: "Executor", value: "formCluster(bytes,bytes,bytes)" },
+      { key: "executor", label: "Executor", value: executor },
     ],
     clusterFormInput: input,
   };
@@ -1302,8 +1395,9 @@ export function importCeremonyJson(
   if (ceremonyExportHash(payload) !== file.export_hash) {
     throw new Error("import integrity hash mismatch — the export was modified");
   }
-  if (payload.terms.charter) {
-    throw new Error("import carries charter (V2) terms — not supported by this build");
+  const charterTermsError = validateCeremonyCharterTerms(payload.terms);
+  if (charterTermsError) {
+    throw new Error(`import charter terms rejected: ${charterTermsError}`);
   }
   if (payload.seats.length !== FORM_CLUSTER_MEMBER_COUNT) {
     throw new Error(`import must carry exactly ${FORM_CLUSTER_MEMBER_COUNT} seats`);
@@ -1325,9 +1419,11 @@ export function importCeremonyJson(
       throw new Error(`import seat ${seat.role}:${seat.index} pubkey is malformed`);
     }
   }
+  const importCharterHex = payload.terms.charter ? normalizeHex(payload.terms.charter) : "";
   const digest = computeCeremonyConsentDigestHex({
     activePubkeysHex: active.map((seat) => seat.pubkey_hex),
     standbyPubkeysHex: standby.map((seat) => seat.pubkey_hex),
+    charterHex: importCharterHex || undefined,
   });
   if (digest !== normalizeHex(payload.consent_digest)) {
     throw new Error("import consent digest does not match the recomputed roster digest");
@@ -1361,6 +1457,7 @@ export function importCeremonyJson(
       activePubkeysHex: active.map((seat) => normalizeHex(seat.pubkey_hex)).join("\n"),
       standbyPubkeysHex: standby.map((seat) => normalizeHex(seat.pubkey_hex)).join("\n"),
       signaturesHex: sigs.join("\n"),
+      ...(importCharterHex ? { charterHex: importCharterHex } : {}),
     },
   };
 }
@@ -1444,9 +1541,10 @@ export type CeremonyConsentSignResult = {
 };
 
 /** Rust-side consent signing: the digest is re-derived in Rust from the
- *  roster and signed with the keychain identity — there is deliberately
- *  no raw sign-this-digest surface. ALWAYS compare the returned
- *  `digest_hex` against the locally recomputed digest before publishing. */
+ *  roster (and the 30-byte charter when present — V2 domain) and signed
+ *  with the keychain identity — there is deliberately no raw
+ *  sign-this-digest surface. ALWAYS compare the returned `digest_hex`
+ *  against the locally recomputed digest before publishing. */
 export async function signCeremonyConsent(args: {
   activePubkeysHex: string[];
   standbyPubkeysHex: string[];

@@ -20,9 +20,14 @@ import type { ChatInitResult, ChatMessage } from "../sdk/chat";
 import { rpc, rpcEndpoint } from "../sdk/client";
 import {
   FORM_CLUSTER_ACTIVE_COUNT,
+  FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS,
+  FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS,
   FORM_CLUSTER_MEMBER_COUNT,
   FORM_CLUSTER_STANDBY_COUNT,
   FORM_CLUSTER_THRESHOLD,
+  encodeClusterCharterHex,
+  validateClusterCharterHex,
+  type DecodedClusterCharter,
 } from "../sdk/clusterFormOps";
 import {
   CEREMONY_SCHEMA_VERSION,
@@ -30,6 +35,7 @@ import {
   buildCeremonySnapshotBody,
   buildClusterFormOpRequest,
   canSubmitCeremony,
+  ceremonyCharterHashHex,
   ceremonyChatInitialize,
   ceremonyRoster,
   ceremonyRosterPubkeys,
@@ -108,6 +114,45 @@ function consentStatusLabel(consent: CeremonyConsent | null): { label: string; t
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// ---- charter helpers -----------------------------------------------------
+
+const CHARTER_DEFAULT_MEMBER_SHARE_BPS = 1000;
+const CHARTER_DEFAULT_DELEGATOR_SHARE_BPS = 5000;
+const CHARTER_DEFAULT_EXPIRY_MS = 48 * 3_600_000; // now + 48h
+
+/** Member-declaration order labels: members 0..6 = active, 7..9 = standby. */
+function charterSeatLabel(memberIndex: number): string {
+  return memberIndex < FORM_CLUSTER_ACTIVE_COUNT
+    ? `active ${memberIndex + 1}`
+    : `standby ${memberIndex - FORM_CLUSTER_ACTIVE_COUNT + 1}`;
+}
+
+function bpsToPct(bps: number, digits = 1): string {
+  return `${(bps / 100).toFixed(digits)}%`;
+}
+
+function toDatetimeLocalValue(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function parseDatetimeLocalValue(value: string): number | null {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Decoded charter from the pinned terms — null when absent or malformed
+ *  (the reducer refuses malformed charters; this is render defense). */
+function decodeTermsCharter(state: CeremonyState): DecodedClusterCharter | null {
+  if (!state.terms?.charter) return null;
+  try {
+    return validateClusterCharterHex(state.terms.charter);
+  } catch {
+    return null;
+  }
 }
 
 // ---- seat card ---------------------------------------------------------
@@ -197,9 +242,11 @@ function SeatCard(props: {
 
 // ---- terms panel --------------------------------------------------------
 
-function TermsPanel(props: { state: CeremonyState }) {
+function TermsPanel(props: { state: CeremonyState; nowMs: number }) {
   const terms = props.state.terms;
   if (!terms) return null;
+  const charter = decodeTermsCharter(props.state);
+  const charterExpired = charter !== null && props.nowMs >= charter.expiresMs;
   const perMemberPct = (10_000 / FORM_CLUSTER_MEMBER_COUNT / 100).toFixed(1);
   return (
     <div className="card" style={{ background: "rgba(255,255,255,0.02)", padding: 16, display: "grid", gap: 8 }}>
@@ -220,22 +267,75 @@ function TermsPanel(props: { state: CeremonyState }) {
         <span className="kv__k">Commission</span>
         <span className="kv__v mono">{(terms.commission_bps / 100).toFixed(2)}%</span>
       </div>
-      <div className="kv">
-        <span className="kv__k">Per-member share</span>
-        <span className="kv__v mono">{perMemberPct}% each (equal split, protocol default)</span>
-      </div>
-      <div className="kv">
-        <span className="kv__k">Delegator share</span>
-        <span className="kv__v mono">50% (protocol default)</span>
-      </div>
-      <div className="halo halo--warn" style={{ alignSelf: "flex-start", alignItems: "flex-start", lineHeight: 1.4, fontSize: 11 }}>
-        <span className="dot" style={{ flex: "0 0 auto", marginTop: 4 }} />
-        <span>
-          Economic terms bind through the initiator's signed proposal envelope — they are
-          attributable, but not yet enforced by the chain. The on-chain consent digest covers the
-          roster and threshold only, until charter terms move on-digest in a future upgrade.
-        </span>
-      </div>
+      {charter ? (
+        <>
+          <div className="halo halo--ok" style={{ alignSelf: "flex-start", alignItems: "flex-start", lineHeight: 1.4, fontSize: 11 }}>
+            <span className="dot" style={{ flex: "0 0 auto", marginTop: 4 }} />
+            <span>
+              CHARTER (V2) — these economic terms are folded into the consent digest you sign.
+              A signature over this charter cannot be replayed under different terms.
+            </span>
+          </div>
+          <div
+            style={{
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 8,
+              background: "rgba(255,255,255,0.02)",
+              padding: 10,
+              display: "grid",
+              gap: 5,
+            }}
+          >
+            <div className="cap" style={{ fontSize: 10 }}>Per-seat operator-pot shares</div>
+            {charter.memberShareBps.map((bps, index) => (
+              <div className="kv" key={`share-${index}`}>
+                <span className="kv__k">{charterSeatLabel(index)}</span>
+                <span className="kv__v mono">
+                  {bps} bps = {bpsToPct(bps)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="kv">
+            <span className="kv__k">Delegator share</span>
+            <span className="kv__v mono">
+              {charter.delegatorShareBps} bps = {bpsToPct(charter.delegatorShareBps)}
+            </span>
+          </div>
+          <div className="kv">
+            <span className="kv__k">Charter consent expiry</span>
+            <span className="kv__v mono" style={charterExpired ? { color: "var(--err)" } : undefined}>
+              {formatCountdown(charter.expiresMs, props.nowMs)} · {new Date(charter.expiresMs).toLocaleString()}
+            </span>
+          </div>
+          {charterExpired ? (
+            <div className="halo halo--err" style={{ alignSelf: "flex-start", fontSize: 11 }}>
+              <span className="dot" /> The charter's consent expiry has passed — the chain
+              rejects this formation. Propose a fresh ceremony.
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <div className="kv">
+            <span className="kv__k">Per-member share</span>
+            <span className="kv__v mono">{perMemberPct}% each (equal split, protocol default)</span>
+          </div>
+          <div className="kv">
+            <span className="kv__k">Delegator share</span>
+            <span className="kv__v mono">50% (protocol default)</span>
+          </div>
+          <div className="halo halo--warn" style={{ alignSelf: "flex-start", alignItems: "flex-start", lineHeight: 1.4, fontSize: 11 }}>
+            <span className="dot" style={{ flex: "0 0 auto", marginTop: 4 }} />
+            <span>
+              No charter: this ceremony signs the V1 digest, which covers the roster and
+              threshold only. The cluster gets the protocol-default economics (equal member
+              split, 50% delegators); the display terms above bind through the initiator's
+              signed proposal envelope — attributable, but not enforced by the chain.
+            </span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -266,6 +366,19 @@ export default function CeremonyRoom() {
   const [commissionBps, setCommissionBps] = useState("500");
   const [expiryMinutes, setExpiryMinutes] = useState("120");
   const [pinnedIds, setPinnedIds] = useState("");
+  // charter (V2 economic terms) editor
+  const [withCharter, setWithCharter] = useState(true);
+  const [charterShares, setCharterShares] = useState<string[]>(() =>
+    Array.from({ length: FORM_CLUSTER_MEMBER_COUNT }, () =>
+      String(CHARTER_DEFAULT_MEMBER_SHARE_BPS),
+    ),
+  );
+  const [charterDelegatorBps, setCharterDelegatorBps] = useState(
+    CHARTER_DEFAULT_DELEGATOR_SHARE_BPS,
+  );
+  const [charterExpiryLocal, setCharterExpiryLocal] = useState(() =>
+    toDatetimeLocalValue(Date.now() + CHARTER_DEFAULT_EXPIRY_MS),
+  );
   const [busy, setBusy] = useState(false);
   const [consentPublishedAt, setConsentPublishedAt] = useState<number | null>(null);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
@@ -307,6 +420,16 @@ export default function CeremonyRoom() {
   const expired = state.expiresMs !== null && nowMs >= state.expiresMs;
   const submitVerdict = canSubmitCeremony(state, selfAddress, nowMs);
   const effectiveDigest = state.frozenDigest ?? state.localDigest;
+  const termsCharter = useMemo(() => decodeTermsCharter(state), [state]);
+  const charterExpired = termsCharter !== null && nowMs >= termsCharter.expiresMs;
+  const charterShareSum = useMemo(
+    () =>
+      charterShares.reduce((sum, raw) => {
+        const bps = Number.parseInt(raw.trim(), 10);
+        return Number.isInteger(bps) && bps >= 0 ? sum + bps : Number.NaN;
+      }, 0),
+    [charterShares],
+  );
 
   const handleTransportError = useCallback((err: unknown) => {
     if (err instanceof CeremonyTransportUnavailableError) {
@@ -473,6 +596,50 @@ export default function CeremonyRoom() {
         operator_id: ids[FORM_CLUSTER_ACTIVE_COUNT + i] ?? "",
       });
     }
+
+    // Charter (V2 economic terms) — encoded + validated client-side so a
+    // charter the chain would reject never reaches the lobby.
+    let charterHex = "";
+    let charterHash = "";
+    if (withCharter) {
+      const shares = charterShares.map((raw) => Number.parseInt(raw.trim(), 10));
+      if (shares.some((bps) => !Number.isInteger(bps) || bps < 0 || bps > FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS)) {
+        setError(`Charter member shares must be whole numbers between 0 and ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps.`);
+        return;
+      }
+      const sum = shares.reduce((acc, bps) => acc + bps, 0);
+      if (sum !== FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS) {
+        setError(`Charter member shares must sum to exactly ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps — currently ${sum}.`);
+        return;
+      }
+      if (
+        charterDelegatorBps < FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS ||
+        charterDelegatorBps > FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS
+      ) {
+        setError(
+          `Charter delegator share must be between ${FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS} bps (protocol floor) and ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps.`,
+        );
+        return;
+      }
+      const charterExpiresMs = parseDatetimeLocalValue(charterExpiryLocal);
+      if (charterExpiresMs === null || charterExpiresMs <= Date.now()) {
+        setError("Charter consent expiry must be a valid moment in the future.");
+        return;
+      }
+      try {
+        charterHex = encodeClusterCharterHex({
+          memberShareBps: shares,
+          delegatorShareBps: charterDelegatorBps,
+          expiresMs: charterExpiresMs,
+        });
+        validateClusterCharterHex(charterHex, { nowMs: Date.now() });
+        charterHash = ceremonyCharterHashHex(charterHex);
+      } catch (err) {
+        setError(errText(err));
+        return;
+      }
+    }
+
     await send({
       v: CEREMONY_SCHEMA_VERSION,
       t: "propose",
@@ -482,11 +649,23 @@ export default function CeremonyRoom() {
         threshold: FORM_CLUSTER_THRESHOLD,
         bond_lythoshi: bondLythoshi.toString(),
         commission_bps: commission,
-        charter_hash: "",
+        ...(charterHex ? { charter: charterHex } : {}),
+        charter_hash: charterHash,
       },
       expires_ms: Date.now() + minutes * 60_000,
     });
-  }, [joined, bondLyth, commissionBps, expiryMinutes, pinnedIds, send]);
+  }, [
+    joined,
+    bondLyth,
+    commissionBps,
+    expiryMinutes,
+    pinnedIds,
+    withCharter,
+    charterShares,
+    charterDelegatorBps,
+    charterExpiryLocal,
+    send,
+  ]);
 
   const handleClaim = useCallback(
     (seat: CeremonySeatRef) => {
@@ -517,12 +696,25 @@ export default function CeremonyRoom() {
       setError("Frozen digest does not match the locally recomputed digest — refusing to sign.");
       return;
     }
+    const charterHex = state.terms?.charter ? normalizeHex(state.terms.charter) : undefined;
+    if (charterHex) {
+      try {
+        validateClusterCharterHex(charterHex, { nowMs: Date.now() });
+      } catch (err) {
+        setError(`Refusing to sign: ${errText(err)}`);
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
+      // With a charter the Rust signer derives + signs the V2 digest
+      // (charter committed); the cross-check below recomputes it locally
+      // and refuses on any disagreement — same rule as V1.
       const signed = await signCeremonyConsent({
         activePubkeysHex: rosterKeys.activePubkeysHex,
         standbyPubkeysHex: rosterKeys.standbyPubkeysHex,
+        charterHex,
       });
       if (normalizeHex(signed.digest_hex) !== normalizeHex(effectiveDigest)) {
         setError(
@@ -598,12 +790,16 @@ export default function CeremonyRoom() {
 
   const handleSubmitImported = useCallback(
     (input: ClusterFormInput, digestHex: string) => {
+      const executor = input.charterHex
+        ? "formCluster(bytes,bytes,bytes,bytes)"
+        : "formCluster(bytes,bytes,bytes)";
       ops.requestOp({
         kind: "cluster-form",
         title: "Form cluster",
         sub: "Submit imported ceremony roster",
-        intro:
-          "Submits a formCluster(bytes,bytes,bytes) roster imported from a ceremony JSON export. Every consent signature was verified against the recomputed digest before this prefill was offered.",
+        intro: input.charterHex
+          ? "Submits a formCluster(bytes,bytes,bytes,bytes) roster with its V2 economics charter, imported from a ceremony JSON export. Every consent signature was verified against the recomputed charter-committing digest before this prefill was offered."
+          : "Submits a formCluster(bytes,bytes,bytes) roster imported from a ceremony JSON export. Every consent signature was verified against the recomputed digest before this prefill was offered.",
         icon: "FC",
         risk: "high",
         destructive: true,
@@ -612,6 +808,9 @@ export default function CeremonyRoom() {
         effects: [
           "Validates exactly 7 active and 3 standby ML-DSA-65 consensus pubkeys.",
           "All ten imported consent signatures verified locally before prefill.",
+          ...(input.charterHex
+            ? ["Encodes the imported 30-byte economics charter — the verified V2 digest commits to these exact terms."]
+            : []),
           "Preflights formCluster, then signs with the active operator's PQM-1 mnemonic.",
         ],
         diff: [
@@ -620,7 +819,7 @@ export default function CeremonyRoom() {
         ],
         fields: [
           { key: "digest", label: "Consent digest", value: digestHex },
-          { key: "executor", label: "Executor", value: "formCluster(bytes,bytes,bytes)" },
+          { key: "executor", label: "Executor", value: executor },
         ],
         clusterFormInput: input,
       });
@@ -778,6 +977,103 @@ export default function CeremonyRoom() {
                   style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--fg-200)", padding: "8px 9px", fontSize: 11, borderRadius: 6, fontFamily: "var(--font-mono, monospace)", minHeight: 88, resize: "vertical" }}
                 />
               </label>
+
+              {/* charter — V2 economic terms, folded into the signed digest */}
+              <div
+                style={{
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 8,
+                  background: "rgba(255,255,255,0.02)",
+                  padding: 12,
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={withCharter}
+                    onChange={(event) => setWithCharter(event.target.checked)}
+                  />
+                  <span className="cap">Charter — economic terms (V2)</span>
+                </label>
+                <span style={{ fontSize: 11, color: "var(--fg-400)", lineHeight: 1.45 }}>
+                  With a charter, the per-seat reward shares, the delegator share, and the
+                  consent expiry are folded INTO the consent digest every member signs — the
+                  chain enforces them and a signature cannot be replayed under different terms.
+                  Without one, the cluster gets the protocol defaults (equal split, 50%
+                  delegators) via the V1 digest.
+                </span>
+                {withCharter ? (
+                  <>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <span className="cap" style={{ fontSize: 10 }}>Per-seat shares (bps of the operator pot)</span>
+                        <span
+                          className={charterShareSum === FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS ? "halo halo--ok" : "halo halo--err"}
+                          style={{ fontSize: 10.5 }}
+                        >
+                          <span className="dot" />
+                          {Number.isNaN(charterShareSum) ? "invalid" : charterShareSum} / {FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS}
+                          {charterShareSum === FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS ? "" : " — must sum to exactly 10000"}
+                        </span>
+                      </div>
+                      {charterShares.map((value, index) => {
+                        const bps = Number.parseInt(value.trim(), 10);
+                        const pct = Number.isInteger(bps) && bps >= 0 ? bpsToPct(bps) : "—";
+                        return (
+                          <div key={`charter-share-${index}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <span className="kv__k" style={{ width: 86, flex: "0 0 auto" }}>
+                              {charterSeatLabel(index)}
+                            </span>
+                            <input
+                              className="mono"
+                              inputMode="numeric"
+                              value={value}
+                              onChange={(event) => {
+                                const next = [...charterShares];
+                                next[index] = event.target.value;
+                                setCharterShares(next);
+                              }}
+                              style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--fg-200)", padding: "6px 8px", borderRadius: 6, fontSize: 12, width: 90 }}
+                            />
+                            <span className="mono" style={{ fontSize: 11, color: "var(--fg-400)" }}>
+                              = {pct}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                      <span className="kv__k">
+                        Delegator share — {bpsToPct(charterDelegatorBps)} ({charterDelegatorBps} bps)
+                      </span>
+                      <input
+                        type="range"
+                        min={FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS}
+                        max={FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS}
+                        step={50}
+                        value={charterDelegatorBps}
+                        onChange={(event) => setCharterDelegatorBps(Number.parseInt(event.target.value, 10))}
+                      />
+                      <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+                        Protocol floor {bpsToPct(FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS, 0)} — a charter cannot starve delegators below it.
+                      </span>
+                    </label>
+                    <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+                      <span className="kv__k">Charter consent expiry (chain rejects execution after this moment)</span>
+                      <input
+                        type="datetime-local"
+                        className="mono"
+                        value={charterExpiryLocal}
+                        onChange={(event) => setCharterExpiryLocal(event.target.value)}
+                        style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--fg-200)", padding: "8px 9px", borderRadius: 6, fontSize: 12, maxWidth: 260 }}
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </div>
+
               <button type="button" className="btn btn--primary" disabled={busy} onClick={() => void handlePropose()} style={{ justifySelf: "start" }}>
                 Publish proposal
               </button>
@@ -786,7 +1082,7 @@ export default function CeremonyRoom() {
             <>
               {/* terms — shown BEFORE signing */}
               <div style={{ marginTop: 16 }}>
-                <TermsPanel state={state} />
+                <TermsPanel state={state} nowMs={nowMs} />
               </div>
 
               {/* freeze banner */}
@@ -892,7 +1188,7 @@ export default function CeremonyRoom() {
                       <button
                         type="button"
                         className="btn btn--primary"
-                        disabled={busy || !rosterComplete || state.digestMismatch || expired}
+                        disabled={busy || !rosterComplete || state.digestMismatch || expired || charterExpired}
                         onClick={() => void handleSign()}
                       >
                         {selfConsent ? "Re-sign current digest" : "Sign consent"}
@@ -926,6 +1222,12 @@ export default function CeremonyRoom() {
                       <span style={{ fontSize: 11, color: "var(--fg-400)" }}>
                         Signing unlocks when all {FORM_CLUSTER_MEMBER_COUNT} seats are claimed — you
                         sign the exact roster and terms shown above, nothing else.
+                      </span>
+                    ) : null}
+                    {charterExpired ? (
+                      <span style={{ fontSize: 11, color: "var(--err)" }}>
+                        The charter's consent expiry has passed — signing and submitting are
+                        refused; propose a fresh ceremony.
                       </span>
                     ) : null}
                   </>

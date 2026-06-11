@@ -13,6 +13,8 @@ import {
   keychainGet,
   operatorPubkeyHash,
   useProviderDirectory,
+  validateClusterCharterHex,
+  type DecodedClusterCharter,
 } from "../sdk";
 import { useOps } from "./OpsContext";
 import type { ClusterFormInput } from "./types";
@@ -41,6 +43,8 @@ export type ClusterFormProposalSummary = {
   invalidSignatureCount: number;
   duplicateCount: number;
   consentMessageHex: string | null;
+  /** Decoded 30-byte V2 charter when `charterHex` is present and valid. */
+  charter: DecodedClusterCharter | null;
   ready: boolean;
   blockers: string[];
   roster: ClusterFormRosterEntry[];
@@ -154,16 +158,32 @@ export function clusterFormProposalSummary(
     blockers.push(`all consent signatures must be ${FORM_CLUSTER_SIGNATURE_BYTES} byte ML-DSA-65 signatures`);
   }
 
+  // Optional V2 charter — validated structurally so a malformed charter
+  // blocks the proposal before the executor ever sees it.
+  let charter: DecodedClusterCharter | null = null;
+  const charterHex = input?.charterHex?.trim() ?? "";
+  if (charterHex) {
+    try {
+      charter = validateClusterCharterHex(charterHex);
+    } catch (err) {
+      blockers.push(
+        `charter (V2) is invalid: ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
+  }
+
   let consentMessageHex: string | null = null;
   if (
     active.length === MONARCH_ACTIVE_OPERATOR_SEATS &&
     standby.length === MONARCH_STANDBY_OPERATOR_SEATS &&
     invalidActiveCount + invalidStandbyCount === 0 &&
-    duplicateCount === 0
+    duplicateCount === 0 &&
+    (!charterHex || charter !== null)
   ) {
     consentMessageHex = formClusterConsentMessageHex({
       activePubkeysHex: active.join("\n"),
       standbyPubkeysHex: standby.join("\n"),
+      ...(charterHex ? { charterHex } : {}),
     });
   }
 
@@ -177,6 +197,7 @@ export function clusterFormProposalSummary(
     invalidSignatureCount,
     duplicateCount,
     consentMessageHex,
+    charter,
     ready: blockers.length === 0,
     blockers,
     roster: [
@@ -401,6 +422,16 @@ export function ClusterFormProposalForm() {
           <div className="kv">
             <span className="kv__k">Consent digest</span>
             <span className="kv__v mono">{compactHex(summary.consentMessageHex, 18, 12)}</span>
+          </div>
+        ) : null}
+        {current.charterHex ? (
+          <div className="kv">
+            <span className="kv__k">Charter (V2)</span>
+            <span className="kv__v mono">
+              {summary.charter
+                ? `delegators ${(summary.charter.delegatorShareBps / 100).toFixed(1)}% · member shares ${summary.charter.memberShareBps.map((bps) => (bps / 100).toFixed(1)).join("/")}% · consent expires ${new Date(summary.charter.expiresMs).toLocaleString()}`
+                : "(malformed — see blockers)"}
+            </span>
           </div>
         ) : null}
         {summary.blockers.length > 0 ? (

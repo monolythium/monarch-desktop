@@ -7,9 +7,10 @@
 // export/import roundtrip all hinge on genuine signature checks.
 
 import { describe, expect, it } from "vitest";
+import { formClusterMessageV2Hex } from "@monolythium/core-sdk";
 import { MlDsa65Backend, mlDsa65AddressFromPublicKey } from "@monolythium/core-sdk/crypto";
 import type { ChatMessage } from "./chat";
-import { formClusterConsentMessageHex } from "./clusterFormOps";
+import { encodeClusterCharterHex, formClusterConsentMessageHex } from "./clusterFormOps";
 import { operatorPubkeyHash } from "./operatorKeys";
 import {
   CEREMONY_SCHEMA_VERSION,
@@ -19,6 +20,7 @@ import {
   buildClusterFormInput,
   buildClusterFormOpRequest,
   canSubmitCeremony,
+  ceremonyCharterHashHex,
   ceremonyChannelId,
   ceremonyExportHash,
   ceremonyRoster,
@@ -92,22 +94,26 @@ function pinnedSeats(): CeremonySeatDecl[] {
   }));
 }
 
-function makeTerms(): CeremonyTerms {
+function makeTerms(charterHex?: string): CeremonyTerms {
   return {
     threshold: 7,
     bond_lythoshi: "5000000000000",
     commission_bps: 500,
-    charter_hash: "",
+    ...(charterHex ? { charter: charterHex } : {}),
+    charter_hash: charterHex ? ceremonyCharterHashHex(charterHex) : "",
   };
 }
 
-function proposeBody(seats: CeremonySeatDecl[] = openSeats()): CeremonyProposeBody {
+function proposeBody(
+  seats: CeremonySeatDecl[] = openSeats(),
+  charterHex?: string,
+): CeremonyProposeBody {
   return {
     v: CEREMONY_SCHEMA_VERSION,
     t: "propose",
     cid: CID,
     seats,
-    terms: makeTerms(),
+    terms: makeTerms(charterHex),
     expires_ms: EXPIRES_MS,
   };
 }
@@ -134,10 +140,11 @@ function makeMsgFactory(): MsgFactory {
   };
 }
 
-function rosterDigest(operators: FixtureOperator[]): string {
+function rosterDigest(operators: FixtureOperator[], charterHex?: string): string {
   return computeCeremonyConsentDigestHex({
     activePubkeysHex: operators.slice(0, 7).map((op) => op.pubkeyHex),
     standbyPubkeysHex: operators.slice(7, 10).map((op) => op.pubkeyHex),
+    charterHex,
   });
 }
 
@@ -147,20 +154,27 @@ function signDigest(op: FixtureOperator, digestHex: string): string {
 
 const PROPOSE_ID = "m0001";
 
-/** propose + 10 joins + freeze + 10 consents — a fully ready ceremony. */
-function fullCeremonyMessages(roster: FixtureOperator[] = OPS.slice(0, 10)): {
+/** propose + 10 joins + freeze + 10 consents — a fully ready ceremony.
+ *  With `charterHex` the propose carries the charter and every consent
+ *  is signed over the charter-committing V2 digest. */
+function fullCeremonyMessages(
+  roster: FixtureOperator[] = OPS.slice(0, 10),
+  charterHex?: string,
+): {
   msgs: ChatMessage[];
   msg: MsgFactory;
   digest: string;
 } {
   const msg = makeMsgFactory();
   const initiator = roster[0]!;
-  const msgs: ChatMessage[] = [msg({ sender: initiator, body: proposeBody(), id: PROPOSE_ID })];
+  const msgs: ChatMessage[] = [
+    msg({ sender: initiator, body: proposeBody(openSeats(), charterHex), id: PROPOSE_ID }),
+  ];
   roster.forEach((op, i) => {
     const seat = i < 7 ? { role: "active" as const, index: i } : { role: "standby" as const, index: i - 7 };
     msgs.push(msg({ sender: op, body: { t: "join", cid: CID, ref: PROPOSE_ID, seat } }));
   });
-  const digest = rosterDigest(roster);
+  const digest = rosterDigest(roster, charterHex);
   msgs.push(
     msg({ sender: initiator, body: { t: "freeze", cid: CID, ref: PROPOSE_ID, consent_digest: digest } }),
   );
@@ -286,13 +300,222 @@ describe("ceremony reducer — roster assembly and readiness", () => {
     expect(state.warnings.some((w) => w.includes("pinned to a different operator id"))).toBe(true);
   });
 
-  it("refuses charter (V2) terms fail-closed", () => {
+  it("rejects a malformed (wrong-length) charter fail-closed", () => {
     const msg = makeMsgFactory();
     const body = proposeBody();
     body.terms = { ...body.terms, charter: "0x" + "00".repeat(22) };
     const state = reduceCeremony([msg({ sender: OPS[0]!, body, id: PROPOSE_ID })]);
     expect(state.cid).toBeNull();
     expect(state.warnings.some((w) => w.includes("charter"))).toBe(true);
+  });
+});
+
+// ---- charter (V2 economic terms) ---------------------------------------
+
+const CHARTER_EXPIRES_MS = 3_000_000_000_000; // before the propose expiry
+const CHARTER_SHARES = [1500, 1500, 1000, 1000, 1000, 1000, 1000, 800, 700, 500];
+
+function makeCharterHex(overrides?: {
+  memberShareBps?: number[];
+  delegatorShareBps?: number;
+  expiresMs?: number;
+}): string {
+  return encodeClusterCharterHex({
+    memberShareBps: overrides?.memberShareBps ?? CHARTER_SHARES,
+    delegatorShareBps: overrides?.delegatorShareBps ?? 3000,
+    expiresMs: overrides?.expiresMs ?? CHARTER_EXPIRES_MS,
+  });
+}
+
+/** Raw (unvalidated) charter hex for malformed-charter propose cases. */
+function rawCharterHex(shares: number[], delegatorBps: number, expiresMs: number): string {
+  const u16 = (n: number) => n.toString(16).padStart(4, "0");
+  return `0x${shares.map(u16).join("")}${u16(delegatorBps)}${BigInt(expiresMs).toString(16).padStart(16, "0")}`;
+}
+
+describe("ceremony charter (V2)", () => {
+  it("runs the charter ceremony on the V2 digest and hands off the V2 submit", () => {
+    const charterHex = makeCharterHex();
+    const { msgs, digest } = fullCeremonyMessages(OPS.slice(0, 10), charterHex);
+    const state = reduceCeremony(msgs);
+
+    expect(state.terms?.charter).toBe(charterHex);
+    expect(state.localDigest).toBe(digest);
+    expect(state.frozenDigest).toBe(digest);
+    expect(state.digestMismatch).toBe(false);
+    expect(state.validConsentCount).toBe(10);
+    expect(state.ready).toBe(true);
+
+    // Digest parity straight against the core-sdk V2 encoder (the same
+    // bytes mono-core + the Rust signer derive for this roster+charter).
+    const activeBlob = hexToBytes(
+      OPS.slice(0, 7).map((op) => op.pubkeyHex.slice(2)).join(""),
+    );
+    const standbyBlob = hexToBytes(
+      OPS.slice(7, 10).map((op) => op.pubkeyHex.slice(2)).join(""),
+    );
+    expect(state.localDigest).toBe(
+      formClusterMessageV2Hex(activeBlob, standbyBlob, hexToBytes(charterHex)),
+    );
+    // …and the desktop clusterFormOps mirror agrees.
+    expect(state.localDigest).toBe(
+      formClusterConsentMessageHex({
+        activePubkeysHex: OPS.slice(0, 7).map((op) => op.pubkeyHex).join("\n"),
+        standbyPubkeysHex: OPS.slice(7, 10).map((op) => op.pubkeyHex).join("\n"),
+        charterHex,
+      }),
+    );
+    // The V2 digest is NOT the V1 digest for the same roster.
+    expect(state.localDigest).not.toBe(rosterDigest(OPS.slice(0, 10)));
+
+    // The submit hand-off carries the charter and selects the V2 executor.
+    const input = buildClusterFormInput(state);
+    expect(input?.charterHex).toBe(charterHex);
+    const request = buildClusterFormOpRequest(state);
+    expect(request?.clusterFormInput?.charterHex).toBe(charterHex);
+    expect(
+      request?.fields?.find((field) => field.key === "executor")?.value,
+    ).toBe("formCluster(bytes,bytes,bytes,bytes)");
+  });
+
+  it("treats a charter change like any terms change — the digest shifts and every consent goes stale", () => {
+    const roster = OPS.slice(0, 10);
+    const charterA = makeCharterHex({ delegatorShareBps: 5000 });
+    const charterB = makeCharterHex({ delegatorShareBps: 3000 });
+    const digestA = rosterDigest(roster, charterA);
+    const digestB = rosterDigest(roster, charterB);
+    expect(digestA).not.toBe(digestB);
+
+    // Same roster, propose pins charter B, but the consents (and the
+    // freeze) were produced over charter A's digest.
+    const msg = makeMsgFactory();
+    const msgs: ChatMessage[] = [
+      msg({ sender: OPS[0]!, body: proposeBody(openSeats(), charterB), id: PROPOSE_ID }),
+    ];
+    roster.forEach((op, i) => {
+      const seat = i < 7 ? { role: "active" as const, index: i } : { role: "standby" as const, index: i - 7 };
+      msgs.push(msg({ sender: op, body: { t: "join", cid: CID, ref: PROPOSE_ID, seat } }));
+    });
+    msgs.push(
+      msg({ sender: OPS[0]!, body: { t: "freeze", cid: CID, ref: PROPOSE_ID, consent_digest: digestA } }),
+    );
+    for (const op of roster) {
+      msgs.push(
+        msg({
+          sender: op,
+          body: {
+            t: "consent",
+            cid: CID,
+            ref: PROPOSE_ID,
+            consent_digest: digestA,
+            sig: signDigest(op, digestA),
+          },
+        }),
+      );
+    }
+    const state = reduceCeremony(msgs);
+    expect(state.localDigest).toBe(digestB);
+    expect(state.consents.every((c) => c.status === "stale-digest")).toBe(true);
+    expect(state.validConsentCount).toBe(0);
+    expect(state.digestMismatch).toBe(true); // frozen A vs local B
+    expect(state.ready).toBe(false);
+    expect(canSubmitCeremony(state, OPS[0]!.address, 1_000).allowed).toBe(false);
+  });
+
+  it("rejects malformed charter proposals with the reason", () => {
+    const cases: Array<{ terms: Partial<CeremonyTerms>; want: RegExp }> = [
+      {
+        // wrong length
+        terms: { charter: "0x" + "ab".repeat(29), charter_hash: "" },
+        want: /30-byte charter wire payload/u,
+      },
+      {
+        // member shares sum 9999
+        terms: (() => {
+          const charter = rawCharterHex(
+            [...CHARTER_SHARES.slice(0, 9), 499],
+            3000,
+            CHARTER_EXPIRES_MS,
+          );
+          return { charter, charter_hash: ceremonyCharterHashHex(charter) };
+        })(),
+        want: /sum to exactly 10000/u,
+      },
+      {
+        // delegator share below the protocol floor
+        terms: (() => {
+          const charter = rawCharterHex(CHARTER_SHARES, 1999, CHARTER_EXPIRES_MS);
+          return { charter, charter_hash: ceremonyCharterHashHex(charter) };
+        })(),
+        want: /below the protocol floor/u,
+      },
+      {
+        // charter_hash mismatch
+        terms: { charter: makeCharterHex(), charter_hash: "0x" + "11".repeat(32) },
+        want: /charter_hash does not match/u,
+      },
+      {
+        // charter_hash without charter bytes
+        terms: { charter_hash: "0x" + "22".repeat(32) },
+        want: /charter_hash is set but no charter/u,
+      },
+    ];
+    for (const { terms, want } of cases) {
+      const msg = makeMsgFactory();
+      const body = proposeBody();
+      body.terms = { ...body.terms, ...terms };
+      const state = reduceCeremony([msg({ sender: OPS[0]!, body, id: PROPOSE_ID })]);
+      expect(state.cid).toBeNull();
+      expect(state.warnings.some((w) => want.test(w))).toBe(true);
+    }
+  });
+
+  it("refuses submission once the charter consent expiry passes", () => {
+    const charterHex = makeCharterHex({ expiresMs: CHARTER_EXPIRES_MS });
+    const { msgs } = fullCeremonyMessages(OPS.slice(0, 10), charterHex);
+    const state = reduceCeremony(msgs);
+    expect(state.ready).toBe(true);
+
+    // Before the charter expiry: allowed.
+    expect(canSubmitCeremony(state, OPS[0]!.address, CHARTER_EXPIRES_MS - 1).allowed).toBe(true);
+    // After the charter expiry (but before the propose expiry): refused.
+    const verdict = canSubmitCeremony(state, OPS[0]!.address, CHARTER_EXPIRES_MS + 1);
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toMatch(/charter/u);
+    expect(CHARTER_EXPIRES_MS + 1).toBeLessThan(EXPIRES_MS);
+  });
+
+  it("roundtrips a charter ceremony through export/import", () => {
+    const charterHex = makeCharterHex();
+    const { msgs } = fullCeremonyMessages(OPS.slice(0, 10), charterHex);
+    const state = reduceCeremony(msgs);
+    const json = exportCeremonyJson(state);
+
+    const imported = importCeremonyJson(json);
+    expect(imported.consentDigestHex).toBe(state.localDigest);
+    expect(imported.terms.charter).toBe(charterHex);
+    expect(imported.input.charterHex).toBe(charterHex);
+    expect(imported.input).toEqual(buildClusterFormInput(state));
+
+    // Tampering with the charter inside the export breaks the integrity hash…
+    const tampered = json.replace(charterHex, makeCharterHex({ delegatorShareBps: 9000 }));
+    expect(tampered).not.toBe(json);
+    expect(() => importCeremonyJson(tampered)).toThrow(/integrity hash/iu);
+
+    // …and a re-hashed charter swap still fails the digest recomputation:
+    // the consents were signed over the ORIGINAL charter's V2 digest.
+    const file = JSON.parse(json) as CeremonyExportFile;
+    const swappedCharter = makeCharterHex({ delegatorShareBps: 9000 });
+    file.terms = {
+      ...file.terms,
+      charter: swappedCharter,
+      charter_hash: ceremonyCharterHashHex(swappedCharter),
+    };
+    const { export_hash: _drop, ...payload } = file;
+    const rehashed: CeremonyExportFile = { ...payload, export_hash: ceremonyExportHash(payload) };
+    expect(() => importCeremonyJson(JSON.stringify(rehashed))).toThrow(
+      /consent digest does not match/u,
+    );
   });
 });
 
