@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SCHEMA = "monarch-desktop-e2e-evidence/v1";
 const DKG_RESHARE_SCHEMA = "monarch-dkg-reshare-attestation/v1";
@@ -48,7 +49,7 @@ const resolved = path.relative(process.cwd(), path.resolve(file));
 console.log(JSON.stringify({ ok: true, evidence: resolved || file }));
 
 function readRequiredRoutes() {
-  const manifest = path.resolve(new URL("..", import.meta.url).pathname, "src", "nav", "e2eRequiredRoutes.json");
+  const manifest = path.resolve(fileURLToPath(new URL("..", import.meta.url)), "src", "nav", "e2eRequiredRoutes.json");
   const routes = JSON.parse(fs.readFileSync(manifest, "utf8"));
   if (!Array.isArray(routes) || routes.some((route) => typeof route !== "string" || !route.startsWith("/"))) {
     throw new Error(`required route manifest is invalid: ${manifest}`);

@@ -5,8 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
+const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DEFAULT_APP = path.join(ROOT, "src-tauri", "target", "debug", appBinaryName());
 const DEFAULT_SMOKE = path.resolve(ROOT, "..", "monarch-os-talos", "_out", "smoke-qemu", "result.json");
 const REQUIRED_ROUTES = readRequiredRoutes();

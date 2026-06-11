@@ -6,8 +6,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
+const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const REQUIRED_ROUTES = readJson(path.join(ROOT, "src", "nav", "e2eRequiredRoutes.json"));
 const DEFAULT_OUTPUT = path.join(ROOT, "_out", "monarch-desktop-browser-smoke.json");
 const DEFAULT_SCREENSHOTS_DIR = path.join(ROOT, "_out", "monarch-desktop-browser-smoke-screenshots");
