@@ -19,5 +19,27 @@ export default defineConfig({
     target: "es2022",
     sourcemap: true,
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        // Keep the two heaviest dependencies out of the main chunk so
+        // first paint ships app code only; the lazy route views split
+        // on their own via React.lazy in App.tsx.
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("@monolythium/core-sdk") || id.includes("@monolythium+core-sdk")) {
+            return "core-sdk";
+          }
+          if (id.includes("/cmdk@") || id.includes("/cmdk/")) return "cmdk";
+          if (
+            /\/(react|react-dom|scheduler)@/.test(id) ||
+            /node_modules\/(react|react-dom|scheduler)\//.test(id) ||
+            id.includes("react-router")
+          ) {
+            return "react-vendor";
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

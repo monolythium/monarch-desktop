@@ -1,17 +1,18 @@
-// Single hook that pulls live node state via @monolythium/core-sdk.
-// Prefer the native `lyth_chainStatus` surface. Older testnet builds still
-// expose a compatibility height method, so keep a fallback until every public
-// node has the native chain-status method.
+// Single hook that pulls live node state. The WS push feed
+// (`subscriptions.ts`) drives round/height the instant a commit seals;
+// the shared query cache keeps a 4s `lyth_chainStatus` poll underneath
+// as the reachability probe and the fallback when push is unavailable.
 // Falls back to "offline" when the endpoint is unreachable so the UI
-// still renders meaningful chrome. Re-polls every 4s for block height +
-// current round; chain id is fetched once.
+// still renders meaningful chrome.
 //
 // Note: the SDK returns `bigint` for chain id, block height, and round
 // height. We collapse to `number` for the chrome — heights stay within
 // 2^53 for the lifetime of the chain.
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo } from "react";
 import { rpc, rpcEndpoint } from "./client";
+import { useQuery } from "./queryCache";
+import { useLiveCommit, useLiveFeedStatus } from "./subscriptions";
 
 export type NodeStatus = {
   endpoint: string;
@@ -32,88 +33,79 @@ type NativeChainStatus = {
   reachable?: boolean;
 };
 
-const initialStatus = (): NodeStatus => ({
-  endpoint: rpcEndpoint,
-  chainId: null,
-  blockNumber: null,
-  currentRound: null,
-  reachable: false,
-  lastError: null,
-  lastUpdatedAt: null,
-});
+type NodeStatusFetch = {
+  chainId: number | null;
+  blockNumber: number | null;
+  currentRound: number | null;
+  reachable: boolean;
+};
+
+// Chain id never changes for a connected node; cache the first answer so
+// the fallback path doesn't re-ask every poll.
+let cachedChainId: number | null = null;
+
+async function fetchNodeStatus(): Promise<NodeStatusFetch> {
+  const [native, round] = await Promise.all([
+    rpc.call<NativeChainStatus>("lyth_chainStatus", []).catch(() => null),
+    rpc.lythCurrentRound().catch(() => null),
+  ]);
+  if (native !== null) {
+    if (typeof native.chainId === "number") cachedChainId = native.chainId;
+    return {
+      chainId: cachedChainId,
+      blockNumber:
+        native.blockHeight ??
+        native.finalizedHeight ??
+        (round !== null ? Number(round.height) : null),
+      currentRound: round !== null ? Number(round.height) : native.finalizedHeight ?? null,
+      reachable: native.reachable ?? true,
+    };
+  }
+
+  const [block, chainId] = await Promise.all([
+    rpc.ethBlockNumber(),
+    cachedChainId === null ? rpc.ethChainId() : Promise.resolve<bigint | null>(null),
+  ]);
+  if (chainId !== null) cachedChainId = Number(chainId);
+  return {
+    chainId: cachedChainId,
+    blockNumber: Number(block),
+    currentRound: round !== null ? Number(round.height) : null,
+    reachable: true,
+  };
+}
 
 export function useNodeStatus(): NodeStatus {
-  const [status, setStatus] = useState<NodeStatus>(initialStatus);
-  const aliveRef = useRef(true);
+  const polled = useQuery<NodeStatusFetch>("node:status", fetchNodeStatus, {
+    intervalMs: POLL_MS,
+    notExposedWhen: () => false,
+  });
+  const commit = useLiveCommit();
+  const feed = useLiveFeedStatus();
 
-  useEffect(() => {
-    aliveRef.current = true;
-
-    const fetchOnce = async (includeChainId: boolean) => {
-      try {
-        const [native, round] = await Promise.all([
-          rpc.call<NativeChainStatus>("lyth_chainStatus", []).catch(() => null),
-          rpc.lythCurrentRound().catch(() => null),
-        ]);
-        if (!aliveRef.current) return;
-        if (native !== null) {
-          setStatus((prev) => ({
-            endpoint: rpcEndpoint,
-            chainId: includeChainId
-              ? (native.chainId ?? prev.chainId)
-              : prev.chainId,
-            blockNumber:
-              native.blockHeight ??
-              native.finalizedHeight ??
-              (round !== null ? Number(round.height) : prev.blockNumber),
-            currentRound:
-              round !== null
-                ? Number(round.height)
-                : native.finalizedHeight ?? prev.currentRound,
-            reachable: native.reachable ?? true,
-            lastError: null,
-            lastUpdatedAt: Date.now(),
-          }));
-          return;
-        }
-
-        const [block, chainId] = await Promise.all([
-          rpc.ethBlockNumber(),
-          includeChainId ? rpc.ethChainId() : Promise.resolve<bigint | null>(null),
-        ]);
-        setStatus((prev) => ({
-          endpoint: rpcEndpoint,
-          chainId: includeChainId
-            ? (chainId !== null ? Number(chainId as bigint) : null)
-            : prev.chainId,
-          blockNumber: Number(block),
-          currentRound: round !== null ? Number(round.height) : prev.currentRound,
-          reachable: true,
-          lastError: null,
-          lastUpdatedAt: Date.now(),
-        }));
-      } catch (err) {
-        if (!aliveRef.current) return;
-        const message = (err as Error)?.message ?? String(err);
-        setStatus((prev) => ({
-          ...prev,
-          reachable: false,
-          lastError: message,
-          lastUpdatedAt: Date.now(),
-        }));
-      }
+  return useMemo(() => {
+    const base: NodeStatus = {
+      endpoint: rpcEndpoint,
+      chainId: polled.data?.chainId ?? cachedChainId,
+      blockNumber: polled.data?.blockNumber ?? null,
+      currentRound: polled.data?.currentRound ?? null,
+      reachable: polled.data?.reachable ?? false,
+      lastError: polled.error,
+      lastUpdatedAt: polled.lastUpdatedAt,
     };
-
-    void fetchOnce(true);
-    const id = window.setInterval(() => {
-      void fetchOnce(false);
-    }, POLL_MS);
-
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return status;
+    // Push feed overlay: when the socket is live, commits arrive the
+    // moment they seal — fresher than any poll, and proof the node is
+    // reachable even if an HTTP probe just failed.
+    if (commit && feed.live) {
+      return {
+        ...base,
+        blockNumber: Math.max(base.blockNumber ?? 0, commit.height),
+        currentRound: commit.round ?? base.currentRound ?? commit.height,
+        reachable: true,
+        lastError: null,
+        lastUpdatedAt: Math.max(base.lastUpdatedAt ?? 0, commit.at),
+      };
+    }
+    return base;
+  }, [polled, commit, feed.live]);
 }

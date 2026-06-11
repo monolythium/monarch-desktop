@@ -1,10 +1,14 @@
-// 56px topbar — breadcrumb, live round halo (driven by useNodeStatus),
-// and the ⌘K palette trigger. Clicking the trigger opens the palette,
-// which is also bound to Cmd+K (Ctrl+K on non-mac) globally.
+// 56px topbar — breadcrumb, live round halo (driven by useNodeStatus,
+// which itself prefers the node WS push feed), and the ⌘K palette
+// trigger. Clicking the trigger opens the palette, which is also bound
+// to Cmd+K (Ctrl+K on non-mac) globally. The round counter flashes for
+// 300ms whenever the round advances (reduced-motion users get no flash).
 
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { useChainStatus, useNodeStatus } from "../sdk";
+import "../styles/livedata.css";
 
 export function TopBar({
   onOpenPalette,
@@ -19,6 +23,19 @@ export function TopBar({
   const reachable = status.reachable;
   const round = status.currentRound;
   const block = status.blockNumber;
+
+  // 300ms flash keyed by round change — driven by the WS feed, so the
+  // chrome visibly ticks the moment a round seals.
+  const [roundFlash, setRoundFlash] = useState(false);
+  const prevRoundRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevRoundRef.current;
+    prevRoundRef.current = round;
+    if (round === null || prev === null || round === prev) return;
+    setRoundFlash(true);
+    const id = window.setTimeout(() => setRoundFlash(false), 300);
+    return () => window.clearTimeout(id);
+  }, [round]);
   const current =
     NAV_ROUTES.find((r) => location.pathname === r.path)?.label ??
     (location.pathname === "/operator" ? "Operator" : "Home");
@@ -54,7 +71,10 @@ export function TopBar({
         <kbd>K</kbd>
       </button>
 
-      <div className="monarch-topbar__round" aria-live="polite">
+      <div
+        className={roundFlash ? "monarch-topbar__round lv-round-flash" : "monarch-topbar__round"}
+        aria-live="polite"
+      >
         {reachable ? (
           <>
             <span className="dot" />

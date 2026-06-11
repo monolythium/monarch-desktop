@@ -1,0 +1,72 @@
+/* =====================================================
+   Rolling-digit hero ticker (designs/app.css §TICKER).
+   Structural skeleton from the design bible; the reel
+   mechanics (per-digit 0-9 column + translateY) are the
+   live implementation. Font face/size inherit from the
+   surrounding hero number so the visual pass keeps
+   ownership of typography.
+===================================================== */
+
+.hero-ticker {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-weight: 300;
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+}
+
+.hero-ticker__num {
+  display: inline-flex;
+  overflow: hidden;
+  height: 1em;
+}
+
+.hero-ticker__digit {
+  display: inline-block;
+  min-width: 0.58em;
+  position: relative;
+  text-align: center;
+  height: 1em;
+  overflow: hidden;
+}
+
+.hero-ticker__reel {
+  display: flex;
+  flex-direction: column;
+  transition: transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.hero-ticker__cell {
+  height: 1em;
+  line-height: 1;
+  display: block;
+}
+
+.hero-ticker__sep {
+  display: inline-block;
+  height: 1em;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.hero-ticker__suffix {
+  font-size: 0.22em;
+  color: var(--fg-300);
+  font-family: var(--f-sans);
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+
+/* Reduced motion: digits snap to position, no reel animation. */
+.hero-ticker[data-reduced="true"] .hero-ticker__reel,
+.hero-ticker .hero-ticker__reel[data-reduced="true"] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-ticker__reel {
+    transition: none;
+  }
+}
