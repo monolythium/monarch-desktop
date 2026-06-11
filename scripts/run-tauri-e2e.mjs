@@ -103,15 +103,20 @@ const dkgReshareAttestationPath =
 const dkgReshareAttestationJson =
   options.dkgReshareAttestationJson ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION");
 
-await main().catch((err) => {
-  console.error(errorMessage(err));
-  // Hard-exit: `main`'s finally blocks have already run their cleanup by the
-  // time this catch fires, but a lingering child handle (driver session /
-  // spawned window) can keep the event loop alive indefinitely — which turns
-  // a verifier failure into a 45-minute CI step timeout. Failures must
-  // terminate the process immediately.
-  process.exit(1);
-});
+// Hard-exit on BOTH paths: `main`'s finally blocks have already run their
+// cleanup by the time these handlers fire, but a lingering child handle
+// (driver session / spawned window / QEMU pipe) can keep the event loop
+// alive indefinitely — which turns an already-finished run (pass or fail)
+// into a 45-minute CI step timeout.
+await main().then(
+  () => {
+    process.exit(0);
+  },
+  (err) => {
+    console.error(errorMessage(err));
+    process.exit(1);
+  },
+);
 
 async function main() {
   assertFile(appPath, "Tauri app binary");
