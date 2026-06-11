@@ -11,9 +11,23 @@
 //   at authorization time.
 // - Bond: LYTH (whole units) — translated to lythoshi via the SDK
 //   `parseLythToLythoshi` helper (1 LYTH = 1e18 lythoshi) before sign.
+//   HARD-validated against the 5,000 LYTH testnet minimum.
+// - Dummy-proofing: derives the funding address from the stored key,
+//   reads the live balance, and checks for an existing registration so
+//   the operator sees problems before signing, not after.
 
-import { useMemo, useState } from "react";
-import { parseLythToLythoshi } from "@monolythium/core-sdk";
+import { useEffect, useMemo, useState } from "react";
+import { formatLyth, parseLythToLythoshi } from "@monolythium/core-sdk";
+import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import {
+  KEYCHAIN_ACCOUNTS,
+  deriveOperatorConsensusPubkeyHex,
+  inTauri,
+  keychainGet,
+  operatorPubkeyHash,
+} from "../sdk";
+import { rpc } from "../sdk/client";
+import { MIN_REGISTER_BOND_LYTH, MIN_REGISTER_BOND_LYTHOSHI } from "../sdk/onboarding";
 import { useOps } from "./OpsContext";
 
 const CAPABILITY_OPTIONS: ReadonlyArray<{ label: string; mask: number; hint: string }> = [
@@ -42,10 +56,106 @@ function parseBondLyth(value: string): bigint | null {
   }
 }
 
+type WalletProbe = {
+  status: "checking" | "ready" | "no-key" | "unavailable";
+  address: string | null;
+  balanceLythoshi: bigint | null;
+  alreadyRegistered: boolean | null;
+};
+
+function isNotFound(err: unknown): boolean {
+  const e = err as { code?: number; message?: string } | null;
+  const msg = (e?.message ?? "").toLowerCase();
+  return e?.code === -32090 || msg.includes("not found") || msg.includes("unknown operator");
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  let s = "0x";
+  for (const b of bytes) s += b.toString(16).padStart(2, "0");
+  return s;
+}
+
+/** Live wallet context for the register flow: derived funding address,
+ *  native balance, and an existing-registration check. */
+function useRegisterWalletProbe(): WalletProbe {
+  const [probe, setProbe] = useState<WalletProbe>({
+    status: "checking",
+    address: null,
+    balanceLythoshi: null,
+    alreadyRegistered: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!inTauri()) {
+        if (!cancelled) {
+          setProbe({ status: "unavailable", address: null, balanceLythoshi: null, alreadyRegistered: null });
+        }
+        return;
+      }
+      let address: string | null = null;
+      let operatorIdHex: string | null = null;
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (cancelled) return;
+        if (!mnemonic) {
+          setProbe({ status: "no-key", address: null, balanceLythoshi: null, alreadyRegistered: null });
+          return;
+        }
+        // Derive in this scope only — the cleartext is dropped right after.
+        address = pqm1MnemonicToAddress(mnemonic);
+        operatorIdHex = bytesToHex(operatorPubkeyHash(hexToBytes(deriveOperatorConsensusPubkeyHex(mnemonic))));
+      } catch {
+        if (!cancelled) {
+          setProbe({ status: "unavailable", address: null, balanceLythoshi: null, alreadyRegistered: null });
+        }
+        return;
+      }
+
+      let balanceLythoshi: bigint | null = null;
+      let alreadyRegistered: boolean | null = null;
+      await Promise.all([
+        rpc
+          .ethGetBalance(address)
+          .then((result) => {
+            balanceLythoshi = BigInt(result.value);
+          })
+          .catch(() => undefined),
+        rpc
+          .lythOperatorInfo(operatorIdHex)
+          .then(() => {
+            alreadyRegistered = true;
+          })
+          .catch((err: unknown) => {
+            alreadyRegistered = isNotFound(err) ? false : null;
+          }),
+      ]);
+      if (cancelled) return;
+      setProbe({ status: "ready", address, balanceLythoshi, alreadyRegistered });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return probe;
+}
+
 export function RegisterForm() {
   const { request, setRegisterInput } = useOps();
   const input = request?.registerInput;
   const [bondLyth, setBondLyth] = useState("");
+  const wallet = useRegisterWalletProbe();
   const validity = useMemo(() => {
     const endpointOk = !!input && input.endpoint.trim().length > 0;
     const capsOk = !!input && input.capabilities > 0;
@@ -53,7 +163,7 @@ export function RegisterForm() {
       !!input &&
       (() => {
         try {
-          return BigInt(input.bondLythoshi) > 0n;
+          return BigInt(input.bondLythoshi) >= MIN_REGISTER_BOND_LYTHOSHI;
         } catch {
           return false;
         }
@@ -82,9 +192,89 @@ export function RegisterForm() {
     setRegisterInput({ bondLythoshi: parsed !== null ? parsed.toString() : "0" });
   };
 
+  let bondLythoshi = 0n;
+  try {
+    bondLythoshi = BigInt(current.bondLythoshi);
+  } catch {
+    bondLythoshi = 0n;
+  }
+  const balanceCovers =
+    wallet.balanceLythoshi !== null && validity.bondOk
+      ? wallet.balanceLythoshi >= bondLythoshi
+      : null;
+
   return (
     <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
       <div className="cap" style={{ marginBottom: 8 }}>register inputs</div>
+
+      {wallet.status === "no-key" ? (
+        <div className="halo halo--err" style={{ alignSelf: "flex-start", marginBottom: 10, whiteSpace: "normal" }}>
+          <span className="dot" /> No operator key stored — save or generate your 24-word operator
+          mnemonic on the Keys page before registering.
+        </div>
+      ) : null}
+      {wallet.alreadyRegistered === true ? (
+        <div className="halo halo--err" style={{ alignSelf: "flex-start", marginBottom: 10, whiteSpace: "normal" }}>
+          <span className="dot" /> This operator key is already registered on-chain — a second
+          register would be rejected. Use Set operator name or Publish seal key to update metadata.
+        </div>
+      ) : null}
+      {wallet.address ? (
+        <div
+          style={{
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.025)",
+            padding: 12,
+            marginBottom: 12,
+            display: "grid",
+            gap: 7,
+          }}
+        >
+          <div className="kv" style={{ gap: 12 }}>
+            <span className="kv__k">Funding address (yours)</span>
+            <span
+              className="mono"
+              style={{ fontSize: 11, overflowWrap: "anywhere", textAlign: "right", minWidth: 0 }}
+            >
+              {wallet.address}
+              <button
+                type="button"
+                className="copy-btn"
+                style={{ marginLeft: 8 }}
+                onClick={() => void navigator.clipboard?.writeText(wallet.address ?? "")}
+                aria-label="Copy funding address"
+              >
+                CP
+              </button>
+            </span>
+          </div>
+          <div className="kv" style={{ gap: 12 }}>
+            <span className="kv__k">Live balance</span>
+            <span
+              className="mono"
+              style={{
+                fontSize: 11,
+                textAlign: "right",
+                color:
+                  balanceCovers === false
+                    ? "var(--err-300, #fc8181)"
+                    : balanceCovers === true
+                      ? "var(--ok)"
+                      : "var(--fg-300)",
+              }}
+            >
+              {wallet.balanceLythoshi !== null
+                ? `${formatLyth(wallet.balanceLythoshi)}${balanceCovers === false ? " — does not cover the bond" : ""}`
+                : "not readable on this endpoint"}
+            </span>
+          </div>
+          <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+            The bond is paid from this address. Send LYTH here if the balance does not cover the
+            bond plus fees.
+          </span>
+        </div>
+      ) : null}
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
         <span className="kv__k">Endpoint</span>
@@ -148,7 +338,7 @@ export function RegisterForm() {
       </div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
-        <span className="kv__k">Bond (LYTH whole units, ≥ 5,000 on testnet)</span>
+        <span className="kv__k">Bond (LYTH whole units, ≥ {MIN_REGISTER_BOND_LYTH.toLocaleString()} on testnet)</span>
         <input
           type="text"
           inputMode="decimal"
@@ -170,15 +360,16 @@ export function RegisterForm() {
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
           {validity.bondOk
             ? `→ ${current.bondLythoshi} lythoshi`
-            : "Enter a positive LYTH amount."}
+            : `Enter at least ${MIN_REGISTER_BOND_LYTH.toLocaleString()} LYTH — the chain rejects anything below the minimum bond.`}
         </span>
       </label>
     </div>
   );
 }
 
-/** Whether all register inputs are non-empty + well-shaped. Used by
- *  the drawer footer to gate the "Authorize & run" button. */
+/** Whether all register inputs are non-empty + well-shaped (bond hard-
+ *  validated against the 5,000 LYTH testnet minimum). Used by the
+ *  drawer footer to gate the "Authorize & run" button. */
 export function isRegisterInputComplete(
   input: import("./types").RegisterInput | undefined,
 ): boolean {
@@ -186,7 +377,7 @@ export function isRegisterInputComplete(
   if (input.endpoint.trim().length === 0) return false;
   if (input.capabilities <= 0) return false;
   try {
-    if (BigInt(input.bondLythoshi) <= 0n) return false;
+    if (BigInt(input.bondLythoshi) < MIN_REGISTER_BOND_LYTHOSHI) return false;
   } catch {
     return false;
   }

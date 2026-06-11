@@ -30,6 +30,7 @@ import {
   PQM1_ALGO_TAG_MLDSA65,
   PQM1_V1_MNEMONIC_WORDS,
   Pqm1Error,
+  generatePqm1Mnemonic,
   pqm1MnemonicToPayload,
 } from "@monolythium/core-sdk/crypto";
 
@@ -110,12 +111,34 @@ function validateOperatorMnemonic(raw: string): ValidationResult {
   }
 }
 
+type GenerationState = {
+  stage: "reveal" | "confirm";
+  /** Cleartext words — held ONLY while the generation flow is open and
+   *  dropped (state reset) the instant the key is stored or cancelled.
+   *  Never logged, never persisted anywhere except the OS keychain. */
+  words: string[];
+  /** Zero-based indices of the 3 words the operator must re-enter. */
+  confirmIndices: number[];
+  confirmInputs: Record<number, string>;
+};
+
+function pickConfirmIndices(total: number, count = 3): number[] {
+  const picked = new Set<number>();
+  while (picked.size < count) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    picked.add((random[0] ?? 0) % total);
+  }
+  return [...picked].sort((a, b) => a - b);
+}
+
 export function OperatorKeySettings() {
   const [mnemonicDraft, setMnemonicDraft] = useState("");
   const [foundationDraft, setFoundationDraft] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [hasFoundationKey, setHasFoundationKey] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [generation, setGeneration] = useState<GenerationState | null>(null);
   const [message, setMessage] = useState<{
     tone: "ok" | "err" | "info" | "warn";
     text: string;
@@ -213,6 +236,59 @@ export function OperatorKeySettings() {
     }
   };
 
+  const startGeneration = () => {
+    setMessage(null);
+    try {
+      const mnemonic = generatePqm1Mnemonic();
+      const words = mnemonic.trim().split(/\s+/u);
+      setGeneration({
+        stage: "reveal",
+        words,
+        confirmIndices: pickConfirmIndices(words.length),
+        confirmInputs: {},
+      });
+    } catch (err) {
+      setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
+    }
+  };
+
+  const cancelGeneration = () => {
+    // Drop the cleartext words immediately.
+    setGeneration(null);
+    setMessage({ tone: "info", text: "Key generation cancelled — nothing was stored." });
+  };
+
+  const confirmGeneration = async () => {
+    if (!generation) return;
+    const mismatch = generation.confirmIndices.some(
+      (index) =>
+        (generation.confirmInputs[index] ?? "").trim().toLowerCase() !==
+        (generation.words[index] ?? "").toLowerCase(),
+    );
+    if (mismatch) {
+      setMessage({
+        tone: "err",
+        text: "One or more words do not match — check your written copy and try again.",
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await keychainSet(KEYCHAIN_ACCOUNTS.operatorMnemonic, generation.words.join(" "));
+      setHasKey(true);
+      setMessage({
+        tone: "ok",
+        text: "New operator key generated and stored in the OS keychain. Keep the written copy safe — it is the ONLY backup.",
+      });
+    } catch (err) {
+      setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
+    } finally {
+      // Drop the cleartext from React state regardless of outcome.
+      setGeneration(null);
+      setBusy(false);
+    }
+  };
+
   const tauri = inTauri();
 
   return (
@@ -290,8 +366,143 @@ export function OperatorKeySettings() {
           >
             {draftTrimmed ? "Save key" : "Clear key"}
           </button>
+          {!generation ? (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={startGeneration}
+              disabled={busy || !tauri}
+              title={
+                hasKey
+                  ? "Generates a brand-new key; storing it REPLACES the current one"
+                  : "Create a brand-new 24-word PQM-1 operator key"
+              }
+            >
+              Generate new key
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {generation ? (
+        <div
+          style={{
+            marginTop: 14,
+            border: "1px solid var(--gold)",
+            borderRadius: 10,
+            padding: 14,
+            background: "rgba(242,180,65,0.05)",
+          }}
+        >
+          {generation.stage === "reveal" ? (
+            <>
+              <div className="cap" style={{ marginBottom: 8 }}>
+                your new operator key — shown ONCE
+              </div>
+              <p style={{ fontSize: 12, color: "var(--fg-300)", lineHeight: 1.5, margin: "0 0 10px" }}>
+                Write these 24 words down on paper, in order. They ARE your operator: anyone
+                with them controls your node, bond, and funds. Never store them in a file,
+                screenshot, or password manager{hasKey ? ". Storing this key REPLACES the one currently in the keychain" : ""}.
+              </p>
+              <ol
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))",
+                  gap: 6,
+                  margin: 0,
+                  padding: 0,
+                  listStyle: "none",
+                }}
+              >
+                {generation.words.map((word, index) => (
+                  <li
+                    key={`${index}-${word}`}
+                    className="mono"
+                    style={{
+                      fontSize: 12,
+                      padding: "5px 8px",
+                      borderRadius: 6,
+                      background: "rgba(0,0,0,0.3)",
+                      border: "1px solid var(--glass-stroke)",
+                      color: "var(--fg-100)",
+                    }}
+                  >
+                    <span style={{ color: "var(--fg-500)", marginRight: 6 }}>{index + 1}.</span>
+                    {word}
+                  </li>
+                ))}
+              </ol>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button type="button" className="btn btn--primary btn--sm" onClick={() => setGeneration({ ...generation, stage: "confirm", confirmInputs: {} })}>
+                  I wrote it down — continue
+                </button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={cancelGeneration}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="cap" style={{ marginBottom: 8 }}>
+                confirm your written copy
+              </div>
+              <p style={{ fontSize: 12, color: "var(--fg-300)", lineHeight: 1.5, margin: "0 0 10px" }}>
+                Type the requested words from your written copy. The key is stored in the OS
+                keychain only after they match.
+              </p>
+              <div style={{ display: "grid", gap: 8 }}>
+                {generation.confirmIndices.map((index) => (
+                  <label key={index} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="cap" style={{ width: 84, flex: "0 0 auto" }}>
+                      word #{index + 1}
+                    </span>
+                    <input
+                      type="text"
+                      value={generation.confirmInputs[index] ?? ""}
+                      onChange={(e) =>
+                        setGeneration({
+                          ...generation,
+                          confirmInputs: { ...generation.confirmInputs, [index]: e.target.value },
+                        })
+                      }
+                      spellCheck={false}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      className="mono"
+                      style={{
+                        flex: 1,
+                        padding: "8px 10px",
+                        background: "rgba(0,0,0,0.3)",
+                        border: "1px solid var(--glass-stroke)",
+                        borderRadius: 6,
+                        color: "var(--fg-100)",
+                        fontSize: 13,
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={() => void confirmGeneration()}
+                  disabled={busy || generation.confirmIndices.some((index) => !(generation.confirmInputs[index] ?? "").trim())}
+                >
+                  {hasKey ? "Confirm & replace stored key" : "Confirm & store key"}
+                </button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => setGeneration({ ...generation, stage: "reveal" })}>
+                  Show words again
+                </button>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={cancelGeneration}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {!tauri ? (
         <div className="halo halo--warn" style={{ marginTop: 14, alignSelf: "flex-start" }}>

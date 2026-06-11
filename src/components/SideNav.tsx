@@ -5,14 +5,21 @@
 
 import { NavLink } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
+import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { rpcEndpoint, useChainStatus, useNodeStatus } from "../sdk";
 
 const GROUP_ORDER = ["Operator", "Cluster", "Node service", "Chain", "Setup"] as const;
+const SETUP_FIRST_GROUP_ORDER = ["Setup", "Operator", "Cluster", "Node service", "Chain"] as const;
 
 export function SideNav() {
   const status = useNodeStatus();
   const chain = useChainStatus();
-  const grouped = GROUP_ORDER.map((label) => ({
+  // Surface the Setup group FIRST while no operator key is stored — a
+  // brand-new operator should see Welcome/Install/Keys before dashboards.
+  const presence = useKeychainPresence();
+  const order =
+    !presence.checking && !presence.hasOperatorKey ? SETUP_FIRST_GROUP_ORDER : GROUP_ORDER;
+  const grouped = order.map((label) => ({
     label,
     items: NAV_ROUTES.filter((r) => r.group === label),
   }));

@@ -31,6 +31,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Register operator",
     sub: "Submit register tx with bond",
     intro:
+      "Locks your bond (5,000 LYTH minimum on testnet) and lists your node on-chain so clusters can admit you. The bond is paid from your operator wallet and is refundable after you resign and the delay passes.",
+    technical:
       "Posts a signed register tx to precompile 0x1005 from the operator's PQM-1 mnemonic. Locks the bond (sourced from the same wallet's native balance), publishes the endpoint + capabilities, and binds the derived ML-DSA-65 consensus pubkey plus possession proof into the node-registry. Operator self-signed; no foundation multisig required.",
     destructive: false,
     needsPasskey: true,
@@ -59,11 +61,13 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Restore operator",
     sub: "Submit foundation recovery tx",
     intro:
-      "Restore maps to node-registry recoverOperatorNode(bytes32), the disaster-recovery alias for unjail(bytes32). mono-core gates that executor to the foundation multisig; Desktop submits only when a foundation operations signer is present in the OS keychain.",
+      "Brings a removed operator back into rotation after an incident. This is a removal-recovery action reserved for the foundation operations signer — ordinary operator installs cannot run it.",
+    technical:
+      "Restore maps to node-registry recoverOperatorNode(bytes32), the removal-recovery executor (legacy executor name: unjail(bytes32)). mono-core gates that executor to the foundation multisig; Desktop submits only when a foundation operations signer is present in the OS keychain.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign recovery tx",
-    keywords: ["jail", "resume", "rejoin", "missed", "rounds"],
+    keywords: ["restore", "removal", "resume", "rejoin", "missed", "rounds"],
     effects: [
       "Builds recoverOperatorNode(peerId) calldata against node-registry 0x1005.",
       "Reads the foundation operations mnemonic from the OS keychain only during signing.",
@@ -87,7 +91,9 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Set operator name",
     sub: "Submit public operator metadata",
     intro:
-      "Posts a signed setOperatorDisplay(bytes32,string,string) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The public moniker and alias feed lyth_operatorInfo and explorer/operator-console name surfaces. Empty fields clear the stored values.",
+      "Publishes the public, human-readable name other operators and explorers see for your node. Empty fields clear the stored values.",
+    technical:
+      "Posts a signed setOperatorDisplay(bytes32,string,string) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The public moniker and alias feed lyth_operatorInfo and explorer/operator-console name surfaces.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign display metadata tx",
@@ -115,6 +121,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Publish seal key",
     sub: "Submit LythiumSeal EK",
     intro:
+      "Publishes your public seal key so a cluster can include you in sealed-mempool duty. It is safe to publish — only your node holds the private half. Required before you can request a cluster seat.",
+    technical:
       "Posts a signed publishOperatorSealKey(bytes32,bytes) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The public ML-KEM-768 encapsulation key comes from Monarch OS and lets live LythiumSeal rosters include the operator before requestClusterJoin or formCluster.",
     destructive: false,
     needsPasskey: true,
@@ -143,6 +151,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Publish chat peers",
     sub: "Submit operator chat metadata",
     intro:
+      "Publishes the network addresses other operators use to reach you in operator chat. Also a precondition for taking part in a cluster-formation ceremony.",
+    technical:
       "Posts a signed setChatBootstrapPeers(bytes32,bytes) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The stored libp2p multiaddrs feed lyth_getOperatorNetworkMetadata(...).chat.bootstrapPeers so Desktop release e2e and live operator chat can discover bootstrap peers without private local config.",
     destructive: false,
     needsPasskey: true,
@@ -171,6 +181,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Set cluster name",
     sub: "Register public cluster name",
     intro:
+      "Gives your cluster a public, human-readable name that explorers and other operators see. Costs the on-chain annual registration fee.",
+    technical:
       "Posts a signed register(string,uint64) tx to cluster-name registry 0x1104 from the cluster primary anchor key. Monoscan and Desktop read the resulting canonical name through lyth_getClusterName.",
     destructive: false,
     needsPasskey: true,
@@ -199,6 +211,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Rotate signing share",
     sub: "Submit DKG re-share attestation",
     intro:
+      "Records the result of a completed cluster key-share ceremony on-chain so the new signing shares can take effect. Run this only after the ceremony has finished and produced its output files.",
+    technical:
       "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits the operator-signed attestDkgReshare(uint64,bytes,bytes) transaction that marks the Rotate intent as DKG-attested on node-registry 0x1005.",
     destructive: true,
     needsPasskey: true,
@@ -287,6 +301,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Redelegate stake",
     sub: "Submit delegation tx",
     intro:
+      "Moves your delegated LYTH weight from one cluster to another. Your funds never leave your control — only which cluster's rewards you share in changes.",
+    technical:
       "Posts a signed redelegate tx to the delegation precompile from the operator's PQM-1 mnemonic. Moves the caller's delegation weight from the source cluster to the destination cluster after chain confirmation.",
     destructive: true,
     needsPasskey: true,
@@ -315,6 +331,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Export backup",
     sub: "Export stopped Protocore data",
     intro:
+      "Saves an offline copy of your node's chain data to this computer. The node service must already be stopped — hot backups are not supported.",
+    technical:
       "Exports /var/lib/protocore through the Talos Copy API as a local .tar.gz plus a manifest. This is an offline backup path only: Desktop refuses to run unless ext-protocore is already stopped or offline.",
     destructive: false,
     needsPasskey: true,
@@ -343,6 +361,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Apply OS upgrade",
     sub: "Talos image upgrade",
     intro:
+      "Upgrades your node's operating system to a new signed release image. Your chain data survives the upgrade; the node reboots into the new image unless you stage it.",
+    technical:
       "Calls the Talos Upgrade RPC against the trusted node context. Desktop enforces preserve=true so /var/lib/protocore survives the OS image replacement; use the image reference produced by the upgrade-readiness runbook.",
     destructive: true,
     needsPasskey: true,
@@ -372,6 +392,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Rollback OS image",
     sub: "Talos rollback",
     intro:
+      "Reboots your node into the previous operating-system image. Use only when the current image is broken and you have confirmed the older build can still read your node's data.",
+    technical:
       "Calls the Talos Rollback RPC against the trusted node context. Use only after confirming the previous Protocore build can read the current /var/lib/protocore state.",
     destructive: true,
     needsPasskey: true,
@@ -399,6 +421,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Form cluster",
     sub: "Prepare 7 active + 3 standby roster",
     intro:
+      "Creates a brand-new cluster from 10 registered operators (7 active + 3 standby, 7 must agree to act). Every proposed member must sign consent to the exact roster before the chain accepts it.",
+    technical:
       "Submits a self-service formCluster(bytes,bytes,bytes) transaction using the whitepaper topology: 10 operator seats, 7-of-10 threshold, 7 active operators, and 3 standby operators. Desktop validates the ML-DSA-65 consensus pubkeys, derives operator ids, and requires ten roster consent signatures before signing.",
     destructive: true,
     needsPasskey: true,
@@ -427,7 +451,9 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Request cluster join",
     sub: "Prepare CJ-1 join request",
     intro:
-      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator PQM-1 mnemonic, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting. The operator seal key must be published first.",
+      "Asks an existing cluster for a seat. The current members vote on your request, and the chain admits you once enough votes land. Your seal key must be published first, and the bond travels with the request.",
+    technical:
+      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator PQM-1 mnemonic, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign join request",
@@ -455,6 +481,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Vote to admit operator",
     sub: "Prepare CJ-1 admit vote",
     intro:
+      "Casts your vote, as a current cluster member, to admit a candidate operator into your cluster. The chain tallies votes and admits the candidate when the cluster's policy threshold is reached.",
+    technical:
       "Prepares a voteClusterAdmit(uint32,bytes32,bytes) admission vote from a current cluster member. Once CJ-1 is live on the connected chain, Desktop will sign the vote from the member operator key and the chain will tally admission by the cluster policy threshold.",
     destructive: true,
     needsPasskey: true,
@@ -483,7 +511,9 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Resign from cluster",
     sub: "Submit Q120 cluster resignation",
     intro:
-      "Submits a self-signed Tx::ClusterResignation (kind 0x05) from the operator's PQM-1 mnemonic. The resigning operator's ML-DSA-65 consensus key signs the canonical frame and the chain resolves the cluster from on-chain membership — no cluster id is part of the signed payload. After a delay (24h on mainnet, shortened on fast-epoch testnet) the operator's slot is freed and the bond-refund window opens. This is the GUI equivalent of the `operator resign` CLI verb.",
+      "Steps your operator down from its cluster. This cannot be undone: after a delay (24h on mainnet, shorter on testnet) your seat is freed and your bond becomes refundable.",
+    technical:
+      "Submits a self-signed Tx::ClusterResignation (kind 0x05) from the operator's PQM-1 mnemonic. The resigning operator's ML-DSA-65 consensus key signs the canonical frame and the chain resolves the cluster from on-chain membership — no cluster id is part of the signed payload. This is the GUI equivalent of the `operator resign` CLI verb.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign resignation",
@@ -511,6 +541,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Accept cluster invite",
     sub: "Submit foundation Add pending-change",
     intro:
+      "Queues adding an operator to a cluster roster at a future epoch. This is a foundation-coordinated action — it needs the foundation operations signer, which ordinary operator installs do not have.",
+    technical:
       "Cluster invite acceptance queues a foundation-signed submitPendingChange(Add) transaction against node-registry 0x1005. Desktop collects the target ML-DSA-65 consensus pubkey and future effective epoch, signs with the foundation operations signer, and records the tx hash locally.",
     destructive: true,
     needsPasskey: true,
@@ -539,6 +571,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Cluster slot (foundation-coordinated)",
     sub: "Submit foundation Rotate pending-change",
     intro:
+      "Queues swapping an operator seat in a cluster roster at a future epoch. Foundation-coordinated: it needs the foundation operations signer, and the matching key-share ceremony attestation must still follow.",
+    technical:
       "Cluster slot swaps queue a foundation-signed submitPendingChange(Rotate) transaction against node-registry 0x1005. The queued rotate still requires the matching DKG re-share attestation before the epoch boundary, and Desktop submits the on-chain roster intent with an auditable transaction receipt.",
     destructive: true,
     needsPasskey: true,
@@ -568,6 +602,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Freeze admission",
     sub: "Submit foundation incident freeze",
     intro:
+      "Emergency brake: blocks all new operator registrations and roster changes until the incident is resolved. Foundation-only — needs the foundation operations signer.",
+    technical:
       "Submits freezeAdmission(bytes32) to node-registry 0x1005 with the foundation operations signer. The chain records the reason hash and blocks normal register and submitPendingChange admission paths until a replacement/recovery runbook resolves the incident.",
     destructive: true,
     needsPasskey: true,
@@ -596,6 +632,8 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Emergency key rotation",
     sub: "Submit foundation Rotate executor",
     intro:
+      "Forces a cluster key rotation through even while admission is frozen. Foundation-only incident response — needs the foundation operations signer, and the key-share ceremony attestation still follows.",
+    technical:
       "Submits emergencyKeyRotation(bytes,uint64,uint64) to node-registry 0x1005 with the foundation operations signer. The executor queues a Rotate pending change even when normal admission is frozen; the matching DKG re-share attestation still follows through the rotate-keys operation.",
     destructive: true,
     needsPasskey: true,

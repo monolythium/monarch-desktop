@@ -11,7 +11,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 const QUICK_PROMPTS = [
   { label: "why the misses?", query: "why did I miss the last 3 rounds?" },
-  { label: "jail risk?", query: "am I at risk of being removed from rotation?" },
+  { label: "removal risk?", query: "am I at risk of being removed from rotation?" },
   { label: "rotate keys?", query: "is it safe to rotate my signing key now?" },
 ];
 

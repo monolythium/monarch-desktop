@@ -457,9 +457,10 @@ export const DESIGN_SOURCE_AUDIT = [
     file: "install.jsx",
     domain: "setup",
     status: "partial",
-    desktopSurface: "/install",
-    routes: ["/install"],
-    evidence: "Install route and Talos settings surfaces exist.",
+    desktopSurface: "/install and /welcome",
+    routes: ["/install", "/welcome"],
+    evidence:
+      "Install pairing checks now auto-detect status on mount, and /welcome adds the design's first-run intent: concept cards plus the auto-detected 10-step operator checklist gating LastViewRedirect.",
     decision: "Desktop pairs with an existing node; OS flashing/provisioning remains outside Desktop.",
   },
   {
@@ -599,11 +600,12 @@ export const DESIGN_SOURCE_AUDIT = [
     file: "setup-cluster.jsx",
     domain: "cluster-marketplace",
     status: "partial",
-    desktopSurface: "/setup-cluster",
-    routes: ["/setup-cluster"],
+    desktopSurface: "/setup-cluster and /ceremony",
+    routes: ["/setup-cluster", "/ceremony"],
     operationKinds: ["cluster-form", "cluster-request-join", "cluster-vote-admit"],
     runtimePrereq: "CJ-1/formCluster runtime deployment for live submit success.",
-    evidence: "Setup cluster route, CJ-1 request/vote submit prep, and 7 active + 3 standby formCluster submit prep are present.",
+    evidence:
+      "Setup cluster route, CJ-1 request/vote submit prep, 7 active + 3 standby formCluster roster builder, and the /ceremony route (live multi-party formCluster lobby; falls back to a guided placeholder until the ceremony view lands) are present.",
     decision: "Desktop builds and submits request/vote/form transactions with runtime preflight; incompatible runtimes fail before broadcast where preflight is available.",
   },
   {

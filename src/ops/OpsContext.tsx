@@ -55,6 +55,10 @@ import { submitRegister } from "../sdk/register";
 import { submitRecoverOperatorNode } from "../sdk/recoveryOps";
 import { commandFor, talosActionFor } from "./commands";
 import {
+  MISSING_FOUNDATION_KEY_MESSAGE,
+  MISSING_OPERATOR_KEY_MESSAGE,
+} from "./errors";
+import {
   browserExecutionBlocked,
   unsignedExecutionBlocked,
 } from "./executionPolicy";
@@ -271,8 +275,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic first.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "register-tx" },
           );
@@ -322,8 +325,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic first.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "redelegate-tx" },
           );
@@ -376,8 +378,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting setChatBootstrapPeers.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "chat-bootstrap-peers-tx" },
           );
@@ -428,8 +429,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting setOperatorDisplay.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "operator-display-tx" },
           );
@@ -481,8 +481,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting publishOperatorSealKey.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "operator-seal-key-tx" },
           );
@@ -533,8 +532,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Cluster primary anchor mnemonic not in keychain. Store the active anchor mnemonic under monarch-desktop/operator:mnemonic before submitting register(string,uint64).",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "cluster-name-tx" },
           );
@@ -585,8 +583,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Foundation operations mnemonic not in keychain. Store it in Operator settings before submitting recoverOperatorNode.",
+              message: MISSING_FOUNDATION_KEY_MESSAGE,
             },
             { transport: "foundation-recovery-tx" },
           );
@@ -632,8 +629,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Foundation signer mnemonic not in keychain. Store it in Operator settings before submitting submitPendingChange.",
+              message: MISSING_FOUNDATION_KEY_MESSAGE,
             },
             { transport: "foundation-pending-change-tx" },
           );
@@ -686,8 +682,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting requestClusterJoin.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "cluster-join-request-tx" },
           );
@@ -739,8 +734,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting voteClusterAdmit.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "cluster-vote-admit-tx" },
           );
@@ -792,8 +786,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting the cluster resignation.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "cluster-resignation-tx" },
           );
@@ -844,8 +837,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting formCluster.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "cluster-form-tx" },
           );
@@ -893,8 +885,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Operator mnemonic not in keychain. Store it under monarch-desktop/operator:mnemonic before submitting attestDkgReshare.",
+              message: MISSING_OPERATOR_KEY_MESSAGE,
             },
             { transport: "dkg-reshare-tx" },
           );
@@ -942,8 +933,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Foundation signer mnemonic not in keychain. Store it in Operator settings before submitting freezeAdmission.",
+              message: MISSING_FOUNDATION_KEY_MESSAGE,
             },
             { transport: "incident-freeze-admission-tx" },
           );
@@ -993,8 +983,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             req,
             {
               ok: false,
-              message:
-                "Foundation signer mnemonic not in keychain. Store it in Operator settings before submitting emergencyKeyRotation.",
+              message: MISSING_FOUNDATION_KEY_MESSAGE,
             },
             { transport: "incident-emergency-key-rotation-tx" },
           );

@@ -31,7 +31,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g v",
     group: "Operator",
     icon: "OP",
-    keywords: ["operator", "moniker", "keys", "jail", "signing"],
+    keywords: ["operator", "moniker", "keys", "removal", "signing"],
   },
   {
     path: "/hardware",
@@ -77,6 +77,15 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Cluster",
     icon: "CL",
     keywords: ["cluster", "dvt", "ring", "members", "threshold"],
+  },
+  {
+    path: "/ceremony",
+    label: "Ceremony",
+    chord: "f",
+    hint: "g f",
+    group: "Cluster",
+    icon: "CY",
+    keywords: ["ceremony", "form", "cluster", "lobby", "roster", "consent", "dkg"],
   },
   {
     path: "/chat",
@@ -140,6 +149,15 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Chain",
     icon: "AL",
     keywords: ["alerts", "rules", "notifications", "incident"],
+  },
+  {
+    path: "/welcome",
+    label: "Welcome",
+    chord: "b",
+    hint: "g b",
+    group: "Setup",
+    icon: "WL",
+    keywords: ["welcome", "onboarding", "first run", "checklist", "start", "begin", "setup"],
   },
   {
     path: "/install",
