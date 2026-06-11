@@ -49,7 +49,8 @@ export function Hardware() {
         readiness: null,
         telemetry: null,
         loading: false,
-        error: "Hardware view requires the Tauri runtime and a configured Talos control plane.",
+        error:
+          "Open the Monarch Desktop app to see hardware telemetry — the browser preview has no Talos control channel to your node.",
         telemetryError: null,
       });
       return;
@@ -122,8 +123,9 @@ export function Hardware() {
           </div>
         </div>
         {state.error ? (
-          <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
-            <span className="dot" /> {state.error}
+          <div className="empty-state" style={{ marginBottom: 8 }}>
+            <b style={{ color: "var(--fg-100)" }}>No live hardware data</b>
+            <div style={{ marginTop: 4 }}>{state.error}</div>
           </div>
         ) : null}
         <div className="grid-2">

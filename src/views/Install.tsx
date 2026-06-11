@@ -1,18 +1,17 @@
-// Install — first-run wizard. Monarch connects to and operates a node
+// Install — node-pairing wizard. Monarch connects to and operates a node
 // that has ALREADY been provisioned out-of-band (flash the signed
-// Monarch OS ISO + talosctl). This wizard does NOT provision a node —
-// it inspects an existing one and pairs with it. Five steps:
+// Monarch OS image + talosctl). This wizard does NOT provision a node —
+// it inspects an existing one and pairs with it. Five checks:
 // detect the control channel → read the Talos context → inspect the
-// protocore service → store control-channel material in the OS keychain
-// → RPC handshake with the running node. Each step renders as a row
-// with a status pill (PENDING / READY / RUNNING / DONE); the active row
-// gets the gold halo + a fill bar that animates while running.
+// protocore service → control-channel material in the OS keychain →
+// RPC handshake with the running node.
 //
-// The runner uses the live bridge for every step: SSH/Talos status,
-// Talos context + service inspection, keychain checks, and the RPC
-// handshake. No step apply-config/bootstraps/upgrades the node.
+// Every check runs AUTOMATICALLY on mount (and on "Re-run checks") —
+// statuses are detected, never hardcoded. A check that cannot run on
+// this runtime (browser preview) shows UNKNOWN, which is explicitly not
+// the same as "not done".
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   KEYCHAIN_ACCOUNTS,
   inTauri,
@@ -23,113 +22,189 @@ import {
   talosStatus,
   useNodeStatus,
 } from "../sdk";
+import { MONARCH_OS_ISO_URL } from "../sdk/onboarding";
 
-type StepState = "pending" | "ready" | "running" | "done";
+type StepStatus = "checking" | "done" | "todo" | "unknown";
+
+type StepResult = { status: StepStatus; note: string };
 
 const PAIRING_STEPS = [
   {
     n: 1,
     label: "Detect the node's control channel",
     detail:
-      "probe the configured Talos API / SSH endpoint · the node is provisioned out-of-band (signed Monarch OS ISO + talosctl)",
-    status: "done" as const,
+      "probe the configured Talos API / SSH endpoint · the node is provisioned out-of-band (signed Monarch OS image + talosctl)",
   },
   {
     n: 2,
     label: "Read the Talos context",
     detail:
       "verify the configured Talos context + node list · surfaces any config warnings",
-    status: "done" as const,
   },
   {
     n: 3,
     label: "Inspect the protocore service",
     detail:
       "read the ext-protocore service state over the Talos API · no install or provisioning performed here",
-    status: "current" as const,
   },
   {
     n: 4,
-    label: "Store control-channel material in OS keychain",
+    label: "Control-channel material in OS keychain",
     detail:
       "Talos endpoint + config path + expected release digest · stored in the OS keychain",
-    status: "todo" as const,
   },
   {
     n: 5,
     label: "RPC handshake with the running node",
     detail:
-      "lyth_chainStatus over the pinned endpoint · confirms the node is live and reachable",
-    status: "todo" as const,
+      "chain status over the pinned endpoint · confirms the node is live and reachable",
   },
-];
+] as const;
+
+const CHECKING: StepResult = { status: "checking", note: "" };
+
+async function runInstallCheck(index: number, rpcReachable: boolean): Promise<StepResult> {
+  if (!inTauri()) {
+    if (index === 4) {
+      // The RPC handshake works from the browser preview too.
+      return rpcReachable
+        ? { status: "done", note: "RPC handshake passed" }
+        : { status: "todo", note: "RPC handshake failed; node is unreachable" };
+    }
+    return {
+      status: "unknown",
+      note: "Needs the Monarch Desktop app — the browser preview cannot verify Talos, SSH, keychain, or service state.",
+    };
+  }
+
+  if (index === 0) {
+    const [ssh, talos] = await Promise.all([
+      sshStatus().catch(() => null),
+      talosStatus().catch(() => null),
+    ]);
+    if (talos?.configured) {
+      return talos.reachable
+        ? { status: "done", note: `Talos reachable at ${talos.endpoint ?? "configured endpoint"}` }
+        : { status: "todo", note: `Talos configured but not reachable: ${talos.lastError ?? "unknown error"}` };
+    }
+    if (ssh?.connected) return { status: "done", note: `SSH connected to ${ssh.user}@${ssh.host}` };
+    return {
+      status: "todo",
+      note: "No SSH or Talos control channel is configured — open Operations → Talos settings.",
+    };
+  }
+
+  if (index === 1) {
+    const info = await talosConfigInfo().catch(() => null);
+    if (!info) {
+      return { status: "unknown", note: "SSH/plain-host mode: host requirements verified manually" };
+    }
+    if (info.warnings.length > 0) {
+      return { status: "todo", note: `Talos config warning: ${info.warnings[0]}` };
+    }
+    return {
+      status: "done",
+      note: `Talos context ${info.context} verified; ${info.nodes.length} node(s) listed`,
+    };
+  }
+
+  if (index === 2) {
+    const service = await talosService("ext-protocore").catch(() => null);
+    if (!service) {
+      return { status: "unknown", note: "Plain-host mode: service inspection requires the Talos API" };
+    }
+    return {
+      status: "done",
+      note: `Service ${service.service?.displayState ?? "status"} via ${service.endpoint}`,
+    };
+  }
+
+  if (index === 3) {
+    const keys = await Promise.all([
+      keychainGet(KEYCHAIN_ACCOUNTS.talosEndpoint).catch(() => null),
+      keychainGet(KEYCHAIN_ACCOUNTS.talosConfigPath).catch(() => null),
+      keychainGet(KEYCHAIN_ACCOUNTS.protocoreExpectedDigest).catch(() => null),
+      keychainGet(KEYCHAIN_ACCOUNTS.sshHost).catch(() => null),
+      keychainGet(KEYCHAIN_ACCOUNTS.sshUser).catch(() => null),
+    ]);
+    if (keys.some(Boolean)) {
+      return {
+        status: "done",
+        note: keys[2]
+          ? "OS keychain contains control-channel material and the expected release digest"
+          : "OS keychain contains control-channel material; release digest is not stored locally",
+      };
+    }
+    return {
+      status: "todo",
+      note: "No Monarch control-channel credentials found in the OS keychain — save them in Operations → Talos settings.",
+    };
+  }
+
+  if (index === 4) {
+    return rpcReachable
+      ? { status: "done", note: "RPC handshake passed" }
+      : { status: "todo", note: "RPC handshake failed; node is unreachable" };
+  }
+
+  return { status: "unknown", note: "" };
+}
 
 export function Install() {
   const status = useNodeStatus();
+  const [results, setResults] = useState<StepResult[]>(() =>
+    PAIRING_STEPS.map(() => CHECKING),
+  );
+  const [running, setRunning] = useState(false);
 
-  // The static pairing plan's "done"/"current"/"todo" status seeds the cursor;
-  // live checks run when each row is advanced.
-  const initialCursor = useMemo(() => {
-    const idx = PAIRING_STEPS.findIndex((s) => s.status === "current");
-    return idx === -1 ? 0 : idx;
+  const runAll = useCallback(async (rpcReachable: boolean) => {
+    setRunning(true);
+    setResults(PAIRING_STEPS.map(() => CHECKING));
+    for (let i = 0; i < PAIRING_STEPS.length; i += 1) {
+      let result: StepResult;
+      try {
+        result = await runInstallCheck(i, rpcReachable);
+      } catch (err) {
+        result = { status: "todo", note: (err as Error)?.message ?? String(err) };
+      }
+      setResults((prev) => prev.map((entry, idx) => (idx === i ? result : entry)));
+    }
+    setRunning(false);
   }, []);
 
-  const [cursor, setCursor] = useState(initialCursor);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [complete, setComplete] = useState(false);
-  const [stepNotes, setStepNotes] = useState<Record<number, string>>({});
+  // Run every probe automatically on mount — no "Run step N" clicking.
+  // The RPC step re-evaluates when reachability flips.
+  useEffect(() => {
+    void runAll(status.reachable);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const stepState = (i: number): StepState => {
-    if (complete || i < cursor) return "done";
-    if (i > cursor) return "pending";
-    return running ? "running" : "ready";
-  };
+  useEffect(() => {
+    setResults((prev) =>
+      prev.map((entry, idx) =>
+        idx === 4 && entry.status !== "checking"
+          ? status.reachable
+            ? { status: "done", note: "RPC handshake passed" }
+            : { status: "todo", note: "RPC handshake failed; node is unreachable" }
+          : entry,
+      ),
+    );
+  }, [status.reachable]);
 
-  const runCurrentStep = async () => {
-    if (running || complete) return;
-    setRunning(true);
-    setProgress(12);
-    const ticker = window.setInterval(() => {
-      setProgress((p) => Math.min(92, p + 9));
-    }, 120);
-    try {
-      const note = await runInstallStep(cursor, status.reachable);
-      setStepNotes((prev) => ({ ...prev, [cursor]: note }));
-      setProgress(100);
-      window.setTimeout(() => {
-        setCursor((c) => {
-          if (c >= PAIRING_STEPS.length - 1) {
-            setComplete(true);
-            return c;
-          }
-          return c + 1;
-        });
-        setProgress(0);
-      }, 220);
-    } catch (err) {
-      setStepNotes((prev) => ({
-        ...prev,
-        [cursor]: (err as Error)?.message ?? String(err),
-      }));
-      setProgress(0);
-    } finally {
-      window.clearInterval(ticker);
-      setRunning(false);
-    }
-  };
+  const doneCount = results.filter((entry) => entry.status === "done").length;
+  const allDone = doneCount === PAIRING_STEPS.length;
 
   return (
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Install</h1>
         <p className="view__subtitle">
-          connect Monarch to an already-provisioned Monolythium operator node · provisioning is done out-of-band with the signed Monarch OS ISO + talosctl
+          connect Monarch to an already-provisioned Monolythium operator node · provisioning is done out-of-band with the signed Monarch OS image + talosctl
         </p>
       </header>
 
       <div className="card card--padded" style={{ textAlign: "center", padding: 40 }}>
-        <div className="cap">first-run setup</div>
+        <div className="cap">node pairing</div>
         <div
           className="numeral"
           style={{
@@ -138,8 +213,8 @@ export function Install() {
             lineHeight: 1.05,
           }}
         >
-          welcome,<br />
-          <span style={{ color: "var(--gold)" }}>operator.</span>
+          pair your<br />
+          <span style={{ color: "var(--gold)" }}>node.</span>
         </div>
         <p
           style={{
@@ -151,13 +226,19 @@ export function Install() {
             lineHeight: 1.5,
           }}
         >
-          Monarch runs on your laptop and connects to a node you have already provisioned, through pinned control channels. Nothing leaves your machine unencrypted. Five steps to pair.
+          Monarch runs on your laptop and connects to a node you have already provisioned with
+          the{" "}
+          <a href={MONARCH_OS_ISO_URL} target="_blank" rel="noreferrer" style={{ color: "var(--gold)" }}>
+            signed Monarch OS image ↗
+          </a>
+          , through pinned control channels. Nothing leaves your machine unencrypted. The five
+          checks below run automatically.
         </p>
       </div>
 
       <div className="card" style={{ padding: 0, overflow: "hidden", maxWidth: 820, margin: "0 auto" }}>
         {PAIRING_STEPS.map((s, i) => {
-          const state = stepState(i);
+          const result = results[i] ?? CHECKING;
           return (
             <div
               key={s.n}
@@ -168,19 +249,18 @@ export function Install() {
                 padding: "18px 22px",
                 alignItems: "center",
                 borderTop: i > 0 ? "1px solid var(--glass-stroke)" : "none",
-                background: state === "ready" || state === "running"
+                background: result.status === "todo"
                   ? "rgba(242,180,65,0.05)"
                   : "transparent",
               }}
             >
-              <StepBadge state={state} n={s.n} />
+              <StepBadge status={result.status} n={s.n} />
               <div>
                 <div
                   style={{
                     fontSize: 14,
                     fontWeight: 500,
-                    color:
-                      state === "pending" ? "var(--fg-400)" : "var(--fg-100)",
+                    color: result.status === "unknown" ? "var(--fg-400)" : "var(--fg-100)",
                   }}
                 >
                   {s.n}. {s.label}
@@ -195,33 +275,12 @@ export function Install() {
                 >
                   {s.detail}
                 </div>
-                {stepNotes[i] ? (
-                  <div className="install-note mono">{stepNotes[i]}</div>
-                ) : null}
-                {state === "running" ? (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      height: 3,
-                      borderRadius: 3,
-                      background: "rgba(255,255,255,0.06)",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: "100%",
-                        width: `${progress}%`,
-                        background: "var(--gold)",
-                        boxShadow: "0 0 10px var(--gold)",
-                        transition: "width 70ms linear",
-                      }}
-                    />
-                  </div>
+                {result.note ? (
+                  <div className="install-note mono">{result.note}</div>
                 ) : null}
               </div>
-              <span className={stateHalo(state)} style={{ letterSpacing: "0.08em" }}>
-                {state.toUpperCase()}
+              <span className={statusHalo(result.status)} style={{ letterSpacing: "0.08em" }}>
+                {statusText(result.status)}
               </span>
             </div>
           );
@@ -233,35 +292,23 @@ export function Install() {
             borderTop: "1px solid var(--glass-stroke)",
             display: "flex",
             gap: 10,
-            justifyContent: "flex-end",
+            justifyContent: "space-between",
+            alignItems: "center",
             background: "rgba(255,255,255,0.02)",
           }}
         >
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
-            disabled={cursor === 0 || running}
-            onClick={() => {
-              setCursor(Math.max(0, cursor - 1));
-              setComplete(false);
-              setProgress(0);
-            }}
-          >
-            Back
-          </button>
+          <span style={{ fontSize: 11.5, color: "var(--fg-400)" }}>
+            {allDone
+              ? "All pairing checks pass — your node is connected."
+              : `${doneCount} of ${PAIRING_STEPS.length} checks pass · statuses are detected live, not remembered.`}
+          </span>
           <button
             type="button"
             className="btn btn--primary btn--sm"
-            disabled={running || complete}
-            onClick={() => void runCurrentStep()}
+            disabled={running}
+            onClick={() => void runAll(status.reachable)}
           >
-            {complete
-              ? "Setup complete"
-              : running
-                ? "Running…"
-                : cursor < PAIRING_STEPS.length - 1
-                  ? `Run step ${cursor + 1}`
-                  : "Finish setup"}
+            {running ? "Checking…" : "Re-run checks"}
           </button>
         </div>
       </div>
@@ -270,7 +317,7 @@ export function Install() {
         <div className="card__head">
           <div>
             <h3>Live RPC handshake</h3>
-            <div className="sub">step 5 verifies the node responds before pairing finishes</div>
+            <div className="sub">check 5 verifies the node responds before pairing finishes</div>
           </div>
           <span className={status.reachable ? "halo halo--ok" : "halo halo--err"}>
             <span className="dot" /> {status.reachable ? "reachable" : "unreachable"}
@@ -307,74 +354,21 @@ export function Install() {
   );
 }
 
-async function runInstallStep(index: number, rpcReachable: boolean): Promise<string> {
-  if (!inTauri()) {
-    throw new Error(
-      "Pairing checks require Monarch Desktop; browser preview cannot verify Talos, SSH, keychain, or service state.",
-    );
-  }
-
-  if (index === 0) {
-    const [ssh, talos] = await Promise.all([
-      sshStatus().catch(() => null),
-      talosStatus().catch(() => null),
-    ]);
-    if (talos?.configured) {
-      return talos.reachable
-        ? `Talos reachable at ${talos.endpoint ?? "configured endpoint"}`
-        : `Talos configured but not reachable: ${talos.lastError ?? "unknown error"}`;
-    }
-    if (ssh?.connected) return `SSH connected to ${ssh.user}@${ssh.host}`;
-    throw new Error("No SSH or Talos control channel is configured");
-  }
-
-  if (index === 1) {
-    const info = await talosConfigInfo().catch(() => null);
-    if (!info) return "SSH/plain-host mode: host requirements verified manually";
-    if (info.warnings.length > 0) {
-      throw new Error(`Talos config warning: ${info.warnings[0]}`);
-    }
-    return `Talos context ${info.context} verified; ${info.nodes.length} node(s) listed`;
-  }
-
-  if (index === 2) {
-    const service = await talosService("ext-protocore").catch(() => null);
-    if (!service) return "Plain-host mode: CLI/service install check requires SSH operations";
-    return `Service ${service.service?.displayState ?? "status"} via ${service.endpoint}`;
-  }
-
-  if (index === 3) {
-    const keys = await Promise.all([
-      keychainGet(KEYCHAIN_ACCOUNTS.talosEndpoint),
-      keychainGet(KEYCHAIN_ACCOUNTS.talosConfigPath),
-      keychainGet(KEYCHAIN_ACCOUNTS.protocoreExpectedDigest),
-      keychainGet(KEYCHAIN_ACCOUNTS.sshHost),
-      keychainGet(KEYCHAIN_ACCOUNTS.sshUser),
-    ]);
-    if (keys.some(Boolean)) {
-      return keys[2]
-        ? "OS keychain contains control-channel material and expected release digest"
-        : "OS keychain contains control-channel material; release digest is not stored locally";
-    }
-    throw new Error("No Monarch control-channel credentials found in OS keychain");
-  }
-
-  if (index === 4) {
-    if (!rpcReachable) throw new Error("RPC handshake failed; node is unreachable");
-    return "RPC handshake passed";
-  }
-
-  return "step complete";
+function statusHalo(status: StepStatus): string {
+  if (status === "done") return "halo halo--ok";
+  if (status === "checking") return "halo halo--info";
+  if (status === "todo") return "halo halo--gold";
+  return "halo halo--warn";
 }
 
-function stateHalo(state: StepState): string {
-  if (state === "done") return "halo halo--ok";
-  if (state === "running") return "halo halo--info";
-  if (state === "ready") return "halo halo--gold";
-  return "halo";
+function statusText(status: StepStatus): string {
+  if (status === "done") return "DONE";
+  if (status === "checking") return "CHECKING";
+  if (status === "todo") return "TO DO";
+  return "UNKNOWN";
 }
 
-function StepBadge({ state, n }: { state: StepState; n: number }) {
+function StepBadge({ status, n }: { status: StepStatus; n: number }) {
   const colors = {
     done: {
       bg: "oklch(0.30 0.08 155)",
@@ -382,26 +376,26 @@ function StepBadge({ state, n }: { state: StepState; n: number }) {
       fg: "oklch(0.82 0.16 155)",
       glow: "none",
     },
-    ready: {
+    todo: {
       bg: "rgba(242,180,65,0.18)",
       border: "var(--gold)",
       fg: "var(--gold)",
       glow: "0 0 16px rgba(242,180,65,0.3)",
     },
-    running: {
-      bg: "rgba(242,180,65,0.18)",
-      border: "var(--gold)",
-      fg: "var(--gold)",
-      glow: "0 0 16px rgba(242,180,65,0.3)",
+    checking: {
+      bg: "rgba(255,255,255,0.04)",
+      border: "var(--glass-stroke)",
+      fg: "var(--fg-300)",
+      glow: "none",
     },
-    pending: {
+    unknown: {
       bg: "rgba(255,255,255,0.04)",
       border: "var(--glass-stroke)",
       fg: "var(--fg-400)",
       glow: "none",
     },
   } as const;
-  const c = colors[state];
+  const c = colors[status];
   return (
     <div
       style={{
@@ -419,7 +413,7 @@ function StepBadge({ state, n }: { state: StepState; n: number }) {
         fontWeight: 500,
       }}
     >
-      {state === "done" ? "✓" : ["SH", "HW", "CL", "KC", "BT"][n - 1] ?? n}
+      {status === "done" ? "✓" : ["SH", "HW", "CL", "KC", "BT"][n - 1] ?? n}
     </div>
   );
 }

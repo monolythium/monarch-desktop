@@ -1,5 +1,6 @@
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
+  KEYCHAIN_ACCOUNTS,
   MONARCH_ACTIVE_OPERATOR_SEATS,
   MONARCH_CLUSTER_SIZE,
   MONARCH_CLUSTER_THRESHOLD,
@@ -7,8 +8,11 @@ import {
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
   FORM_CLUSTER_SIGNATURE_BYTES,
   FORM_CLUSTER_MEMBER_COUNT,
+  deriveOperatorConsensusPubkeyHex,
   formClusterConsentMessageHex,
+  keychainGet,
   operatorPubkeyHash,
+  useProviderDirectory,
 } from "../sdk";
 import { useOps } from "./OpsContext";
 import type { ClusterFormInput } from "./types";
@@ -207,6 +211,36 @@ function summaryTone(ok: boolean): string {
   return ok ? "halo halo--ok" : "halo halo--warn";
 }
 
+type SeatRole = "active" | "standby";
+
+function seatArray(joined: string, count: number): string[] {
+  const parsed = parseClusterFormPubkeys(joined);
+  const seats = parsed.slice(0, count);
+  while (seats.length < count) seats.push("");
+  return seats;
+}
+
+/** Local stored-key probe so the operator can drop their own key into a seat. */
+function useStoredSelfPubkey(): string {
+  const [pubkey, setPubkey] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (cancelled || !mnemonic) return;
+        setPubkey(deriveOperatorConsensusPubkeyHex(mnemonic));
+      } catch {
+        // Browser preview / keychain unavailable: no prefill.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return pubkey;
+}
+
 export function ClusterFormProposalForm() {
   const { request, setClusterFormInput } = useOps();
   const input = request?.clusterFormInput;
@@ -214,6 +248,28 @@ export function ClusterFormProposalForm() {
     ? input
     : { activePubkeysHex: "", standbyPubkeysHex: "", signaturesHex: "" };
   const summary = useMemo(() => clusterFormProposalSummary(current), [current]);
+  const [mode, setMode] = useState<"builder" | "bulk">(() =>
+    // If a bulk payload was prefilled (ceremony export / paste), open in
+    // bulk mode so nothing the operator pasted is hidden.
+    parseClusterFormPubkeys(current.activePubkeysHex).length > 0 ||
+    parseClusterFormPubkeys(current.standbyPubkeysHex).length > 0
+      ? "bulk"
+      : "builder",
+  );
+  const [activeSeats, setActiveSeats] = useState<string[]>(() =>
+    seatArray(current.activePubkeysHex, MONARCH_ACTIVE_OPERATOR_SEATS),
+  );
+  const [standbySeats, setStandbySeats] = useState<string[]>(() =>
+    seatArray(current.standbyPubkeysHex, MONARCH_STANDBY_OPERATOR_SEATS),
+  );
+  const providers = useProviderDirectory(0, null, 100);
+  const selfPubkey = useStoredSelfPubkey();
+  const registeredIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of providers.data ?? []) set.add(row.peerId.toLowerCase());
+    return set;
+  }, [providers.data]);
+
   const activeOk =
     summary.activeCount === MONARCH_ACTIVE_OPERATOR_SEATS &&
     summary.invalidActiveCount === 0 &&
@@ -227,6 +283,95 @@ export function ClusterFormProposalForm() {
     summary.invalidSignatureCount === 0;
 
   if (!request || request.kind !== "cluster-form") return null;
+
+  const writeSeats = (nextActive: string[], nextStandby: string[]) => {
+    setActiveSeats(nextActive);
+    setStandbySeats(nextStandby);
+    setClusterFormInput({
+      activePubkeysHex: nextActive.map(normalizeHex).filter(Boolean).join("\n"),
+      standbyPubkeysHex: nextStandby.map(normalizeHex).filter(Boolean).join("\n"),
+    });
+  };
+
+  const setSeat = (role: SeatRole, index: number, value: string) => {
+    if (role === "active") {
+      const next = [...activeSeats];
+      next[index] = value;
+      writeSeats(next, standbySeats);
+    } else {
+      const next = [...standbySeats];
+      next[index] = value;
+      writeSeats(activeSeats, next);
+    }
+  };
+
+  const selfNormalized = normalizeHex(selfPubkey);
+  const selfAlreadySeated =
+    !!selfNormalized &&
+    [...activeSeats, ...standbySeats].some((seat) => normalizeHex(seat) === selfNormalized);
+
+  const seatRow = (role: SeatRole, index: number, value: string) => {
+    const normalized = normalizeHex(value);
+    const filled = normalized.length > 0;
+    const valid = filled && isFixedConsensusPubkeyHex(normalized);
+    const operatorId = valid ? operatorIdForPubkeyHex(normalized) : "";
+    const registered =
+      valid && registeredIds.size > 0 ? registeredIds.has(operatorId.toLowerCase()) : null;
+    const isSelf = valid && !!selfNormalized && normalized === selfNormalized;
+    return (
+      <div key={`${role}-${index}`} style={{ display: "grid", gap: 4 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="kv__k" style={{ width: 86, flex: "0 0 auto" }}>
+            {role} {index + 1}
+            {isSelf ? (
+              <span className="halo halo--gold" style={{ marginLeft: 6, fontSize: 9 }}>YOU</span>
+            ) : null}
+          </span>
+          <input
+            type="text"
+            placeholder={`0x… ${NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES}-byte consensus pubkey`}
+            value={value}
+            onChange={(event) => setSeat(role, index, event.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            style={{
+              ...inputStyle(!filled || valid),
+              minHeight: 0,
+              resize: "none",
+              flex: 1,
+              padding: "6px 8px",
+            }}
+          />
+          {!filled && selfNormalized && !selfAlreadySeated ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setSeat(role, index, selfNormalized)}
+              title="Fill this seat with your own consensus pubkey (derived from the stored mnemonic)"
+            >
+              Use my key
+            </button>
+          ) : null}
+        </div>
+        {valid ? (
+          <span className="mono" style={{ fontSize: 10, color: "var(--fg-400)", paddingLeft: 94 }}>
+            id {compactHex(operatorId, 12, 8)}
+            {registered === true
+              ? " · registered ✓"
+              : registered === false
+                ? " · NOT in the provider directory — this operator must register first"
+                : ""}
+          </span>
+        ) : filled ? (
+          <span style={{ fontSize: 10, color: "var(--err-300, #fc8181)", paddingLeft: 94 }}>
+            not a {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES}-byte consensus pubkey
+          </span>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
@@ -270,42 +415,78 @@ export function ClusterFormProposalForm() {
         ) : null}
       </div>
 
-      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-        <span className="kv__k">Active operator consensus pubkeys</span>
-        <textarea
-          placeholder="0x..."
-          value={current.activePubkeysHex}
-          onChange={(event) => setClusterFormInput({ activePubkeysHex: event.target.value })}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          style={inputStyle(activeOk)}
-        />
-        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          One {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES} byte ML-DSA-65 consensus pubkey per line; exactly {MONARCH_ACTIVE_OPERATOR_SEATS} active seats.
-        </span>
-      </label>
+      <div className="segmented" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={mode === "builder" ? "is-on" : ""}
+          onClick={() => {
+            setActiveSeats(seatArray(current.activePubkeysHex, MONARCH_ACTIVE_OPERATOR_SEATS));
+            setStandbySeats(seatArray(current.standbyPubkeysHex, MONARCH_STANDBY_OPERATOR_SEATS));
+            setMode("builder");
+          }}
+        >
+          Roster builder
+        </button>
+        <button
+          type="button"
+          className={mode === "bulk" ? "is-on" : ""}
+          onClick={() => setMode("bulk")}
+        >
+          Bulk paste (advanced)
+        </button>
+      </div>
 
-      <label
-        className="kv"
-        style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
-      >
-        <span className="kv__k">Standby operator consensus pubkeys</span>
-        <textarea
-          placeholder="0x..."
-          value={current.standbyPubkeysHex}
-          onChange={(event) => setClusterFormInput({ standbyPubkeysHex: event.target.value })}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          style={inputStyle(standbyOk)}
-        />
-        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          Exactly {MONARCH_STANDBY_OPERATOR_SEATS} standby pubkeys; duplicates across active and standby are rejected.
-        </span>
-      </label>
+      {mode === "builder" ? (
+        <div style={{ display: "grid", gap: 10 }}>
+          <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+            Paste one consensus pubkey per seat (each member shares theirs — the ceremony room
+            automates this). Seats are checked live against the on-chain provider directory
+            {providers.notExposed ? " (directory not exposed on this endpoint)" : ""}.
+          </span>
+          {activeSeats.map((seat, index) => seatRow("active", index, seat))}
+          <div style={{ borderTop: "1px solid var(--glass-stroke)", margin: "2px 0" }} />
+          {standbySeats.map((seat, index) => seatRow("standby", index, seat))}
+        </div>
+      ) : (
+        <>
+          <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+            <span className="kv__k">Active operator consensus pubkeys</span>
+            <textarea
+              placeholder="0x..."
+              value={current.activePubkeysHex}
+              onChange={(event) => setClusterFormInput({ activePubkeysHex: event.target.value })}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              style={inputStyle(activeOk)}
+            />
+            <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+              One {NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES} byte ML-DSA-65 consensus pubkey per line; exactly {MONARCH_ACTIVE_OPERATOR_SEATS} active seats.
+            </span>
+          </label>
+
+          <label
+            className="kv"
+            style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
+          >
+            <span className="kv__k">Standby operator consensus pubkeys</span>
+            <textarea
+              placeholder="0x..."
+              value={current.standbyPubkeysHex}
+              onChange={(event) => setClusterFormInput({ standbyPubkeysHex: event.target.value })}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              style={inputStyle(standbyOk)}
+            />
+            <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+              Exactly {MONARCH_STANDBY_OPERATOR_SEATS} standby pubkeys; duplicates across active and standby are rejected.
+            </span>
+          </label>
+        </>
+      )}
 
       <label
         className="kv"
@@ -324,7 +505,7 @@ export function ClusterFormProposalForm() {
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
           Exactly {FORM_CLUSTER_MEMBER_COUNT} signatures over the consent digest, active roster first,
-          then standby roster.
+          then standby roster. The ceremony room collects these automatically.
         </span>
       </label>
 

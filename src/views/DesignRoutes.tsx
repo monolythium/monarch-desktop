@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { OperatorKeySettings } from "../components/OperatorKeySettings";
+import { Term } from "../components/Term";
+import { useKeychainPresence, useSelfOperator } from "../hooks/useSelfOperator";
 import {
   OP_CATALOG,
   useOps,
@@ -956,25 +958,64 @@ export function Alerts() {
 }
 
 export function Wallets() {
-  const cluster = useClusterStatus(ACTIVE_CLUSTER_ID);
-  const operatorId = cluster.data?.members[0]?.operatorId ?? null;
-  const operator = useOperatorInfo(operatorId);
+  const navigate = useNavigate();
+  // YOUR wallet — identity derived from the stored key, not member[0].
+  const self = useSelfOperator();
+  const operator = useOperatorInfo(self.operatorId);
   const operatorAddress =
     !operator.notExposed && operator.data?.address.startsWith("mono1")
       ? operator.data.address
       : null;
   const feeConfig = useOperatorFeeConfig(operatorAddress);
+  const fundingAddress = operator.data?.address ?? self.address;
 
   return (
     <section className="view fade-in">
       <PageHeader
         title="Treasury"
-        subtitle="Operator account, bond, fee recipient, and wallet blockers."
+        subtitle="YOUR operator account, bond, fee recipient, and wallet blockers."
         action={<CatalogButton kind="redelegate" variant="primary" size="md">Redelegate</CatalogButton>}
       />
 
+      {self.status === "no-key" ? (
+        <div className="card card--padded" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div>
+            <b style={{ fontSize: 14 }}>No operator key stored</b>
+            <p style={{ fontSize: 12, color: "var(--fg-400)", margin: "4px 0 0" }}>
+              Treasury shows the wallet derived from YOUR operator key. Save or generate your
+              24-word mnemonic to see your address, bond, and balance here.
+            </p>
+          </div>
+          <button type="button" className="btn btn--primary btn--sm" onClick={() => navigate("/keys")}>
+            Set up your operator key →
+          </button>
+        </div>
+      ) : fundingAddress ? (
+        <div className="card card--padded" style={{ display: "grid", gap: 6 }}>
+          <div className="kv" style={{ gap: 12 }}>
+            <span className="kv__k">Your funding address</span>
+            <span className="mono" style={{ fontSize: 12, overflowWrap: "anywhere", textAlign: "right", minWidth: 0 }}>
+              {fundingAddress}
+              <button
+                type="button"
+                className="copy-btn"
+                style={{ marginLeft: 8 }}
+                onClick={() => void navigator.clipboard?.writeText(fundingAddress)}
+                aria-label="Copy funding address"
+              >
+                CP
+              </button>
+            </span>
+          </div>
+          <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+            Send LYTH here to fund the 5,000 LYTH registration <Term k="bond">bond</Term> and
+            transaction fees. The bond is paid from this address when you register.
+          </span>
+        </div>
+      ) : null}
+
       <div className="grid-3">
-        <StatCard label="operator account" value={shortHex(operator.data?.address, 12, 10)} sub="chain address" tone={operator.data ? "ok" : "warn"} />
+        <StatCard label="your account" value={shortHex(fundingAddress, 12, 10)} sub={self.registered === true ? "registered operator" : self.registered === false ? "not registered yet" : "chain address"} tone={fundingAddress ? "ok" : "warn"} />
         <StatCard label="bonded stake" value={operator.data?.bondedStake ?? "-"} sub="lythoshi from registry" tone="gold" />
         <StatCard
           label="fee config"
@@ -1011,20 +1052,64 @@ export function SetupOperator() {
   const navigate = useNavigate();
   const node = useNodeStatus();
   const [snapshot, refreshTalos] = useTalosSnapshot();
+  // Steps 3-4 are PROBED, not hardcoded: keychain presence and the live
+  // on-chain registration row for the derived operator id.
+  const presence = useKeychainPresence();
+  const self = useSelfOperator();
+  const keyStatus: "ok" | "warn" | "info" = presence.checking
+    ? "info"
+    : presence.hasOperatorKey
+      ? "ok"
+      : "warn";
+  const registerStatus: "ok" | "warn" | "info" | "gold" =
+    self.registered === true
+      ? "ok"
+      : self.status === "no-key" || self.registered === false
+        ? "gold"
+        : "info";
 
   return (
     <section className="view fade-in">
       <PageHeader
         title="Set up operator"
-        subtitle="Connect to a node, store a PQM-1 key, and submit the node-registry registration."
-        action={<button type="button" className="btn btn--ghost" onClick={refreshTalos}>Refresh node</button>}
+        subtitle="Connect to a node, store a PQM-1 key, and submit the node-registry registration. The full guided journey lives on the Welcome page."
+        action={
+          <>
+            <button type="button" className="btn btn--ghost" onClick={() => navigate("/welcome")}>Open checklist</button>
+            <button type="button" className="btn btn--ghost" onClick={refreshTalos}>Refresh node</button>
+          </>
+        }
       />
 
       <div className="setup-steps">
         <SetupStep n={1} title="Connect node" status={node.reachable ? "ok" : "warn"} detail={`${node.endpoint} · chain ${node.chainId ?? "-"}`} />
         <SetupStep n={2} title="Verify Monarch OS" status={snapshot.readiness?.severity === "ok" ? "ok" : "warn"} detail={snapshot.readiness?.summary ?? snapshot.error ?? "Talos readiness not confirmed"} />
-        <SetupStep n={3} title="Store PQM-1 key" status="info" detail="Use the keychain panel below." />
-        <SetupStep n={4} title="Register on-chain" status="gold" detail="Submit register tx from the operator key." />
+        <SetupStep
+          n={3}
+          title="Store PQM-1 key"
+          status={keyStatus}
+          detail={
+            presence.checking
+              ? "checking the OS keychain…"
+              : presence.hasOperatorKey
+                ? "operator mnemonic found in the OS keychain"
+                : "no key stored — save or generate one in the panel below"
+          }
+        />
+        <SetupStep
+          n={4}
+          title="Register on-chain"
+          status={registerStatus}
+          detail={
+            self.registered === true
+              ? "registration row found on-chain — done"
+              : self.status === "no-key"
+                ? "needs your operator key first"
+                : self.registered === false
+                  ? "not registered yet — submit the register tx below"
+                  : "registration lookup unavailable on this endpoint"
+          }
+        />
       </div>
 
       <div className="grid-2">
@@ -1095,8 +1180,10 @@ export function SetupCluster() {
         <div className="card card--padded">
           <div className="card__head">
             <div>
-              <h3>Join existing cluster</h3>
-              <div className="sub">Prepare and preflight a CJ-1 request; compatible runtimes can sign and submit.</div>
+              <h3>Join existing <Term k="cluster">cluster</Term></h3>
+              <div className="sub">
+                Prepare and preflight a <Term k="CJ-1">CJ-1</Term> request; compatible runtimes can sign and submit.
+              </div>
             </div>
           </div>
           <div className="inline-actions">
@@ -1120,14 +1207,23 @@ export function SetupCluster() {
         <div className="card card--padded">
           <div className="card__head">
             <div>
-              <h3>Form new cluster</h3>
-              <div className="sub">Prepare the 7 active + 3 standby roster proposal.</div>
+              <h3>Form new <Term k="cluster">cluster</Term></h3>
+              <div className="sub">
+                Gather 10 operators in the ceremony room, or prepare the 7 active + 3 standby{" "}
+                <Term k="seat">seat</Term> roster manually.
+              </div>
             </div>
           </div>
           <div className="inline-actions">
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => navigate("/ceremony")}
+            >
+              Open ceremony room
+            </button>
             <CatalogButton
               kind="cluster-form"
-              variant="primary"
               overrides={{
                 clusterFormInput: {
                   activePubkeysHex: "",
@@ -1136,7 +1232,7 @@ export function SetupCluster() {
                 },
               }}
             >
-              Prepare roster
+              Prepare roster manually
             </CatalogButton>
             <CatalogButton kind="rotate-keys">Submit DKG attestation</CatalogButton>
           </div>
@@ -1227,11 +1323,12 @@ export function Attestation() {
 }
 
 export function Keys() {
+  const presence = useKeychainPresence();
   return (
     <section className="view fade-in">
       <PageHeader
         title="Keys"
-        subtitle="PQM-1 operator key storage, DKG attestation, backups, and emergency rotation entry points."
+        subtitle="PQM-1 operator key generation and storage, DKG attestation, backups, and emergency rotation entry points."
       />
 
       <div className="grid-2">
@@ -1246,7 +1343,14 @@ export function Keys() {
           <div className="stack-actions">
             <CatalogButton kind="rotate-keys" variant="primary">Rotate signing share</CatalogButton>
             <CatalogButton kind="export-backup">Export offline backup</CatalogButton>
-            <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>
+            {presence.hasFoundationKey ? (
+              <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>
+            ) : (
+              <div className="empty-state" style={{ marginTop: 4 }}>
+                Emergency key rotation is foundation-only and hidden — no foundation signer is
+                stored on this install.
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1260,8 +1364,11 @@ export function Keys() {
 }
 
 export function Recovery() {
-  const cluster = useClusterStatus(ACTIVE_CLUSTER_ID);
-  const operatorId = cluster.data?.members[0]?.operatorId ?? null;
+  // YOUR operator id — derived from the stored key, not member[0].
+  const self = useSelfOperator();
+  const operatorId = self.operatorId;
+  const presence = useKeychainPresence();
+  const showFoundation = presence.hasFoundationKey;
 
   return (
     <section className="view fade-in">
@@ -1271,8 +1378,8 @@ export function Recovery() {
       />
 
       <div className="grid-3">
-        <StatCard label="active operator" value={shortHex(operatorId)} sub={cluster.data ? clusterLabel(cluster.data.id) : "cluster unavailable"} tone={operatorId ? "ok" : "warn"} />
-        <StatCard label="restore path" value="foundation-gated" sub="recoverOperatorNode(bytes32)" tone="warn" />
+        <StatCard label="your operator" value={shortHex(operatorId)} sub={self.clusterId !== null ? clusterLabel(self.clusterId) : self.status === "no-key" ? "no operator key stored" : "no cluster seat"} tone={operatorId ? "ok" : "warn"} />
+        <StatCard label="restore path" value="foundation-gated" sub="removal-recovery executor" tone="warn" />
         <StatCard label="peer-vouched path" value="blocked" sub="cluster-vote API needed" tone="warn" />
       </div>
 
@@ -1285,16 +1392,28 @@ export function Recovery() {
             </div>
           </div>
           <div className="stack-actions">
-            <CatalogButton
-              kind="operator-restore"
-              variant="primary"
-              overrides={operatorId ? { restoreInput: { peerIdHex: operatorId } } : undefined}
-            >
-              Restore operator
-            </CatalogButton>
+            {showFoundation ? (
+              <CatalogButton
+                kind="operator-restore"
+                variant="primary"
+                overrides={operatorId ? { restoreInput: { peerIdHex: operatorId } } : undefined}
+              >
+                Restore operator
+              </CatalogButton>
+            ) : null}
             <CatalogButton kind="export-backup">Export offline backup</CatalogButton>
-            <CatalogButton kind="freeze-admission" variant="danger">Freeze admission</CatalogButton>
-            <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>
+            {showFoundation ? (
+              <>
+                <CatalogButton kind="freeze-admission" variant="danger">Freeze admission</CatalogButton>
+                <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>
+              </>
+            ) : (
+              <div className="empty-state" style={{ marginTop: 4 }}>
+                Foundation-only actions (restore, freeze admission, emergency key rotation) are
+                hidden because no foundation signer is stored on this install — ordinary
+                operators never need them.
+              </div>
+            )}
           </div>
         </div>
         <div className="card card--padded">

@@ -11,9 +11,22 @@ import {
   deriveOperatorConsensusPubkeyHex,
   KEYCHAIN_ACCOUNTS,
   keychainGet,
+  operatorPubkeyHash,
+  useClusterResignations,
 } from "../sdk";
 import { useOps } from "./OpsContext";
 import type { ClusterResignationInput } from "./types";
+
+function pubkeyHexToOperatorIdHex(pubkeyHex: string): string {
+  const clean = pubkeyHex.startsWith("0x") ? pubkeyHex.slice(2) : pubkeyHex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  }
+  let out = "0x";
+  for (const b of operatorPubkeyHash(bytes)) out += b.toString(16).padStart(2, "0");
+  return out;
+}
 
 const MAX_UINT64 = (1n << 64n) - 1n;
 
@@ -115,6 +128,32 @@ export function ClusterResignationForm() {
   const { request, setClusterResignationInput } = useOps();
   const input = request?.clusterResignationInput;
   const localKey = useStoredOperatorPubkeyHex();
+  const resignations = useClusterResignations(null, "all");
+
+  // Nonce prefill: find this operator's highest accepted on-chain
+  // resignation nonce and suggest last+1, so the operator never has to
+  // reason about "strictly greater than the last accepted nonce".
+  const lastAcceptedNonce = useMemo(() => {
+    if (localKey.status !== "ready" || !localKey.pubkeyHex) return null;
+    const rows = resignations.data?.rows ?? [];
+    if (rows.length === 0) return resignations.data ? 0n : null;
+    const selfId = pubkeyHexToOperatorIdHex(localKey.pubkeyHex).toLowerCase();
+    let max = 0n;
+    for (const row of rows) {
+      const rowId = row.operator.toLowerCase().slice(0, 66); // leading 32 bytes of the member ref
+      if (rowId === selfId && row.nonce > max) max = row.nonce;
+    }
+    return max;
+  }, [localKey.pubkeyHex, localKey.status, resignations.data]);
+
+  const isResign = request?.kind === "cluster-resign";
+  const currentNonce = input?.nonce;
+  useEffect(() => {
+    if (!isResign || lastAcceptedNonce === null || lastAcceptedNonce === 0n) return;
+    // Only auto-bump the untouched default; never overwrite an operator-typed value.
+    if (currentNonce !== undefined && currentNonce !== "" && currentNonce !== "1") return;
+    setClusterResignationInput({ nonce: (lastAcceptedNonce + 1n).toString() });
+  }, [isResign, lastAcceptedNonce, currentNonce, setClusterResignationInput]);
 
   const validity = useMemo(
     () => ({
@@ -191,9 +230,11 @@ export function ClusterResignationForm() {
           style={inputStyle(validity.nonce, true)}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          {validity.nonce
-            ? "Operator-local u64; must be strictly greater than your last accepted resignation nonce."
-            : "Enter a u64 greater than 0 (and greater than your last accepted resignation nonce)."}
+          {lastAcceptedNonce !== null
+            ? `Your last accepted on-chain resignation nonce is ${lastAcceptedNonce.toString()} — the next one must be greater (prefilled).`
+            : validity.nonce
+              ? "Operator-local u64; must be strictly greater than your last accepted resignation nonce."
+              : "Enter a u64 greater than 0 (and greater than your last accepted resignation nonce)."}
         </span>
       </label>
 

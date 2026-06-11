@@ -4,8 +4,16 @@
 // (live round/block halo). ⌘K palette and `g+letter` nav are wired here
 // so they work on every route.
 
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ComponentType,
+} from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { SideNav } from "./components/SideNav";
 import { TopBar } from "./components/TopBar";
 import { AskBar } from "./components/AskBar";
@@ -30,7 +38,9 @@ import { Metrics } from "./views/Metrics";
 import { Hardware } from "./views/Hardware";
 import { Logs } from "./views/Logs";
 import { Install } from "./views/Install";
+import { Welcome } from "./views/Welcome";
 import { Chat } from "./views/Chat";
+import { quickConfiguredProbe } from "./sdk/onboarding";
 import {
   Alerts,
   Attestation,
@@ -47,14 +57,105 @@ import {
 
 const VIEW_KEY = "monarch:view";
 
+// First-run gate: instead of dropping a fresh operator on a dashboard
+// of em-dashes, probe whether ANYTHING is configured (operator key /
+// Talos / SSH — bounded to ~1.2s). Nothing configured → /welcome;
+// otherwise restore the last view as before.
 function LastViewRedirect() {
-  const saved =
-    typeof localStorage !== "undefined"
-      ? localStorage.getItem(VIEW_KEY)
-      : null;
-  const target = saved && NAV_ROUTES.some((r) => r.path === saved) ? saved : "/home";
+  const [target, setTarget] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void quickConfiguredProbe()
+      .catch(() => false)
+      .then((configured) => {
+        if (cancelled) return;
+        if (!configured) {
+          setTarget("/welcome");
+          return;
+        }
+        const saved =
+          typeof localStorage !== "undefined" ? localStorage.getItem(VIEW_KEY) : null;
+        setTarget(saved && NAV_ROUTES.some((r) => r.path === saved) ? saved : "/home");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!target) return null;
   return <Navigate to={target} replace />;
 }
+
+// /ceremony resolves the CeremonyRoom view if it exists in the build
+// (it ships from a parallel workstream). When the file is absent — or
+// fails to load — the route gracefully falls back to a guided
+// placeholder, so this build stays green standalone.
+const ceremonyModules = import.meta.glob("./views/CeremonyRoom.tsx") as Record<
+  string,
+  () => Promise<unknown>
+>;
+
+function CeremonyComingSoon() {
+  const navigate = useNavigate();
+  return (
+    <section className="view fade-in">
+      <header>
+        <h1 className="view__title">Ceremony</h1>
+        <p className="view__subtitle">
+          live multi-party cluster-formation lobby · landing in an upcoming build
+        </p>
+      </header>
+      <div className="card card--padded" style={{ maxWidth: 720 }}>
+        <div className="card__head">
+          <div>
+            <h3>The ceremony room is not in this build yet</h3>
+            <div className="sub">
+              It will let 10 operators gather, agree a roster, and exchange consent
+              signatures live over operator chat.
+            </div>
+          </div>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--fg-300)", lineHeight: 1.55 }}>
+          Until it lands, you can still form a cluster the manual way: collect the 10
+          consensus pubkeys and consent signatures out-of-band, then use the roster builder
+          in Set up cluster. To be ready for the ceremony room, publish your chat peers so
+          other operators can reach you.
+        </p>
+        <div className="inline-actions" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            onClick={() => navigate("/setup-cluster")}
+          >
+            Open Set up cluster
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => navigate("/operations")}
+          >
+            Publish chat peers
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const CeremonyRoute = lazy(async () => {
+  const load = ceremonyModules["./views/CeremonyRoom.tsx"];
+  if (!load) return { default: CeremonyComingSoon };
+  try {
+    const mod = (await load()) as {
+      default?: ComponentType;
+      CeremonyRoom?: ComponentType;
+    };
+    return { default: mod.CeremonyRoom ?? mod.default ?? CeremonyComingSoon };
+  } catch {
+    return { default: CeremonyComingSoon };
+  }
+});
 
 function ShellInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -178,6 +279,21 @@ function ShellInner() {
               <Route path="/hardware" element={<Hardware />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/chat" element={<Chat />} />
+              <Route
+                path="/ceremony"
+                element={
+                  <Suspense
+                    fallback={
+                      <section className="view fade-in">
+                        <div className="empty-state">Loading the ceremony room…</div>
+                      </section>
+                    }
+                  >
+                    <CeremonyRoute />
+                  </Suspense>
+                }
+              />
+              <Route path="/welcome" element={<Welcome />} />
               <Route path="/install" element={<Install />} />
               <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/services" element={<Services />} />

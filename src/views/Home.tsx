@@ -1,4 +1,5 @@
 import { ClusterRing } from "../components/ClusterRing";
+import { matchSelfMember, useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
@@ -24,14 +25,17 @@ const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
 export function Home() {
   const status = useNodeStatus();
   const chain = useChainStatus();
-  const cluster = useClusterStatus(ACTIVE_CLUSTER_ID);
+  // Resolve YOUR identity from the stored key — never assume cluster-0
+  // member[0] is "you". The active cluster follows your seat when found.
+  const self = useSelfOperator();
+  const cluster = useClusterStatus(self.clusterId ?? ACTIVE_CLUSTER_ID);
   const ops = useOps();
   const navigate = useNavigate();
 
   const clusterData = cluster.data;
   const members = clusterData?.members ?? [];
-  const primaryOperatorId = members[0]?.operatorId ?? null;
-  const authority = useOperatorAuthority(primaryOperatorId);
+  const selfSeatIndex = matchSelfMember(members, self.operatorId);
+  const authority = useOperatorAuthority(self.operatorId);
   const authorityIndex = authority.data?.authorityIndex ?? null;
   const risk = useOperatorRisk(authorityIndex, 200);
   const signing = useOperatorSigningActivity(authorityIndex, 200);
@@ -118,6 +122,23 @@ export function Home() {
             expectedThreshold={MONARCH_CLUSTER_THRESHOLD}
             size={250}
           />
+          {self.status === "no-key" ? (
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => navigate("/keys")}
+            >
+              Set up your operator key →
+            </button>
+          ) : selfSeatIndex !== null ? (
+            <div className="halo halo--gold" style={{ alignSelf: "center" }}>
+              YOU — seat {selfSeatIndex + 1} of {clusterData?.size ?? members.length}
+            </div>
+          ) : self.status === "ready" && clusterData ? (
+            <div className="halo halo--warn" style={{ alignSelf: "center", whiteSpace: "normal" }}>
+              <span className="dot" /> your operator holds no seat in this cluster
+            </div>
+          ) : null}
           <button
             type="button"
             className="btn btn--ghost btn--sm"
@@ -135,8 +156,10 @@ export function Home() {
               <h3>Signing activity</h3>
               <div className="sub">
                 {authorityIndex !== null
-                  ? `lyth_signingActivity · authority ${authorityIndex}`
-                  : "awaiting operator authority"}
+                  ? `your signing record · authority ${authorityIndex}`
+                  : self.status === "no-key"
+                    ? "no operator key stored — this view tracks YOUR operator once a key is saved"
+                    : "awaiting operator authority"}
               </div>
             </div>
             <span className={`halo halo--${signing.notExposed ? "warn" : "ok"}`}>
@@ -169,7 +192,7 @@ export function Home() {
           ) : (
             <div className="empty-state">
               {signing.notExposed
-                ? "lyth_signingActivity is unavailable for the selected operator."
+                ? "Your node does not expose signing history for this operator yet — update protocore to enable this view."
                 : signing.error ?? "Signing activity is loading from the connected endpoint."}
             </div>
           )}
@@ -213,7 +236,7 @@ export function Home() {
           ) : (
             <div className="empty-state">
               {duties.notExposed
-                ? "lyth_upcomingDuties is unavailable for the selected operator."
+                ? "Your node does not expose the duty schedule yet — update protocore to enable this view."
                 : duties.error ?? "Duty schedule is loading from the connected endpoint."}
             </div>
           )}

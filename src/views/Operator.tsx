@@ -1,4 +1,6 @@
 import { formatLyth } from "@monolythium/core-sdk";
+import { useNavigate } from "react-router-dom";
+import { useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
@@ -23,11 +25,14 @@ const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
 
 export function Operator() {
   const status = useNodeStatus();
-  const cluster = useClusterStatus(ACTIVE_CLUSTER_ID);
+  // YOUR identity, derived from the stored key — never member[0].
+  const self = useSelfOperator();
+  const cluster = useClusterStatus(self.clusterId ?? ACTIVE_CLUSTER_ID);
   const clusterData = cluster.data;
-  const operatorId = clusterData?.members[0]?.operatorId ?? null;
+  const operatorId = self.operatorId;
   const operator = useOperatorInfo(operatorId);
   const ops = useOps();
+  const navigate = useNavigate();
 
   const authority = useOperatorAuthority(operatorId);
   const authorityIndex = authority.data?.authorityIndex ?? null;
@@ -39,7 +44,7 @@ export function Operator() {
 
   const v = operator.data;
   const setSize = clusterData?.members.length ?? null;
-  const moniker = v?.moniker ?? (operatorId ? shortId(operatorId) : "—");
+  const moniker = v?.moniker ?? (operatorId ? shortId(operatorId) : "no operator key");
   const activeClusterLabel = clusterLabel(clusterData?.id ?? ACTIVE_CLUSTER_ID);
   const activeClusterId = String(clusterData?.id ?? ACTIVE_CLUSTER_ID);
   const jailed = v?.jailed ?? false;
@@ -79,7 +84,26 @@ export function Operator() {
         </p>
       </header>
 
-      {operator.notExposed ? (
+      {self.status === "no-key" ? (
+        <div className="card card--padded" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div>
+            <b style={{ fontSize: 14 }}>No operator key stored</b>
+            <p style={{ fontSize: 12, color: "var(--fg-400)", margin: "4px 0 0" }}>
+              This page shows YOUR operator. Save or generate your 24-word operator mnemonic
+              and your identity, risk, and bond appear here automatically.
+            </p>
+          </div>
+          <button type="button" className="btn btn--primary btn--sm" onClick={() => navigate("/keys")}>
+            Set up your operator key →
+          </button>
+        </div>
+      ) : self.status === "ready" && self.registered === false ? (
+        <div className="halo halo--warn" style={{ alignSelf: "flex-start", whiteSpace: "normal" }}>
+          <span className="dot" /> Your operator key is not registered on-chain yet — register to
+          appear in the directory and become admittable.
+        </div>
+      ) : null}
+      {operator.notExposed && self.status !== "no-key" ? (
         <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
           <span className="dot" /> identity RPC not yet exposed — live identity unavailable
         </div>
@@ -90,6 +114,11 @@ export function Operator() {
           <div className="cap">operator identity</div>
           <div className="operator-hero__moniker">{moniker}</div>
           <div className="operator-pills">
+            {self.status === "ready" ? (
+              <span className="halo halo--gold" title="Derived from your stored operator key — this is you">
+                YOU
+              </span>
+            ) : null}
             <span className={!v ? "halo halo--warn" : jailed ? "halo halo--err" : "halo halo--ok"}>
               <span className="dot" /> {!v ? "unavailable" : jailed ? "removed" : "bonded"}
             </span>
@@ -267,7 +296,7 @@ export function Operator() {
             </div>
             <div className="mono" style={{ fontSize: 11, color: "var(--fg-500)", marginTop: 8 }}>
               {risk.notExposed
-                ? "lyth_operatorRisk unavailable for this operator"
+                ? "removal-risk window not exposed by this node"
                 : risk.error
                   ? risk.error
                   : riskSummary.detail}
@@ -279,7 +308,7 @@ export function Operator() {
             <div className="numeral numeral--gold">{signingSummary.signedPctLabel}</div>
             <p>
               {signing.notExposed
-                ? "lyth_signingActivity unavailable for this operator"
+                ? "signing history not exposed by this node"
                 : signing.error
                   ? signing.error
                   : `${signingSummary.signed} signed · ${signingSummary.missed} missed · ${signingSummary.noCert} no certificate`}
@@ -372,7 +401,7 @@ export function Operator() {
                   {dutyAttestation
                     ? `${dutyAttestation.kind} · rounds ${dutyAttestation.startRound.toString()}-${dutyAttestation.endRound.toString()}`
                     : duties.notExposed
-                      ? "lyth_upcomingDuties unavailable"
+                      ? "duty schedule not exposed"
                       : "loading"}
                 </div>
               </div>
@@ -391,7 +420,7 @@ export function Operator() {
         ) : (
           <div className="empty-state">
             {signing.notExposed
-              ? "lyth_signingActivity is unavailable for the selected operator."
+              ? "Your node does not expose signing history for this operator yet — update protocore to enable this view."
               : signing.error ?? "Signing activity is loading from the connected endpoint."}
           </div>
         )}

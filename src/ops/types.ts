@@ -171,6 +171,10 @@ export type OpRequest = {
   title: string;
   sub: string;
   intro: string;
+  /** Optional spec-level prose (selectors, byte sizes, precompile
+   *  addresses) demoted out of `intro` into an expandable
+   *  "technical details" block in the drawer. */
+  technical?: string;
   fields: OpField[];
   icon?: string;
   risk?: "low" | "medium" | "high";

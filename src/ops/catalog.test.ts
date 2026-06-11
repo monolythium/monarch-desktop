@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { OP_CATALOG } from "./catalog";
 import { OP_KINDS } from "./types";
 
+/** Intro + demoted technical-details prose, so executor-signature
+ *  assertions keep holding after the plain-language intro rewrite. */
+function prose(entry: (typeof OP_CATALOG)[number] | undefined): string {
+  return `${entry?.intro ?? ""} ${entry?.technical ?? ""}`;
+}
+
 describe("operation catalog", () => {
   it("surfaces every known operation kind", () => {
     const catalogKinds = OP_CATALOG.map((entry) => entry.kind).sort();
@@ -17,7 +23,7 @@ describe("operation catalog", () => {
       title: "Accept cluster invite",
       confirmLabel: "Sign Add pending-change",
     });
-    expect(invite?.intro).toContain("submitPendingChange(Add)");
+    expect(prose(invite)).toContain("submitPendingChange(Add)");
     expect(invite?.effects).toContain(
       "Builds submitPendingChange(kind=Add, targetPubkey, effectiveEpoch, intentId=0).",
     );
@@ -33,7 +39,7 @@ describe("operation catalog", () => {
       confirmLabel: "Sign formation",
       category: "cluster",
     });
-    expect(form?.intro).toContain("formCluster(bytes,bytes,bytes)");
+    expect(prose(form)).toContain("formCluster(bytes,bytes,bytes)");
     expect(form?.effects).toContain(
       "Preflights formCluster through eth_call, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
     );
@@ -43,7 +49,7 @@ describe("operation catalog", () => {
       confirmLabel: "Sign join request",
       category: "cluster",
     });
-    expect(request?.intro).toContain("requestClusterJoin(uint32,bytes)");
+    expect(prose(request)).toContain("requestClusterJoin(uint32,bytes)");
     expect(request?.effects).toContain(
       "Fails before signing if the operator's public LythiumSeal EK has not been published.",
     );
@@ -53,7 +59,7 @@ describe("operation catalog", () => {
       confirmLabel: "Sign admit vote",
       category: "cluster",
     });
-    expect(vote?.intro).toContain("voteClusterAdmit(uint32,bytes32,bytes)");
+    expect(prose(vote)).toContain("voteClusterAdmit(uint32,bytes32,bytes)");
     expect(vote?.effects).toContain(
       "Fails before signing if the candidate request is missing, closed, or already admitted.",
     );
@@ -66,7 +72,7 @@ describe("operation catalog", () => {
       title: "Restore operator",
       confirmLabel: "Sign recovery tx",
     });
-    expect(restore?.intro).toContain("recoverOperatorNode(bytes32)");
+    expect(prose(restore)).toContain("recoverOperatorNode(bytes32)");
     expect(restore?.effects).toContain(
       "Builds recoverOperatorNode(peerId) calldata against node-registry 0x1005.",
     );
@@ -79,7 +85,7 @@ describe("operation catalog", () => {
       title: "Publish chat peers",
       confirmLabel: "Sign chat metadata tx",
     });
-    expect(chatPeers?.intro).toContain("setChatBootstrapPeers(bytes32,bytes)");
+    expect(prose(chatPeers)).toContain("setChatBootstrapPeers(bytes32,bytes)");
     expect(chatPeers?.effects).toContain(
       "Builds setChatBootstrapPeers(peerId, peers) calldata against node-registry 0x1005.",
     );
@@ -92,7 +98,7 @@ describe("operation catalog", () => {
       title: "Set operator name",
       confirmLabel: "Sign display metadata tx",
     });
-    expect(display?.intro).toContain("setOperatorDisplay(bytes32,string,string)");
+    expect(prose(display)).toContain("setOperatorDisplay(bytes32,string,string)");
     expect(display?.effects).toContain(
       "Builds setOperatorDisplay(peerId, moniker, alias) calldata against node-registry 0x1005.",
     );
@@ -105,7 +111,7 @@ describe("operation catalog", () => {
       title: "Publish seal key",
       confirmLabel: "Sign seal key tx",
     });
-    expect(sealKey?.intro).toContain("publishOperatorSealKey(bytes32,bytes)");
+    expect(prose(sealKey)).toContain("publishOperatorSealKey(bytes32,bytes)");
     expect(sealKey?.effects).toContain(
       "Builds publishOperatorSealKey(peerId, sealEk) calldata against node-registry 0x1005.",
     );
@@ -119,7 +125,7 @@ describe("operation catalog", () => {
       confirmLabel: "Sign cluster name tx",
       category: "cluster",
     });
-    expect(clusterName?.intro).toContain("register(string,uint64)");
+    expect(prose(clusterName)).toContain("register(string,uint64)");
     expect(clusterName?.effects).toContain(
       "Builds register(name, clusterId) calldata against cluster-name registry 0x1104.",
     );
@@ -132,7 +138,7 @@ describe("operation catalog", () => {
       title: "Cluster slot (foundation-coordinated)",
       confirmLabel: "Sign Rotate pending-change",
     });
-    expect(swap?.intro).toContain("submitPendingChange(Rotate)");
+    expect(prose(swap)).toContain("submitPendingChange(Rotate)");
     expect(swap?.effects).toContain(
       "Builds submitPendingChange(kind=Rotate, targetPubkey, effectiveEpoch, intentId).",
     );
@@ -145,7 +151,7 @@ describe("operation catalog", () => {
       title: "Rotate signing share",
       confirmLabel: "Sign DKG attestation",
     });
-    expect(rotate?.intro).toContain("attestDkgReshare(uint64,bytes,bytes)");
+    expect(prose(rotate)).toContain("attestDkgReshare(uint64,bytes,bytes)");
     expect(rotate?.effects).toContain(
       "Builds attestDkgReshare(intentId, consensusPublicKeys, attestationSigs) calldata against node-registry 0x1005.",
     );
@@ -160,12 +166,19 @@ describe("operation catalog", () => {
       confirmLabel: "Sign freezeAdmission",
       category: "emergency",
     });
-    expect(freeze?.intro).toContain("freezeAdmission(bytes32)");
+    expect(prose(freeze)).toContain("freezeAdmission(bytes32)");
     expect(emergency).toMatchObject({
       title: "Emergency key rotation",
       confirmLabel: "Sign emergencyKeyRotation",
       category: "emergency",
     });
-    expect(emergency?.intro).toContain("emergencyKeyRotation(bytes,uint64,uint64)");
+    expect(prose(emergency)).toContain("emergencyKeyRotation(bytes,uint64,uint64)");
+  });
+
+  it("keeps intros plain-language — spec prose lives in technical details", () => {
+    const specTokens = /\b0x1[0-9a-fA-F]{3}\b|\(bytes|\(uint|bytes32|uint64|ML-DSA|ML-KEM|PQM-1/u;
+    for (const entry of OP_CATALOG) {
+      expect(specTokens.test(entry.intro), `${entry.kind} intro leaks spec prose`).toBe(false);
+    }
   });
 });
