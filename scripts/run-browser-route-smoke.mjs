@@ -323,11 +323,24 @@ async function waitForApp(cdp, route, timeoutMs) {
         ready: document.readyState,
         shell: Boolean(document.querySelector(".monarch-shell")),
         content: Boolean(document.querySelector("main.monarch-content")),
+        // Lazy route chunks render a .lv-skel glass skeleton while
+        // loading; wait until the real view has hydrated text.
+        skeleton: Boolean(document.querySelector("main.monarch-content .lv-skel")),
+        mainText: (document.querySelector("main.monarch-content")?.innerText || "").trim().length,
         rootText: (document.querySelector("#root")?.textContent || "").trim().length
       })
     `);
     last = JSON.stringify(result);
-    if (result?.path === route && result.shell && result.content && result.rootText > 0) return;
+    if (
+      result?.path === route &&
+      result.shell &&
+      result.content &&
+      result.rootText > 0 &&
+      !result.skeleton &&
+      result.mainText > 0
+    ) {
+      return;
+    }
     await delay(100);
   }
   throw new Error(`route ${route} did not render before timeout; last state ${last}`);

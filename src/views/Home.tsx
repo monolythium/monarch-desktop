@@ -1,4 +1,7 @@
 import { ClusterRing } from "../components/ClusterRing";
+import { ConsensusPulse } from "../components/ConsensusPulse";
+import { RollingDigits } from "../components/RollingDigits";
+import { UpdatedAgo } from "../components/UpdatedAgo";
 import { matchSelfMember, useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
 import {
@@ -79,12 +82,15 @@ export function Home() {
             <div>
               <div className="cap">current block height</div>
               <div className="home-ticker__number">
-                {blockHeight ? blockHeight.toLocaleString() : "—"}
+                <RollingDigits value={blockHeight || null} />
               </div>
             </div>
-            <span className={reachable ? "halo halo--ok" : "halo halo--err"}>
-              <span className="dot dot--pulse" />
-              {reachable ? "synced" : "unreachable"}
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              <span className={reachable ? "halo halo--ok" : "halo halo--err"}>
+                <span className="dot dot--pulse" />
+                {reachable ? "synced" : "unreachable"}
+              </span>
+              <UpdatedAgo at={status.lastUpdatedAt ?? chain.lastUpdatedAt} />
             </span>
           </div>
           <div className="home-ticker__footer">
@@ -148,6 +154,8 @@ export function Home() {
           </button>
         </div>
       </div>
+
+      <ConsensusPulse />
 
       <div className="home-row">
         <div className="card card--padded">

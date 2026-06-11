@@ -1,4 +1,6 @@
 import { ClusterRing } from "../components/ClusterRing";
+import { ConsensusPulse } from "../components/ConsensusPulse";
+import { UpdatedAgo } from "../components/UpdatedAgo";
 import { useOps } from "../ops";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
@@ -112,6 +114,8 @@ export function Cluster() {
           <span className="dot" /> cluster RPC not yet exposed — member list unavailable
         </div>
       ) : null}
+
+      <ConsensusPulse />
 
       <div className="card card--padded">
         <div className="card__head" style={{ padding: 0, marginBottom: 12 }}>
@@ -359,6 +363,7 @@ export function Cluster() {
                     : "loading"}
               </div>
             </div>
+            <UpdatedAgo at={cluster.lastUpdatedAt} />
           </div>
           <table className="tbl cluster-table">
             <thead>

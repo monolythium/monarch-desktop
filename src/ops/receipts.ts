@@ -146,6 +146,50 @@ export function isAuditReadyOperationReceipt(receipt: OperationReceipt): boolean
   );
 }
 
+/** Recompute the canonical SHA-256 audit hash from a receipt's payload. */
+export function recomputeReceiptHash(receipt: OperationReceipt): string {
+  return operationReceiptAuditHash(receipt);
+}
+
+export type ReceiptHashVerification = {
+  status: "match" | "mismatch" | "no-stored-hash" | "not-found";
+  computedHash: string | null;
+  storedHash: string | null;
+};
+
+/**
+ * Verify one receipt's audit hash against what is ACTUALLY persisted in
+ * storage. `readOperationReceipts` re-derives hashes on load, so this
+ * deliberately reads the raw stored rows — a tampered or corrupted row
+ * reports `mismatch` instead of being silently re-hashed.
+ */
+export function verifyStoredReceiptHash(id: string): ReceiptHashVerification {
+  const notFound: ReceiptHashVerification = { status: "not-found", computedHash: null, storedHash: null };
+  const store = storage();
+  if (!store) return notFound;
+  try {
+    const parsed = JSON.parse(store.getItem(STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return notFound;
+    const raw = parsed.find((row) => isReceipt(row) && row.id === id) as
+      | OperationReceipt
+      | undefined;
+    if (!raw) return notFound;
+    const computedHash = recomputeReceiptHash(raw);
+    const storedHash =
+      typeof raw.auditPayloadHash === "string" && HASH32_RE.test(raw.auditPayloadHash.toLowerCase())
+        ? raw.auditPayloadHash.toLowerCase()
+        : null;
+    if (storedHash === null) return { status: "no-stored-hash", computedHash, storedHash: null };
+    return {
+      status: storedHash === computedHash ? "match" : "mismatch",
+      computedHash,
+      storedHash,
+    };
+  } catch {
+    return notFound;
+  }
+}
+
 export function readOperationReceipts(): OperationReceipt[] {
   const store = storage();
   if (!store) return [];

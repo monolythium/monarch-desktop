@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { mrvReadinessSignal, type ReadinessSignal } from "../sdk/mrvReadiness";
 import { Sparkline } from "../components/Sparkline";
+import { UpdatedAgo } from "../components/UpdatedAgo";
 import {
   MONARCH_METRIC_SELECTORS,
+  formatMetricValue,
   summarizeMetricsRange,
   useChainStatus,
   useMetricsRange,
@@ -10,7 +13,55 @@ import {
   type MetricSeriesSummary,
   type RpcSlice,
 } from "../sdk";
-import type { MetricsRangeResponse } from "@monolythium/core-sdk";
+import type { MetricsRangeResponse, MetricsRangeSeries } from "@monolythium/core-sdk";
+
+// Time-window presets for lyth_metricsRange. The chain targets a ~4s
+// commit cadence, so windows are converted to block counts at that
+// rate; the toolbar labels them as approximate. "latest" sends a null
+// range (node-default retained snapshot — the previous behavior).
+const SECONDS_PER_BLOCK = 4;
+const RANGE_PRESETS = [
+  { id: "latest", label: "latest", seconds: null },
+  { id: "1h", label: "1h", seconds: 3_600 },
+  { id: "6h", label: "6h", seconds: 6 * 3_600 },
+  { id: "24h", label: "24h", seconds: 24 * 3_600 },
+  { id: "7d", label: "7d", seconds: 7 * 24 * 3_600 },
+  { id: "30d", label: "30d", seconds: 30 * 24 * 3_600 },
+] as const;
+
+type RangePresetId = (typeof RANGE_PRESETS)[number]["id"];
+
+// Quantize the anchor height so the cache key stays stable for ~5min
+// stretches instead of refetching a brand-new range every poll.
+const RANGE_ANCHOR_QUANTUM = 75;
+
+function rangeForPreset(
+  preset: RangePresetId,
+  blockHeight: number | null,
+): readonly [number, number] | null {
+  const seconds = RANGE_PRESETS.find((p) => p.id === preset)?.seconds ?? null;
+  if (seconds === null || blockHeight === null || blockHeight <= 0) return null;
+  const anchor = Math.max(0, blockHeight - (blockHeight % RANGE_ANCHOR_QUANTUM));
+  const windowBlocks = Math.max(1, Math.floor(seconds / SECONDS_PER_BLOCK));
+  return [Math.max(0, anchor - windowBlocks), anchor] as const;
+}
+
+type SeriesStats = { min: string; max: string; avg: string } | null;
+
+function seriesStats(raw: MetricsRangeSeries | undefined): SeriesStats {
+  const values = (raw?.samples ?? [])
+    .map((sample) => Number(sample.value))
+    .filter(Number.isFinite);
+  if (values.length === 0) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+  return {
+    min: formatMetricValue(min, raw?.unit),
+    max: formatMetricValue(max, raw?.unit),
+    avg: formatMetricValue(avg, raw?.unit),
+  };
+}
 
 const TONE_TO_HALO: Record<string, string> = {
   ok: "metric-value metric-value--ok",
@@ -25,7 +76,10 @@ export function Metrics() {
   const chain = useChainStatus();
   const node = useNodeStatus();
   const operatorCapabilities = useOperatorCapabilities();
-  const metricsRange = useMetricsRange(MONARCH_METRIC_SELECTORS);
+  const [rangePreset, setRangePreset] = useState<RangePresetId>("latest");
+  const blockHeight = chain.data?.blockHeight || node.blockNumber || null;
+  const range = rangeForPreset(rangePreset, blockHeight);
+  const metricsRange = useMetricsRange(MONARCH_METRIC_SELECTORS, range);
   const signals = liveSignals({
     chain,
     nodeReachable: node.reachable,
@@ -92,11 +146,36 @@ export function Metrics() {
           <div className="sub">{metricsSource}</div>
         </div>
         <div className="metrics-toolbar__controls">
+          <div className="segmented" role="group" aria-label="Telemetry window">
+            {RANGE_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={rangePreset === preset.id ? "is-on" : ""}
+                onClick={() => setRangePreset(preset.id)}
+                title={
+                  preset.seconds === null
+                    ? "node-default retained snapshot"
+                    : `~${preset.label} window at the chain's 4s commit cadence`
+                }
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <button type="button" className="btn btn--ghost btn--sm" onClick={exportCsv}>
             Export CSV
           </button>
+          <UpdatedAgo at={metricsRange.lastUpdatedAt} />
         </div>
       </div>
+
+      {rangePreset !== "latest" && range === null ? (
+        <div className="status-bar status-bar--warn">
+          <span className="dot" /> Block height unknown — the {rangePreset} window falls back to the
+          node-default snapshot until the height resolves.
+        </div>
+      ) : null}
 
       <div className="grid-2x3">
         {signals.map((s) => (
@@ -156,7 +235,13 @@ export function Metrics() {
       ) : (
         <div className="grid-2x3">
           {metricSeries.map((series) => (
-            <MetricSeriesCard key={series.selector} series={series} />
+            <MetricSeriesCard
+              key={series.selector}
+              series={series}
+              stats={seriesStats(
+                metricsRange.data?.series.find((raw) => raw.selector === series.selector),
+              )}
+            />
           ))}
         </div>
       )}
@@ -164,7 +249,13 @@ export function Metrics() {
   );
 }
 
-function MetricSeriesCard({ series }: { series: MetricSeriesSummary }) {
+function MetricSeriesCard({
+  series,
+  stats,
+}: {
+  series: MetricSeriesSummary;
+  stats: SeriesStats;
+}) {
   return (
     <div className="card metric-card metric-card--series">
       <div className="card__head">
@@ -180,6 +271,13 @@ function MetricSeriesCard({ series }: { series: MetricSeriesSummary }) {
       <div className="metric-series__chart">
         <Sparkline data={series.sparkline} height={44} />
       </div>
+      {stats ? (
+        <div className="metric-series__meta">
+          <span>min {stats.min}</span>
+          <span>avg {stats.avg}</span>
+          <span>max {stats.max}</span>
+        </div>
+      ) : null}
       <div className="metric-series__meta">
         <span>{series.sampleCount.toLocaleString()} samples</span>
         <span>block {series.latestBlock?.toLocaleString() ?? "-"}</span>

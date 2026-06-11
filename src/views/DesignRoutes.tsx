@@ -10,7 +10,12 @@ import {
   type OpKind,
   type OpRequest,
 } from "../ops";
-import { isAuditReadyOperationReceipt } from "../ops/receipts";
+import {
+  isAuditReadyOperationReceipt,
+  verifyStoredReceiptHash,
+  type ReceiptHashVerification,
+} from "../ops/receipts";
+import "../styles/livedata.css";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
   bpsToPercent,
@@ -686,10 +691,43 @@ function ServiceSurface({
   );
 }
 
+function verifyBadge(check: ReceiptHashVerification) {
+  switch (check.status) {
+    case "match":
+      return (
+        <span className="halo halo--ok" title={`recomputed ${shortHex(check.computedHash)}`}>
+          <span className="dot" /> hash verified
+        </span>
+      );
+    case "mismatch":
+      return (
+        <span
+          className="halo halo--err"
+          title={`stored ${shortHex(check.storedHash)} ≠ recomputed ${shortHex(check.computedHash)}`}
+        >
+          <span className="dot" /> hash mismatch
+        </span>
+      );
+    case "no-stored-hash":
+      return (
+        <span className="halo halo--warn" title="stored row carries no audit hash">
+          <span className="dot" /> no stored hash
+        </span>
+      );
+    default:
+      return (
+        <span className="halo halo--warn" title="receipt not found in storage">
+          <span className="dot" /> not in storage
+        </span>
+      );
+  }
+}
+
 export function Audit() {
   const ops = useOps();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | "ok" | "error">("all");
+  const [verifications, setVerifications] = useState<Record<string, ReceiptHashVerification>>({});
   const rows = ops.receipts.filter((receipt) => {
     if (status !== "all" && receipt.status !== status) return false;
     const haystack = `${receipt.kind} ${receipt.title} ${receipt.message} ${receipt.transport} ${receipt.txHash ?? ""} ${receipt.auditPayloadHash ?? ""}`.toLowerCase();
@@ -752,6 +790,7 @@ export function Audit() {
               <th>status</th>
               <th>transport</th>
               <th>receipt hash</th>
+              <th>verify</th>
               <th>tx</th>
             </tr>
           </thead>
@@ -770,12 +809,30 @@ export function Audit() {
                 </td>
                 <td className="mono">{receipt.transport}</td>
                 <td className="mono">{shortHex(receipt.auditPayloadHash)}</td>
+                <td>
+                  <span className="lv-verify">
+                    {verifications[receipt.id] ? verifyBadge(verifications[receipt.id]!) : null}
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      title="Recompute the canonical SHA-256 from the stored payload and compare"
+                      onClick={() =>
+                        setVerifications((prev) => ({
+                          ...prev,
+                          [receipt.id]: verifyStoredReceiptHash(receipt.id),
+                        }))
+                      }
+                    >
+                      Re-verify
+                    </button>
+                  </span>
+                </td>
                 <td className="mono">{shortHex(receipt.txHash)}</td>
               </tr>
             ))}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <Blocker
                     title="No matching receipts."
                     detail="Run a Talos or chain operation through the drawer to populate the local audit trail."

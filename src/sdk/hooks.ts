@@ -1,9 +1,14 @@
-// Per-view RPC hooks. Each hook calls a `@monolythium/core-sdk` method,
-// polls every `POLL_MS`, and returns `{ data, loading, error, notExposed }`.
+// Per-view RPC hooks. Each hook calls a `@monolythium/core-sdk` method
+// through the shared query cache (`queryCache.ts`): one fetch loop per
+// method+args key, deduped across components, paused while the window
+// is hidden, with exponential backoff when the endpoint is unreachable.
+// Hooks return `{ data, loading, error, notExposed, lastUpdatedAt }`.
 // Missing/gated production data returns `data: null` with `notExposed=true`
 // so views can render named blockers instead of production-looking fixtures.
+// The round/height hooks prefer the node WS push feed (`subscriptions.ts`)
+// and fall back to cached polling when push is unavailable.
 
-import { useEffect, useRef, useState } from "react";
+import { useMemo } from "react";
 import type {
   BridgeHealthResponse,
   ClusterDirectoryEntryResponse,
@@ -29,12 +34,13 @@ import type {
 } from "@monolythium/core-sdk";
 import { addressToTypedBech32, deriveClusterAnchorAddress, formatLyth } from "@monolythium/core-sdk";
 import { rpc } from "./client";
+import { useQuery } from "./queryCache";
+import { useLiveCommit } from "./subscriptions";
 import {
   readClusterJoinRequest,
   type ClusterJoinRequestView,
 } from "./clusterJoinOps";
 
-const POLL_MS = 5000;
 const RPC_METHOD_NOT_FOUND = -32601;
 
 export type RpcSlice<T> = {
@@ -46,14 +52,6 @@ export type RpcSlice<T> = {
 };
 
 export type OperatorNetworkMetadataMap = Record<string, OperatorNetworkMetadataView | null>;
-
-const empty = <T,>(): RpcSlice<T> => ({
-  data: null,
-  loading: true,
-  error: null,
-  notExposed: false,
-  lastUpdatedAt: null,
-});
 
 function isMethodNotFound(err: unknown): boolean {
   const e = err as { code?: number; message?: string } | null;
@@ -94,60 +92,52 @@ function shortOperatorId(operatorId: string): string {
   return `${operatorId.slice(0, 8)}…${operatorId.slice(-6)}`;
 }
 
+// A missing required argument (no operator/cluster selected yet) is the
+// same UX state as a gated surface: nothing to show, but not an error.
+const NO_TARGET = { code: RPC_METHOD_NOT_FOUND, message: "method not found: no target selected" };
+
+// One cache entry per method+args. The key carries every argument so
+// distinct targets never share a loop, and identical hooks across
+// components share one.
+function usePolledRpc<T>(
+  key: string,
+  fetcher: () => Promise<T>,
+  notExposedWhen: (err: unknown) => boolean = isMethodNotFound,
+): RpcSlice<T> {
+  return useQuery<T>(key, fetcher, { notExposedWhen });
+}
+
 // ---- live methods ----------------------------------------------------
 
 export function useCurrentRound(): RpcSlice<RoundInfo> {
-  const [slice, setSlice] = useState<RpcSlice<RoundInfo>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const round = await rpc.lythCurrentRound();
-        if (!aliveRef.current) return;
-        setSlice({ data: round, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return slice;
+  const polled = usePolledRpc<RoundInfo>(
+    "lyth_currentRound",
+    () => rpc.lythCurrentRound(),
+    () => false,
+  );
+  const commit = useLiveCommit();
+  return useMemo(() => {
+    // WS push wins when it is at least as fresh as the last poll —
+    // `RoundInfo.height` stays "latest committed height".
+    if (commit && (polled.lastUpdatedAt === null || commit.at >= polled.lastUpdatedAt)) {
+      return {
+        data: { height: BigInt(commit.height) },
+        loading: false,
+        error: null,
+        notExposed: false,
+        lastUpdatedAt: commit.at,
+      };
+    }
+    return polled;
+  }, [polled, commit]);
 }
 
 export function useClusterDirectory(page = 0, limit = 100): RpcSlice<ClusterDirectoryEntryResponse[]> {
-  const [slice, setSlice] = useState<RpcSlice<ClusterDirectoryEntryResponse[]>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const directory = await rpc.lythClusterDirectory(page, limit);
-        if (!aliveRef.current) return;
-        setSlice({ data: directory.clusters, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, [page, limit]);
-
-  return slice;
+  return usePolledRpc(
+    `lyth_clusterDirectory:${page}:${limit}`,
+    async () => (await rpc.lythClusterDirectory(page, limit)).clusters,
+    () => false,
+  );
 }
 
 export function useProviderDirectory(
@@ -156,99 +146,22 @@ export function useProviderDirectory(
   limit = 50,
 ): RpcSlice<RegistryRecord[]> {
   return usePolledRpc(
+    `lyth_listProviders:${capabilityMask}:${cursor ?? ""}:${limit}`,
     () => rpc.lythListProviders(capabilityMask, cursor, limit),
-    [capabilityMask, cursor, limit],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
 
 export function useIndexerStatus(): RpcSlice<IndexerStatus | null> {
-  const [slice, setSlice] = useState<RpcSlice<IndexerStatus | null>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const idx = await rpc.lythIndexerStatus();
-        if (!aliveRef.current) return;
-        setSlice({ data: idx, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return slice;
+  return usePolledRpc("lyth_indexerStatus", () => rpc.lythIndexerStatus(), () => false);
 }
 
 export function useRuntimeProvenance(): RpcSlice<RuntimeProvenanceResponse> {
-  const [slice, setSlice] = useState<RpcSlice<RuntimeProvenanceResponse>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const provenance = await rpc.lythRuntimeProvenance();
-        if (!aliveRef.current) return;
-        setSlice({ data: provenance, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        if (isMethodNotFound(err)) {
-          setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-          return;
-        }
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return slice;
+  return usePolledRpc("lyth_runtimeProvenance", () => rpc.lythRuntimeProvenance());
 }
 
 export function useOperatorCapabilities(): RpcSlice<OperatorCapabilitiesResponse> {
-  const [slice, setSlice] = useState<RpcSlice<OperatorCapabilitiesResponse>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const capabilities = await rpc.lythOperatorCapabilities();
-        if (!aliveRef.current) return;
-        setSlice({ data: capabilities, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        if (isMethodNotFound(err)) {
-          setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-          return;
-        }
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return slice;
+  return usePolledRpc("lyth_operatorCapabilities", () => rpc.lythOperatorCapabilities());
 }
 
 // ---- 0.3.10 operator reads (gateable / indexer-projected) -----------
@@ -256,7 +169,7 @@ export function useOperatorCapabilities(): RpcSlice<OperatorCapabilitiesResponse
 // cluster-diversity + operator-network-metadata (0x1005), and bridge
 // health (0x1008) all landed in @monolythium/core-sdk 0.3.10. They are
 // gateable precompiles that answer `method not found` until the milestone
-// activates them. `usePolledRpc` keeps the panel honest on the gated path —
+// activates them. The cache keeps the panel honest on the gated path —
 // `notExposed=true`, data null, "available when activated" — instead of
 // faking a production value. Two of them (prover-market, oracle) are also
 // indexer-projected: when the node runs without the projection they return
@@ -265,62 +178,22 @@ export function useOperatorCapabilities(): RpcSlice<OperatorCapabilitiesResponse
 // read (no such fallback body); cluster-diversity / network-metadata are
 // node-registry (0x1005) reads.
 
-function usePolledRpc<T>(
-  fetcher: () => Promise<T>,
-  deps: unknown[],
-  notExposedWhen: (err: unknown) => boolean = isMethodNotFound,
-): RpcSlice<T> {
-  const [slice, setSlice] = useState<RpcSlice<T>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-    const fetchOnce = async () => {
-      try {
-        const data = await fetcher();
-        if (!aliveRef.current) return;
-        setSlice({ data, loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        if (notExposedWhen(err)) {
-          setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-          return;
-        }
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-    // fetcher closes over the deps below; deps drive re-subscription.
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return slice;
-}
-
-// A missing required argument (no operator/cluster selected yet) is the
-// same UX state as a gated surface: nothing to show, but not an error.
-const NO_TARGET = { code: RPC_METHOD_NOT_FOUND, message: "method not found: no target selected" };
-
 export function useClusterJoinRequestView(
   clusterId: number | string | null,
   operatorIdHex: string | null,
 ): RpcSlice<ClusterJoinRequestView> {
   return usePolledRpc(
+    `clusterJoinRequestView:${clusterId ?? ""}:${operatorIdHex ?? ""}`,
     () =>
       clusterId !== null && operatorIdHex
         ? readClusterJoinRequest(rpc, { clusterId, operatorIdHex })
         : Promise.reject(NO_TARGET),
-    [clusterId, operatorIdHex],
     isClusterJoinViewUnavailable,
   );
 }
 
 export function useOperatorRouterConfig(): RpcSlice<OperatorRouterConfig> {
-  return usePolledRpc(() => rpc.lythOperatorRouterConfig(), []);
+  return usePolledRpc("lyth_operatorRouterConfig", () => rpc.lythOperatorRouterConfig());
 }
 
 // `operator` MUST be the operator's bech32m USER (wallet) address — the
@@ -330,16 +203,16 @@ export function useOperatorRouterConfig(): RpcSlice<OperatorRouterConfig> {
 // chainAddress`, guarded to a `mono1…` form by the caller.
 export function useOperatorFeeConfig(operator: string | null): RpcSlice<OperatorFeeConfig> {
   return usePolledRpc(
+    `lyth_operatorFeeConfig:${operator ?? ""}`,
     () => (operator ? rpc.lythOperatorFeeConfig(operator) : Promise.reject(NO_TARGET)),
-    [operator],
     (err) => isMethodNotFound(err) || isNotFound(err) || isAddressError(err),
   );
 }
 
 export function useClusterDiversity(clusterId: number): RpcSlice<ClusterDiversityView> {
   return usePolledRpc(
+    `lyth_getClusterDiversity:${clusterId}`,
     () => rpc.lythGetClusterDiversity(clusterId),
-    [clusterId],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -349,16 +222,16 @@ export function useClusterResignations(
   status: "pending" | "applied" | "all" = "all",
 ): RpcSlice<ClusterResignationsResponse> {
   return usePolledRpc(
+    `lyth_getClusterResignations:${operator ?? ""}:${status}`,
     () => rpc.lythGetClusterResignations(operator, status),
-    [operator, status],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
 
 export function useOperatorNetworkMetadata(operatorId: string | null): RpcSlice<OperatorNetworkMetadataView> {
   return usePolledRpc(
+    `lyth_getOperatorNetworkMetadata:${operatorId ?? ""}`,
     () => (operatorId ? rpc.lythGetOperatorNetworkMetadata(operatorId) : Promise.reject(NO_TARGET)),
-    [operatorId],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -383,6 +256,7 @@ export function useOperatorNetworkMetadataMap(
   const ids = normalizeOperatorIdList(operatorIds);
   const key = ids.join("|");
   return usePolledRpc(
+    `operatorNetworkMetadataMap:${key}`,
     async () => {
       if (ids.length === 0) return {};
       const rows = await Promise.all(
@@ -397,27 +271,26 @@ export function useOperatorNetworkMetadataMap(
       );
       return Object.fromEntries(rows);
     },
-    [key],
     (err) => isMethodNotFound(err),
   );
 }
 
 export function useProverMarketStatus(): RpcSlice<ProverMarketStatusResponse> {
-  return usePolledRpc(() => rpc.lythProverMarketStatus(), []);
+  return usePolledRpc("lyth_proverMarketStatus", () => rpc.lythProverMarketStatus());
 }
 
 export function useOracleSigners(): RpcSlice<OracleSignersResponse> {
-  return usePolledRpc(() => rpc.lythOracleSigners(), []);
+  return usePolledRpc("lyth_oracleSigners", () => rpc.lythOracleSigners());
 }
 
 export function useBridgeHealth(): RpcSlice<BridgeHealthResponse> {
-  return usePolledRpc(() => rpc.lythBridgeHealth(), []);
+  return usePolledRpc("lyth_bridgeHealth", () => rpc.lythBridgeHealth());
 }
 
 export function useOperatorAuthority(operatorId: string | null): RpcSlice<OperatorAuthorityResponse> {
   return usePolledRpc(
+    `lyth_resolveOperatorAuthority:${operatorId ?? ""}`,
     () => (operatorId ? rpc.lythResolveOperatorAuthority(operatorId) : Promise.reject(NO_TARGET)),
-    [operatorId],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -427,11 +300,11 @@ export function useOperatorRisk(
   windowRounds = 200,
 ): RpcSlice<OperatorRiskResponse> {
   return usePolledRpc(
+    `lyth_operatorRisk:${authorityIndex ?? ""}:${windowRounds}`,
     () =>
       authorityIndex !== null
         ? rpc.lythOperatorRisk(authorityIndex, windowRounds)
         : Promise.reject(NO_TARGET),
-    [authorityIndex, windowRounds],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -441,11 +314,11 @@ export function useOperatorSigningActivity(
   limit = 200,
 ): RpcSlice<OperatorSigningActivityResponse> {
   return usePolledRpc(
+    `lyth_signingActivity:${authorityIndex ?? ""}:${limit}`,
     () =>
       authorityIndex !== null
         ? rpc.lythSigningActivity(authorityIndex, limit)
         : Promise.reject(NO_TARGET),
-    [authorityIndex, limit],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -455,11 +328,11 @@ export function useUpcomingDuties(
   horizonRounds = 500,
 ): RpcSlice<UpcomingDutiesResponse> {
   return usePolledRpc(
+    `lyth_upcomingDuties:${authorityIndex ?? ""}:${horizonRounds}`,
     () =>
       authorityIndex !== null
         ? rpc.lythUpcomingDuties(authorityIndex, horizonRounds)
         : Promise.reject(NO_TARGET),
-    [authorityIndex, horizonRounds],
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }
@@ -471,11 +344,11 @@ export function useMetricsRange(
   const selectorKey = selectors.join("|");
   const rangeKey = range ? `${range[0].toString()}:${range[1].toString()}` : "latest";
   return usePolledRpc(
+    `lyth_metricsRange:${selectorKey}:${rangeKey}`,
     () =>
       selectors.length > 0
         ? rpc.lythMetricsRange([...selectors], range)
         : Promise.reject(NO_TARGET),
-    [selectorKey, rangeKey],
     (err) => isMethodNotFound(err),
   );
 }
@@ -624,77 +497,25 @@ export function mapClusterStatus(data: ClusterStatusResponse): ClusterStatus {
 }
 
 export function useOperatorInfo(operatorId: string | null): RpcSlice<OperatorInfo> {
-  const [slice, setSlice] = useState<RpcSlice<OperatorInfo>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-
-    const fetchOnce = async () => {
-      if (!operatorId) {
-        setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-        return;
-      }
-      try {
-        const data = await rpc.lythOperatorInfo(operatorId);
-        if (!aliveRef.current) return;
-        setSlice({ data: mapOperatorInfo(data), loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        if (isMethodNotFound(err) || isNotFound(err)) {
-          setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-          return;
-        }
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-
-    void fetchOnce();
-    const idInterval = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(idInterval);
-    };
-  }, [operatorId]);
-
-  return slice;
+  return usePolledRpc(
+    `lyth_operatorInfo:${operatorId ?? ""}`,
+    async () =>
+      operatorId
+        ? mapOperatorInfo(await rpc.lythOperatorInfo(operatorId))
+        : Promise.reject(NO_TARGET),
+    (err) => isMethodNotFound(err) || isNotFound(err),
+  );
 }
 
 export function useClusterStatus(id: number | null): RpcSlice<ClusterStatus> {
-  const [slice, setSlice] = useState<RpcSlice<ClusterStatus>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-
-    const fetchOnce = async () => {
-      if (id === null) {
-        setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-        return;
-      }
-      try {
-        const data = await rpc.lythClusterStatus(id);
-        if (!aliveRef.current) return;
-        setSlice({ data: mapClusterStatus(data), loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        if (isMethodNotFound(err) || isNotFound(err)) {
-          setSlice({ data: null, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-          return;
-        }
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
-    };
-
-    void fetchOnce();
-    const idInterval = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(idInterval);
-    };
-  }, [id]);
-
-  return slice;
+  return usePolledRpc(
+    `lyth_clusterStatus:${id ?? ""}`,
+    async () =>
+      id !== null
+        ? mapClusterStatus(await rpc.lythClusterStatus(id))
+        : Promise.reject(NO_TARGET),
+    (err) => isMethodNotFound(err) || isNotFound(err),
+  );
 }
 
 function normalizeChainStatus(raw: Partial<ChainStatus>): ChainStatus {
@@ -709,59 +530,60 @@ function normalizeChainStatus(raw: Partial<ChainStatus>): ChainStatus {
   };
 }
 
+// `lyth_chainStatus` with a basic-RPC composition fallback for nodes
+// that don't expose the native method. `viaFallback` maps onto the
+// slice's `notExposed` so views keep the "some methods not yet exposed"
+// banner — while still carrying the composed data.
+type ChainStatusFetch = { status: ChainStatus; viaFallback: boolean };
+
+async function fetchChainStatus(): Promise<ChainStatusFetch> {
+  try {
+    const data = await rpc.call<Partial<ChainStatus>>("lyth_chainStatus", []);
+    return { status: normalizeChainStatus(data), viaFallback: false };
+  } catch (err) {
+    if (!isMethodNotFound(err)) throw err;
+  }
+
+  const [chainId, block, round, directory] = await Promise.all([
+    rpc.ethChainId().catch(() => null),
+    rpc.ethBlockNumber().catch(() => null),
+    rpc.lythCurrentRound().catch(() => null),
+    rpc.lythClusterDirectory(0, 100).catch(() => null),
+  ]);
+  const operatorCount = directory?.clusters.reduce((sum, c) => sum + c.size, 0) ?? 0;
+  return {
+    status: {
+      chainId: chainId !== null ? Number(chainId) : 0,
+      blockHeight: block !== null ? Number(block) : 0,
+      finalizedHeight: round ? Number(round.height) : 0,
+      operatorCount,
+      clusterCount: directory?.totalClusters ?? directory?.clusters.length ?? 0,
+      mempoolDepth: 0,
+      reachable: chainId !== null && block !== null,
+    },
+    viaFallback: true,
+  };
+}
+
 export function useChainStatus(): RpcSlice<ChainStatus> {
-  const [slice, setSlice] = useState<RpcSlice<ChainStatus>>(empty);
-  const aliveRef = useRef(true);
-
-  useEffect(() => {
-    aliveRef.current = true;
-
-    const fetchOnce = async () => {
-      try {
-        const data = await rpc.call<Partial<ChainStatus>>("lyth_chainStatus", []);
-        if (!aliveRef.current) return;
-        setSlice({ data: normalizeChainStatus(data), loading: false, error: null, notExposed: false, lastUpdatedAt: Date.now() });
-        return;
-      } catch (err) {
-        if (!isMethodNotFound(err)) {
-          if (!aliveRef.current) return;
-          setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-          return;
-        }
-      }
-
-      try {
-        const [chainId, block, round, directory] = await Promise.all([
-          rpc.ethChainId().catch(() => null),
-          rpc.ethBlockNumber().catch(() => null),
-          rpc.lythCurrentRound().catch(() => null),
-          rpc.lythClusterDirectory(0, 100).catch(() => null),
-        ]);
-        if (!aliveRef.current) return;
-        const operatorCount = directory?.clusters.reduce((sum, c) => sum + c.size, 0) ?? 0;
-        const data: ChainStatus = {
-          chainId: chainId !== null ? Number(chainId) : 0,
-          blockHeight: block !== null ? Number(block) : 0,
-          finalizedHeight: round ? Number(round.height) : 0,
-          operatorCount,
-          clusterCount: directory?.totalClusters ?? directory?.clusters.length ?? 0,
-          mempoolDepth: 0,
-          reachable: chainId !== null && block !== null,
-        };
-        setSlice({ data, loading: false, error: null, notExposed: true, lastUpdatedAt: Date.now() });
-      } catch (err) {
-        if (!aliveRef.current) return;
-        setSlice((prev) => ({ ...prev, loading: false, error: (err as Error)?.message ?? String(err), lastUpdatedAt: Date.now() }));
-      }
+  const polled = usePolledRpc<ChainStatusFetch>("lyth_chainStatus", fetchChainStatus, () => false);
+  const commit = useLiveCommit();
+  return useMemo(() => {
+    let data = polled.data?.status ?? null;
+    // Overlay the freshest committed height from the WS feed; heights
+    // are monotonic so `max` never regresses the polled value.
+    if (data && commit && commit.height > data.blockHeight) {
+      data = { ...data, blockHeight: commit.height, reachable: true };
+    }
+    return {
+      data,
+      loading: polled.loading,
+      error: polled.error,
+      notExposed: polled.data?.viaFallback ?? polled.notExposed,
+      lastUpdatedAt:
+        commit && polled.lastUpdatedAt !== null
+          ? Math.max(commit.at, polled.lastUpdatedAt)
+          : polled.lastUpdatedAt,
     };
-
-    void fetchOnce();
-    const id = window.setInterval(() => void fetchOnce(), POLL_MS);
-    return () => {
-      aliveRef.current = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  return slice;
+  }, [polled, commit]);
 }

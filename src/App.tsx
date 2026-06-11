@@ -18,6 +18,7 @@ import { SideNav } from "./components/SideNav";
 import { TopBar } from "./components/TopBar";
 import { AskBar } from "./components/AskBar";
 import { AskRail } from "./components/AskRail";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { TweaksPanel, useTweaks } from "./components/TweaksPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { checkForUpdate, type UpdateAvailable } from "./sdk/updater";
@@ -35,25 +36,46 @@ import { Operator } from "./views/Operator";
 import { Cluster } from "./views/Cluster";
 import { Operations } from "./views/Operations";
 import { Metrics } from "./views/Metrics";
-import { Hardware } from "./views/Hardware";
 import { Logs } from "./views/Logs";
-import { Install } from "./views/Install";
 import { Welcome } from "./views/Welcome";
-import { Chat } from "./views/Chat";
 import { quickConfiguredProbe } from "./sdk/onboarding";
-import {
-  Alerts,
-  Attestation,
-  Audit,
-  Governance,
-  Keys,
-  Marketplace,
-  Recovery,
-  Services,
-  SetupCluster,
-  SetupOperator,
-  Wallets,
-} from "./views/DesignRoutes";
+
+// Code-split the heavier, less-trafficked surfaces: the eleven design
+// routes share one lazy chunk; Chat / Install / Hardware each get their
+// own. Core operator surfaces (Home, Operator, Cluster, Operations,
+// Metrics, Logs) stay eager so first paint never waits on a fetch.
+const Chat = lazy(() => import("./views/Chat").then((m) => ({ default: m.Chat })));
+const Install = lazy(() => import("./views/Install").then((m) => ({ default: m.Install })));
+const Hardware = lazy(() => import("./views/Hardware").then((m) => ({ default: m.Hardware })));
+const Marketplace = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Marketplace })));
+const Services = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Services })));
+const Audit = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Audit })));
+const Governance = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Governance })));
+const Alerts = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Alerts })));
+const Wallets = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Wallets })));
+const SetupOperator = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.SetupOperator })));
+const SetupCluster = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.SetupCluster })));
+const Attestation = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Attestation })));
+const Keys = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Keys })));
+const Recovery = lazy(() => import("./views/DesignRoutes").then((m) => ({ default: m.Recovery })));
+
+// Glass skeleton shown while a lazy route chunk loads.
+function RouteSkeleton() {
+  return (
+    <section className="view fade-in lv-skel" aria-busy="true" aria-label="Loading view">
+      <div className="lv-skel__bar" />
+      <div className="lv-skel__row">
+        <div className="lv-skel__card" />
+        <div className="lv-skel__card" />
+        <div className="lv-skel__card" />
+      </div>
+      <div className="lv-skel__row">
+        <div className="lv-skel__card" />
+        <div className="lv-skel__card" />
+      </div>
+    </section>
+  );
+}
 
 const VIEW_KEY = "monarch:view";
 
@@ -262,6 +284,7 @@ function ShellInner() {
   return (
     <>
       <div className="monarch-shell">
+        <div className="bg" aria-hidden="true"><div className="bg__canvas"/><div className="bg__bloom bg__bloom--a"/><div className="bg__bloom bg__bloom--b"/><div className="bg__bloom bg__bloom--c"/><div className="bg__grid"/><div className="bg__grain"/><div className="bg__vignette"/></div>
         <SideNav />
         <div className="monarch-main">
           <TopBar
@@ -269,45 +292,49 @@ function ShellInner() {
             onOpenTweaks={() => setTweaksOpen((prev) => !prev)}
           />
           <main className="monarch-content">
-            <Routes>
-              <Route path="/" element={<LastViewRedirect />} />
-              <Route path="/home" element={<Home />} />
-              <Route path="/operator" element={<Operator />} />
-              <Route path="/cluster" element={<Cluster />} />
-              <Route path="/operations" element={<Operations />} />
-              <Route path="/metrics" element={<Metrics />} />
-              <Route path="/hardware" element={<Hardware />} />
-              <Route path="/logs" element={<Logs />} />
-              <Route path="/chat" element={<Chat />} />
-              <Route
-                path="/ceremony"
-                element={
-                  <Suspense
-                    fallback={
-                      <section className="view fade-in">
-                        <div className="empty-state">Loading the ceremony room…</div>
-                      </section>
+            <ErrorBoundary resetKey={location.pathname}>
+              <Suspense fallback={<RouteSkeleton />}>
+                <Routes>
+                  <Route path="/" element={<LastViewRedirect />} />
+                  <Route path="/home" element={<Home />} />
+                  <Route path="/operator" element={<Operator />} />
+                  <Route path="/cluster" element={<Cluster />} />
+                  <Route path="/operations" element={<Operations />} />
+                  <Route path="/metrics" element={<Metrics />} />
+                  <Route path="/hardware" element={<Hardware />} />
+                  <Route path="/logs" element={<Logs />} />
+                  <Route path="/chat" element={<Chat />} />
+                  <Route
+                    path="/ceremony"
+                    element={
+                      <Suspense
+                        fallback={
+                          <section className="view fade-in">
+                            <div className="empty-state">Loading the ceremony room…</div>
+                          </section>
+                        }
+                      >
+                        <CeremonyRoute />
+                      </Suspense>
                     }
-                  >
-                    <CeremonyRoute />
-                  </Suspense>
-                }
-              />
-              <Route path="/welcome" element={<Welcome />} />
-              <Route path="/install" element={<Install />} />
-              <Route path="/marketplace" element={<Marketplace />} />
-              <Route path="/services" element={<Services />} />
-              <Route path="/audit" element={<Audit />} />
-              <Route path="/governance" element={<Governance />} />
-              <Route path="/alerts" element={<Alerts />} />
-              <Route path="/wallets" element={<Wallets />} />
-              <Route path="/setup-operator" element={<SetupOperator />} />
-              <Route path="/setup-cluster" element={<SetupCluster />} />
-              <Route path="/attestation" element={<Attestation />} />
-              <Route path="/keys" element={<Keys />} />
-              <Route path="/recovery" element={<Recovery />} />
-              <Route path="*" element={<Navigate to="/home" replace />} />
-            </Routes>
+                  />
+                  <Route path="/welcome" element={<Welcome />} />
+                  <Route path="/install" element={<Install />} />
+                  <Route path="/marketplace" element={<Marketplace />} />
+                  <Route path="/services" element={<Services />} />
+                  <Route path="/audit" element={<Audit />} />
+                  <Route path="/governance" element={<Governance />} />
+                  <Route path="/alerts" element={<Alerts />} />
+                  <Route path="/wallets" element={<Wallets />} />
+                  <Route path="/setup-operator" element={<SetupOperator />} />
+                  <Route path="/setup-cluster" element={<SetupCluster />} />
+                  <Route path="/attestation" element={<Attestation />} />
+                  <Route path="/keys" element={<Keys />} />
+                  <Route path="/recovery" element={<Recovery />} />
+                  <Route path="*" element={<Navigate to="/home" replace />} />
+                </Routes>
+              </Suspense>
+            </ErrorBoundary>
           </main>
           <AskBar />
         </div>
