@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL , fileURLToPath } from "node:url";
+import { resolveDesktopRpcEndpoint as resolveDesktopRpcEndpointPure } from "./lib/desktop-rpc-endpoint.mjs";
 
 const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DEFAULT_OS_REPO = path.resolve(ROOT, "..", "monarch-os-talos");
@@ -173,14 +174,7 @@ function smokeTalosNode() {
 }
 
 export function resolveDesktopRpcEndpoint(e2eOptions = {}, smokeEnv = {}, environment = process.env) {
-  return firstNonEmpty(
-    e2eOptions.expectedRpcEndpoint,
-    environment.MONARCH_E2E_DESKTOP_RPC_ENDPOINT,
-    environment.MONARCH_E2E_RPC_ENDPOINT,
-    smokeEnv.MONARCH_E2E_RPC_ENDPOINT,
-    environment.VITE_RPC_ENDPOINT,
-    environment.TAURI_RPC_ENDPOINT,
-  );
+  return resolveDesktopRpcEndpointPure(e2eOptions, smokeEnv, environment);
 }
 
 async function startSmokeAndReadLiveEnv(osRepo, osConfigDir) {

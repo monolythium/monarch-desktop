@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDesktopRpcEndpoint } from "./run-monarch-e2e.mjs";
+import { resolveDesktopRpcEndpoint } from "./lib/desktop-rpc-endpoint.mjs";
 
 describe("run-monarch-e2e endpoint resolution", () => {
   it("uses the QEMU smoke RPC before generic app RPC defaults", () => {
