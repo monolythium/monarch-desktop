@@ -1,4 +1,5 @@
 import { formatLyth } from "@monolythium/core-sdk";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
@@ -33,6 +34,22 @@ export function Operator() {
   const operator = useOperatorInfo(operatorId);
   const ops = useOps();
   const navigate = useNavigate();
+
+  // Copied-state feedback for the key-row copy buttons: flash a ✓ for 1.2s.
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    },
+    [],
+  );
+  const copyKeyValue = (label: string, value: string) => {
+    void navigator.clipboard?.writeText(value);
+    setCopiedKey(label);
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopiedKey(null), 1200);
+  };
 
   const authority = useOperatorAuthority(operatorId);
   const authorityIndex = authority.data?.authorityIndex ?? null;
@@ -265,12 +282,13 @@ export function Operator() {
                 </div>
                 <button
                   type="button"
-                  className="copy-btn"
+                  className={copiedKey === k.label ? "copy-btn copy-btn--copied" : "copy-btn"}
                   disabled={k.value === "—"}
-                  onClick={() => void navigator.clipboard?.writeText(k.value)}
-                  aria-label={`Copy ${k.label}`}
+                  onClick={() => copyKeyValue(k.label, k.value)}
+                  aria-label={copiedKey === k.label ? `Copied ${k.label}` : `Copy ${k.label}`}
+                  aria-live="polite"
                 >
-                  CP
+                  {copiedKey === k.label ? "✓" : "CP"}
                 </button>
               </div>
             ))}

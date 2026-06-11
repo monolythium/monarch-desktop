@@ -22,45 +22,46 @@
   --ink-400: #26223f;
   --ink-500: #332c52;
 
-  /* Foreground ramp */
+  /* Foreground ramp — white-alpha per the design bible (translucency is for
+     chrome; data numerals stay on fg-000/fg-100 for AAA through the glass). */
   --fg-000: #ffffff;
-  --fg-100: #ecedf3;
-  --fg-200: #c9ccd8;
-  --fg-300: #8c90a3;
-  --fg-400: #646879;
-  --fg-500: #464a5c;
-  --fg-600: #2d3040;
-  --fg-700: #1a1c28;
-  --fg-800: #12131c;
+  --fg-100: rgba(255, 255, 255, 0.96);
+  --fg-200: rgba(255, 255, 255, 0.78);
+  --fg-300: rgba(255, 255, 255, 0.55);
+  --fg-400: rgba(255, 255, 255, 0.38);
+  --fg-500: rgba(255, 255, 255, 0.22);
+  --fg-600: rgba(255, 255, 255, 0.12);
+  --fg-700: rgba(255, 255, 255, 0.06);
 
   /* Surfaces */
   --surface-0: var(--ink-050);
   --surface-1: var(--ink-200);
-  --surface-2: var(--ink-300);
-  --surface-3: #26223f;
 
   /* Brand: gold-discipline primary action only */
   --gold:      #F2B441;
   --gold-hi:   #ffd06c;
-  --gold-lo:   #c98c20;
   --gold-bg:   rgba(242, 180, 65, 0.14);
   --gold-soft: rgba(242, 180, 65, 0.20);
   --gold-glow: 242, 180, 65;
 
-  /* Status (chromatic halos, never filled pills) */
-  --ok:    #7ee3c1;
-  --warn:  #f4c97a;
-  --alert: #ff8a9a;
-  --err:   #ff8a9a;
-  --info:  #8fb5ff;
+  /* Status (oklch chromatic halos, never filled pills) */
+  --ok:    oklch(0.78 0.16 155);
+  --warn:  oklch(0.82 0.17 78);
+  --alert: oklch(0.70 0.22 22);
+  --err:   var(--alert);
+  --info:  oklch(0.78 0.13 255);
 
-  --state-nominal:     #7ee3c1;
-  --state-maintenance: #f4c97a;
-  --state-jail:        #ff8a9a;
+  --state-nominal:     var(--ok);
+  --state-maintenance: var(--warn);
+  --state-jail:        var(--alert);
 
   /* Liquid-glass */
-  --glass-fill:   rgba(22, 20, 38, 0.42);
-  --glass-stroke: rgba(255, 255, 255, 0.08);
+  --glass-fill:        rgba(22, 20, 38, 0.42);
+  --glass-fill-strong: rgba(22, 20, 38, 0.62);
+  --glass-fill-hover:  rgba(28, 25, 48, 0.55);
+  --glass-stroke:      rgba(255, 255, 255, 0.08);
+  --glass-stroke-hi:   rgba(255, 255, 255, 0.14);
+  --glass-inner:       rgba(255, 255, 255, 0.06);
   --glass-blur:   28px;
   --hue-a: 312;
   --hue-b: 268;
@@ -68,11 +69,9 @@
   --numeral-scale: 1;
 
   /* Radii */
-  --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-pill: 999px;
+  --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 28px; --r-pill: 999px;
 
   /* Shadows */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-2: 0 6px 20px -8px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 24px 48px -16px rgba(0, 0, 0, 0.55);
 
   /* Motion */
@@ -103,10 +102,127 @@ html, body {
 }
 
 body {
+  /* Graceful fallback only — the real canvas is the fixed .bg layer below. */
   background:
     radial-gradient(ellipse 90% 60% at 10% 0%, hsl(var(--hue-a) 80% 55% / calc(var(--bleed) * 0.12)), transparent 55%),
     radial-gradient(ellipse 80% 60% at 95% 100%, hsl(var(--hue-b) 78% 55% / calc(var(--bleed) * 0.11)), transparent 55%),
     var(--ink-050);
+}
+
+/* ============ BACKGROUND — liquid-glass bloom layer ============
+   Ported from designs/design_handoff_monarch/styles/app.css:17-81.
+   Expects this exact markup (rendered once in App.tsx, behind the shell):
+     <div className="bg">
+       <div className="bg__canvas" />
+       <div className="bg__bloom bg__bloom--a" />
+       <div className="bg__bloom bg__bloom--b" />
+       <div className="bg__bloom bg__bloom--c" />
+       <div className="bg__grid" />
+       <div className="bg__grain" />
+       <div className="bg__vignette" />
+     </div>
+   Hue/intensity ride the TweaksPanel vars --hue-a / --hue-b / --bleed. */
+.bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bg__canvas {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% 120%, oklch(0.22 0.08 var(--hue-b) / 0.8), transparent 60%),
+    linear-gradient(180deg, var(--ink-000) 0%, var(--ink-100) 50%, var(--ink-050) 100%);
+}
+
+.bg__bloom {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: var(--bleed);
+  mix-blend-mode: screen;
+  transition: opacity 600ms var(--e-out);
+}
+
+.bg__bloom--a {
+  width: 60vw;
+  height: 60vw;
+  left: -10vw;
+  bottom: -20vw;
+  background: radial-gradient(circle, oklch(0.65 0.22 var(--hue-a)) 0%, transparent 60%);
+}
+
+.bg__bloom--b {
+  width: 55vw;
+  height: 55vw;
+  right: -15vw;
+  top: -15vw;
+  background: radial-gradient(circle, oklch(0.58 0.20 var(--hue-b)) 0%, transparent 60%);
+}
+
+.bg__bloom--c {
+  width: 40vw;
+  height: 40vw;
+  left: 30vw;
+  bottom: 30vh;
+  background: radial-gradient(circle, oklch(0.60 0.18 calc((var(--hue-a) + var(--hue-b)) / 2)) 0%, transparent 60%);
+  opacity: calc(var(--bleed) * 0.6);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bg__bloom--a { animation: bloomDrift-a 26s ease-in-out infinite; }
+  .bg__bloom--b { animation: bloomDrift-b 32s ease-in-out infinite; }
+  .bg__bloom--c { animation: bloomDrift-c 40s ease-in-out infinite; }
+}
+
+@keyframes bloomDrift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(8vw, -6vh) scale(1.08); }
+}
+
+@keyframes bloomDrift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-6vw, 8vh) scale(0.92); }
+}
+
+@keyframes bloomDrift-c {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-10vw, -4vh) scale(1.1); }
+}
+
+.bg__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 20%, transparent 80%);
+}
+
+/* feTurbulence film grain (design app.css:72-77). Hidden until the
+   TweaksPanel grain toggle (default on) puts .tweak-grain on <html>. */
+.bg__grain {
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.4 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>");
+  opacity: 0;
+  mix-blend-mode: overlay;
+  transition: opacity 300ms var(--e-out);
+}
+
+.tweak-grain .bg__grain {
+  opacity: 0.06;
+}
+
+.bg__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 100% 80% at 50% 50%, transparent 40%, rgba(0, 0, 0, 0.45) 100%);
 }
 
 a { color: inherit; text-decoration: none; }
@@ -143,6 +259,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ============ SHELL: 220 / 56 / 72 grid ============ */
 .monarch-shell {
   position: relative;
+  z-index: 1; /* keeps the chrome above the fixed .bg bloom layer */
   display: grid;
   grid-template-columns: var(--side-w) 1fr;
   height: 100vh;
@@ -728,13 +845,48 @@ kbd {
   font-size: 10.5px;
 }
 
+/* ============ GLASS ============ */
+/* Frosted-panel primitive per design app.css:98-120 — blur(28px)
+   saturate(160%), 1px inner highlight, no hard drop shadows. */
+.glass {
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  border: 1px solid var(--glass-stroke);
+  border-radius: var(--r-lg);
+  box-shadow:
+    inset 0 1px 0 var(--glass-inner),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 30px 60px -30px rgba(0, 0, 0, 0.6);
+  position: relative;
+}
+
+.glass::before {
+  /* inner highlight */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 30%);
+  pointer-events: none;
+}
+
+.glass--strong { background: var(--glass-fill-strong); }
+.glass--flat { box-shadow: inset 0 1px 0 var(--glass-inner); }
+
 /* ============ CARDS ============ */
 .card {
-  background: var(--surface-1);
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
   border: 1px solid var(--glass-stroke);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   padding: 18px 20px;
   position: relative;
+  box-shadow:
+    inset 0 1px 0 var(--glass-inner),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 30px 60px -30px rgba(0, 0, 0, 0.6);
 }
 
 .card--padded { padding: 22px 24px; }
@@ -796,11 +948,49 @@ kbd {
 .btn--sm { padding: 6px 12px; font-size: 12px; }
 .btn--icon { padding: 0; width: 32px; height: 32px; justify-content: center; }
 .btn--block { width: 100%; justify-content: center; }
-.btn--danger { color: var(--err); background: rgba(255, 138, 154, 0.10); }
-.btn--danger:hover { background: rgba(255, 138, 154, 0.18); }
+.btn--danger { color: var(--err); background: oklch(0.70 0.22 22 / 0.10); }
+.btn--danger:hover { background: oklch(0.70 0.22 22 / 0.18); }
 
 /* ============ HALOS / PILLS / DOTS ============ */
+/* Real status halo per design app.css:334-353 — a radial chromatic glow
+   blurred behind the value, never a filled/bordered pill (bible
+   non-negotiable: "status tokens are chromatic halos around data"). */
 .halo {
+  position: relative;
+  isolation: isolate; /* keeps the z-index:-1 glow above ancestor card fills */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--fg-200);
+}
+
+.halo::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: inherit;
+  background: radial-gradient(circle at center, currentColor 0%, transparent 70%);
+  opacity: 0.25;
+  filter: blur(8px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.halo--ok    { color: var(--ok); }
+.halo--warn  { color: var(--warn); }
+.halo--err,
+.halo--alert { color: var(--alert); }
+.halo--info  { color: var(--info); }
+.halo--gold  { color: var(--gold); }
+
+/* The old bordered pill, preserved for surfaces that want a contained chip
+   (e.g. roster tags) rather than a chromatic halo. */
+.pill-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -815,11 +1005,11 @@ kbd {
   border: 1px solid var(--glass-stroke);
 }
 
-.halo--ok    { color: var(--ok);    border-color: rgba(126, 227, 193, 0.32); box-shadow: 0 0 14px rgba(126, 227, 193, 0.12); }
-.halo--warn  { color: var(--warn);  border-color: rgba(244, 201, 122, 0.32); box-shadow: 0 0 14px rgba(244, 201, 122, 0.12); }
-.halo--err   { color: var(--err);   border-color: rgba(255, 138, 154, 0.32); box-shadow: 0 0 14px rgba(255, 138, 154, 0.12); }
-.halo--info  { color: var(--info);  border-color: rgba(139, 92, 246, 0.32);  box-shadow: 0 0 14px rgba(139, 92, 246, 0.12); }
-.halo--gold  { color: var(--gold);  border-color: rgba(var(--gold-glow), 0.32); box-shadow: 0 0 14px rgba(var(--gold-glow), 0.12); }
+.pill-status--ok    { color: var(--ok);    border-color: oklch(0.78 0.16 155 / 0.32); }
+.pill-status--warn  { color: var(--warn);  border-color: oklch(0.82 0.17 78 / 0.32); }
+.pill-status--err   { color: var(--err);   border-color: oklch(0.70 0.22 22 / 0.32); }
+.pill-status--info  { color: var(--info);  border-color: oklch(0.78 0.13 255 / 0.32); }
+.pill-status--gold  { color: var(--gold);  border-color: rgba(var(--gold-glow), 0.32); }
 
 .dot {
   display: inline-block;
@@ -1096,11 +1286,11 @@ kbd {
   font-weight: 500;
 }
 
-.hero-stat--ok { box-shadow: 0 0 18px rgba(126, 227, 193, 0.08); }
-.hero-stat--warn { box-shadow: 0 0 18px rgba(244, 201, 122, 0.08); }
-.hero-stat--info { box-shadow: 0 0 18px rgba(143, 181, 255, 0.08); }
+.hero-stat--ok { box-shadow: 0 0 18px oklch(0.78 0.16 155 / 0.08); }
+.hero-stat--warn { box-shadow: 0 0 18px oklch(0.82 0.17 78 / 0.08); }
+.hero-stat--info { box-shadow: 0 0 18px oklch(0.78 0.13 255 / 0.08); }
 .hero-stat--gold { box-shadow: 0 0 18px rgba(var(--gold-glow), 0.10); }
-.hero-stat--err { box-shadow: 0 0 18px rgba(255, 106, 106, 0.10); }
+.hero-stat--err { box-shadow: 0 0 18px oklch(0.70 0.22 22 / 0.10); }
 
 .home-cluster-card {
   display: flex;
@@ -1272,6 +1462,13 @@ kbd {
   border-color: rgba(var(--gold-glow), 0.34);
 }
 
+.copy-btn--copied,
+.copy-btn--copied:hover {
+  color: var(--ok);
+  border-color: oklch(0.78 0.16 155 / 0.4);
+  box-shadow: 0 0 12px oklch(0.78 0.16 155 / 0.18);
+}
+
 .operator-risk-grid {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr;
@@ -1414,10 +1611,10 @@ kbd {
   font-size: 11px;
 }
 
-.metric-value--ok { border-color: rgba(126, 227, 193, 0.28); box-shadow: 0 0 18px rgba(126, 227, 193, 0.10); }
-.metric-value--warn { border-color: rgba(244, 201, 122, 0.28); box-shadow: 0 0 18px rgba(244, 201, 122, 0.10); }
-.metric-value--err { border-color: rgba(255, 138, 154, 0.28); box-shadow: 0 0 18px rgba(255, 138, 154, 0.10); }
-.metric-value--info { border-color: rgba(143, 181, 255, 0.28); box-shadow: 0 0 18px rgba(143, 181, 255, 0.10); }
+.metric-value--ok { border-color: oklch(0.78 0.16 155 / 0.28); box-shadow: 0 0 18px oklch(0.78 0.16 155 / 0.10); }
+.metric-value--warn { border-color: oklch(0.82 0.17 78 / 0.28); box-shadow: 0 0 18px oklch(0.82 0.17 78 / 0.10); }
+.metric-value--err { border-color: oklch(0.70 0.22 22 / 0.28); box-shadow: 0 0 18px oklch(0.70 0.22 22 / 0.10); }
+.metric-value--info { border-color: oklch(0.78 0.13 255 / 0.28); box-shadow: 0 0 18px oklch(0.78 0.13 255 / 0.10); }
 
 .metric-series__value {
   margin-top: 8px;
@@ -1511,7 +1708,9 @@ kbd {
 }
 
 .ring-wrap svg circle {
-  transition: stroke 220ms var(--e-out);
+  /* 600ms dasharray ease so the gold quorum arc sweeps when membership
+     or threshold changes instead of snapping. */
+  transition: stroke 220ms var(--e-out), stroke-dasharray 600ms var(--e-out);
 }
 
 .ring-center {
@@ -1563,9 +1762,9 @@ kbd {
   letter-spacing: 0.06em;
 }
 
-.cluster-count--ok { box-shadow: 0 0 18px rgba(126, 227, 193, 0.08); }
-.cluster-count--warn { box-shadow: 0 0 18px rgba(244, 201, 122, 0.08); }
-.cluster-count--err { box-shadow: 0 0 18px rgba(255, 138, 154, 0.08); }
+.cluster-count--ok { box-shadow: 0 0 18px oklch(0.78 0.16 155 / 0.08); }
+.cluster-count--warn { box-shadow: 0 0 18px oklch(0.82 0.17 78 / 0.08); }
+.cluster-count--err { box-shadow: 0 0 18px oklch(0.70 0.22 22 / 0.08); }
 
 .cluster-table td {
   vertical-align: middle;
@@ -1590,10 +1789,10 @@ kbd {
   background: rgba(255, 255, 255, 0.045);
 }
 
-.avatar--nominal { box-shadow: 0 0 14px rgba(126, 227, 193, 0.18); border-color: rgba(126, 227, 193, 0.32); }
-.avatar--lag { box-shadow: 0 0 14px rgba(244, 201, 122, 0.18); border-color: rgba(244, 201, 122, 0.32); }
-.avatar--maintenance { box-shadow: 0 0 14px rgba(143, 181, 255, 0.18); border-color: rgba(143, 181, 255, 0.32); }
-.avatar--jail { opacity: 0.5; box-shadow: 0 0 14px rgba(255, 138, 154, 0.18); border-color: rgba(255, 138, 154, 0.32); }
+.avatar--nominal { box-shadow: 0 0 14px oklch(0.78 0.16 155 / 0.18); border-color: oklch(0.78 0.16 155 / 0.32); }
+.avatar--lag { box-shadow: 0 0 14px oklch(0.82 0.17 78 / 0.18); border-color: oklch(0.82 0.17 78 / 0.32); }
+.avatar--maintenance { box-shadow: 0 0 14px oklch(0.78 0.13 255 / 0.18); border-color: oklch(0.78 0.13 255 / 0.32); }
+.avatar--jail { opacity: 0.5; box-shadow: 0 0 14px oklch(0.70 0.22 22 / 0.18); border-color: oklch(0.70 0.22 22 / 0.32); }
 
 .lag-card {
   display: flex;
@@ -1601,7 +1800,7 @@ kbd {
   justify-content: space-between;
   gap: 20px;
   border-left: 2px solid var(--warn);
-  box-shadow: 0 0 30px rgba(244, 201, 122, 0.08);
+  box-shadow: 0 0 30px oklch(0.82 0.17 78 / 0.08);
 }
 
 .lag-card h3 {
@@ -1793,7 +1992,7 @@ kbd {
 .ops-card:hover {
   transform: translateY(-1px);
   border-color: rgba(var(--gold-glow), 0.28);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--glass-fill-hover);
 }
 
 .ops-card__icon,
@@ -1867,17 +2066,17 @@ kbd {
 
 .risk--low {
   color: var(--ok);
-  border-color: rgba(126, 227, 193, 0.28);
+  border-color: oklch(0.78 0.16 155 / 0.28);
 }
 
 .risk--medium {
   color: var(--warn);
-  border-color: rgba(244, 201, 122, 0.28);
+  border-color: oklch(0.82 0.17 78 / 0.28);
 }
 
 .risk--high {
   color: var(--err);
-  border-color: rgba(255, 138, 154, 0.28);
+  border-color: oklch(0.70 0.22 22 / 0.28);
 }
 
 /* ============ LOG STREAM ============ */
@@ -2344,28 +2543,11 @@ kbd {
 .tweak-muted-gold {
   --gold: #d6b87a;
   --gold-hi: #e7c992;
-  --gold-lo: #a9874a;
   --gold-glow: 214, 184, 122;
 }
 
-.tweak-grain body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-  opacity: 0.045;
-  background-image:
-    linear-gradient(90deg, rgba(255,255,255,0.16) 1px, transparent 1px),
-    linear-gradient(rgba(255,255,255,0.11) 1px, transparent 1px);
-  background-size: 3px 3px;
-  mix-blend-mode: overlay;
-}
-
-.tweak-grain #root {
-  position: relative;
-  z-index: 2;
-}
+/* The grain tweak is rendered by .bg__grain (feTurbulence SVG) in the
+   background layer — see the BACKGROUND section near the top. */
 
 /* ============ ⌘K PALETTE (cmdk) ============ */
 .cmdk-overlay {
@@ -2889,5 +3071,30 @@ kbd {
   .chat-composer__sign {
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+}
+
+/* ============ A11Y ============ */
+/* Keyboard-first: every focusable surface gets the gold focus ring. */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* One switch turns off all ambient motion — dot pulses, fade-ins, the
+   keychain sweep, the background bloom drift, and ticker digit rolls.
+   (The bloom drift is additionally gated behind no-preference above.) */
+@media (prefers-reduced-motion: reduce) {
+  .dot--pulse,
+  .monarch-topbar__round .dot,
+  .drawer__step--active .dot,
+  .fade-in,
+  .keychain-progress span,
+  .bg__bloom,
+  .home-ticker__number,
+  .ticker-roll,
+  .ticker-roll * {
+    animation: none !important;
+    transition: none !important;
   }
 }
