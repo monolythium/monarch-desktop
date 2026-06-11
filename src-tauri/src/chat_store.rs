@@ -56,6 +56,15 @@ pub struct ChannelRecord {
     pub kind: String,
     pub cluster_id: i64,
     pub subscribed: bool,
+    /// Timestamp (ms) of the newest message the operator has marked
+    /// read. `upsert_channel` never writes it — only `set_last_read`
+    /// advances it, so a re-join keeps the read cursor.
+    #[serde(default)]
+    pub last_read_ts: i64,
+    /// Computed on read by `list_channels`: messages newer than
+    /// `last_read_ts` that are not the operator's own. Never persisted.
+    #[serde(default)]
+    pub unread_count: i64,
 }
 
 /// A persisted, signature-verified message. The wire envelope is
@@ -114,14 +123,21 @@ impl ChatStore {
 
     fn apply_schema(&self) -> Result<(), ChatStoreError> {
         self.conn.execute_batch(include_str!("chat_schema.sql"))?;
-        self.ensure_message_column("cluster_id", "INTEGER NOT NULL DEFAULT 0")?;
-        self.ensure_message_column("sender_pubkey_hex", "TEXT NOT NULL DEFAULT ''")?;
-        self.ensure_message_column("nonce_hex", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("messages", "cluster_id", "INTEGER NOT NULL DEFAULT 0")?;
+        self.ensure_column("messages", "sender_pubkey_hex", "TEXT NOT NULL DEFAULT ''")?;
+        self.ensure_column("messages", "nonce_hex", "TEXT NOT NULL DEFAULT ''")?;
+        // Additive migration (2026-06-11): unread tracking.
+        self.ensure_column("channels", "last_read_ts", "INTEGER NOT NULL DEFAULT 0")?;
         Ok(())
     }
 
-    fn ensure_message_column(&self, column: &str, definition: &str) -> Result<(), ChatStoreError> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(messages)")?;
+    fn ensure_column(
+        &self,
+        table: &str,
+        column: &str,
+        definition: &str,
+    ) -> Result<(), ChatStoreError> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
         for row in rows {
             if row? == column {
@@ -129,7 +145,7 @@ impl ChatStore {
             }
         }
         self.conn.execute(
-            &format!("ALTER TABLE messages ADD COLUMN {column} {definition}"),
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
             [],
         )?;
         Ok(())
@@ -168,10 +184,26 @@ impl ChatStore {
         Ok(())
     }
 
+    /// Advance the read cursor for a channel. Monotonic: never moves the
+    /// cursor backwards, so a stale UI mark-read cannot resurrect unread
+    /// counts that were already cleared.
+    pub fn set_last_read(&self, channel_id: &str, timestamp_ms: i64) -> Result<(), ChatStoreError> {
+        self.conn.execute(
+            "UPDATE channels SET last_read_ts = MAX(last_read_ts, ?2) WHERE channel_id = ?1",
+            params![channel_id, timestamp_ms],
+        )?;
+        Ok(())
+    }
+
     pub fn list_channels(&self) -> Result<Vec<ChannelRecord>, ChatStoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT channel_id, name, sub, kind, cluster_id, subscribed
-             FROM channels ORDER BY cluster_id ASC",
+            "SELECT c.channel_id, c.name, c.sub, c.kind, c.cluster_id, c.subscribed,
+                    c.last_read_ts,
+                    (SELECT COUNT(*) FROM messages m
+                      WHERE m.channel_id = c.channel_id
+                        AND m.from_me = 0
+                        AND m.timestamp_ms > c.last_read_ts) AS unread_count
+             FROM channels c ORDER BY c.cluster_id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(ChannelRecord {
@@ -181,6 +213,8 @@ impl ChatStore {
                 kind: row.get(3)?,
                 cluster_id: row.get(4)?,
                 subscribed: row.get::<_, i64>(5)? != 0,
+                last_read_ts: row.get(6)?,
+                unread_count: row.get(7)?,
             })
         })?;
         let mut out = Vec::new();
@@ -321,6 +355,8 @@ mod tests {
             kind: "cluster".to_string(),
             cluster_id: id,
             subscribed: true,
+            last_read_ts: 0,
+            unread_count: 0,
         }
     }
 
@@ -394,6 +430,59 @@ mod tests {
         assert!(!channels[0].subscribed);
         assert!(!store.is_subscribed_cluster("cluster-7", 7).unwrap());
         assert!(!store.is_subscribed_cluster("cluster-8", 8).unwrap());
+    }
+
+    #[test]
+    fn unread_counts_track_last_read_and_skip_own_messages() {
+        let store = ChatStore::open_in_memory().unwrap();
+        store.upsert_channel(&sample_channel(1)).unwrap();
+
+        // Three inbound + one own message.
+        for n in 1..=3 {
+            store
+                .insert_message(&sample_message("cluster-1", n))
+                .unwrap();
+        }
+        let mut own = sample_message("cluster-1", 4);
+        own.from_me = true;
+        store.insert_message(&own).unwrap();
+
+        let channels = store.list_channels().unwrap();
+        assert_eq!(channels[0].unread_count, 3, "own messages never count");
+        assert_eq!(channels[0].last_read_ts, 0);
+
+        // Mark read up to message 2 — one inbound message remains unread.
+        store
+            .set_last_read("cluster-1", 1_700_000_000_000 + 2)
+            .unwrap();
+        let channels = store.list_channels().unwrap();
+        assert_eq!(channels[0].unread_count, 1);
+        assert_eq!(channels[0].last_read_ts, 1_700_000_000_000 + 2);
+
+        // Mark-read is monotonic: a stale cursor never goes backwards.
+        store.set_last_read("cluster-1", 5).unwrap();
+        let channels = store.list_channels().unwrap();
+        assert_eq!(channels[0].last_read_ts, 1_700_000_000_000 + 2);
+
+        // Catch up fully.
+        store
+            .set_last_read("cluster-1", 1_700_000_000_000 + 10)
+            .unwrap();
+        let channels = store.list_channels().unwrap();
+        assert_eq!(channels[0].unread_count, 0);
+    }
+
+    #[test]
+    fn upsert_preserves_last_read_cursor() {
+        let store = ChatStore::open_in_memory().unwrap();
+        store.upsert_channel(&sample_channel(1)).unwrap();
+        store.set_last_read("cluster-1", 42).unwrap();
+
+        // Re-upsert (e.g. a re-join) must not reset the read cursor even
+        // though the in-memory record carries last_read_ts = 0.
+        store.upsert_channel(&sample_channel(1)).unwrap();
+        let channels = store.list_channels().unwrap();
+        assert_eq!(channels[0].last_read_ts, 42);
     }
 
     #[test]

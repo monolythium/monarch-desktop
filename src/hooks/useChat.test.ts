@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ChatChannel, ChatMessage } from "../sdk/chat";
-import { mergeChatMessage, nextActiveChatChannelId } from "./useChat";
+import { blake3 } from "@noble/hashes/blake3.js";
+import type { ChatChannel, ChatMemberMoniker, ChatMessage } from "../sdk/chat";
+import {
+  buildChatSenderResolver,
+  bumpUnreadCount,
+  mergeChatMessage,
+  nextActiveChatChannelId,
+} from "./useChat";
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
   return {
@@ -48,6 +54,8 @@ function channel(overrides: Partial<ChatChannel>): ChatChannel {
     kind: "cluster",
     cluster_id: 1,
     subscribed: true,
+    last_read_ts: 0,
+    unread_count: 0,
     ...overrides,
   };
 }
@@ -69,5 +77,91 @@ describe("chat channel selection", () => {
 
   it("returns null when there are no channels", () => {
     expect(nextActiveChatChannelId("cluster-1", [])).toBeNull();
+  });
+});
+
+describe("unread badge bumping (monarch://chat/any)", () => {
+  const channels = [
+    channel({ channel_id: "cluster-1", cluster_id: 1, unread_count: 2 }),
+    channel({ channel_id: "cluster-2", cluster_id: 2, unread_count: 0 }),
+    channel({
+      channel_id: "ceremony-abc123",
+      kind: "ceremony",
+      cluster_id: -1,
+      unread_count: 0,
+    }),
+  ];
+
+  it("bumps a non-active subscribed channel", () => {
+    const next = bumpUnreadCount(
+      channels,
+      message({ channel_id: "cluster-1", from_me: false }),
+      "cluster-2",
+    );
+    expect(next.find((c) => c.channel_id === "cluster-1")?.unread_count).toBe(3);
+    expect(next.find((c) => c.channel_id === "cluster-2")?.unread_count).toBe(0);
+  });
+
+  it("bumps ceremony channels too (sentinel cluster_id -1)", () => {
+    const next = bumpUnreadCount(
+      channels,
+      message({ channel_id: "ceremony-abc123", cluster_id: -1, from_me: false }),
+      "cluster-1",
+    );
+    expect(next.find((c) => c.channel_id === "ceremony-abc123")?.unread_count).toBe(1);
+  });
+
+  it("never counts own messages or the on-screen channel", () => {
+    expect(bumpUnreadCount(
+      channels,
+      message({ channel_id: "cluster-1", from_me: true }),
+      "cluster-2",
+    )).toBe(channels);
+    expect(bumpUnreadCount(
+      channels,
+      message({ channel_id: "cluster-1", from_me: false }),
+      "cluster-1",
+    )).toBe(channels);
+  });
+
+  it("returns the same array when the channel is unknown", () => {
+    expect(bumpUnreadCount(
+      channels,
+      message({ channel_id: "cluster-99", from_me: false }),
+      null,
+    )).toBe(channels);
+  });
+});
+
+describe("moniker-first sender resolution", () => {
+  const pubkeyBytes = Uint8Array.from([1, 2, 3]);
+  const pubkeyHex = "0x010203";
+  // operator id = BLAKE3(consensus pubkey) — the registry's operator key.
+  const operatorId = "0x" + Array.from(blake3(pubkeyBytes))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const members: ChatMemberMoniker[] = [
+    {
+      operator_id: operatorId,
+      address: "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+      moniker: "atlas-node",
+    },
+  ];
+
+  it("maps a verified sender pubkey to its member record via BLAKE3", () => {
+    const resolve = buildChatSenderResolver(members);
+    expect(resolve(pubkeyHex)?.moniker).toBe("atlas-node");
+    expect(resolve(pubkeyHex)?.address).toBe(
+      "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+    );
+    // Memoized second lookup returns the same record.
+    expect(resolve(pubkeyHex)).toBe(resolve(pubkeyHex));
+  });
+
+  it("returns null for unknown or malformed senders", () => {
+    const resolve = buildChatSenderResolver(members);
+    expect(resolve("0xffffff")).toBeNull();
+    expect(resolve("not-hex")).toBeNull();
+    expect(resolve("")).toBeNull();
   });
 });
