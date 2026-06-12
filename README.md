@@ -2,11 +2,11 @@
 
 > Operator console for [Monolythium](https://monolythium.com) — Tauri 2 + React 19 + a native Talos API mTLS client. Built for operators who log into a server at 3 am to find out why a node is unhealthy.
 
-**License:** Apache-2.0 · **Status:** testnet (current release `v0.0.13`) · **Stack:** Tauri 2 · Rust · React 19 · TypeScript · Vite
+**License:** Apache-2.0 · **Status:** testnet (current release `v0.0.20`) · **Stack:** Tauri 2 · Rust · React 19 · TypeScript · Vite
 
 ## Download
 
-**[GitHub Releases →](https://github.com/monolythium/monarch-desktop/releases)** (operator console; macOS · Windows · Linux). Install the latest tagged build — `v0.0.13` is the current release; updates ship through the in-app updater. Or build from source (below).
+**[GitHub Releases →](https://github.com/monolythium/monarch-desktop/releases)** (operator console; macOS · Windows · Linux). Install the latest tagged build — `v0.0.20` is the current release. Updates ship through the in-app updater. Or build from source (below).
 
 ---
 
@@ -15,7 +15,7 @@
 A working operator console pointed at the public testnet. Set expectations before adopting:
 
 - **Chain target is testnet.** Monolythium mainnet has not launched. Anything you connect to here runs against the public testnet today; mainnet activation is gated on separate protocol milestones.
-- **SDK is pinned to the public SDK package.** `package.json` pins [`@monolythium/core-sdk`](https://github.com/monolythium/mono-core-sdk) `0.4.15` from npm; no sibling checkout is required.
+- **SDK is pinned to the public SDK package.** `package.json` pins [`@monolythium/core-sdk`](https://github.com/monolythium/mono-core-sdk) `0.4.18` from npm; no sibling checkout is required.
 - **Production-looking fixtures were removed.** Views use live RPC/Talos reads or render named blockers for missing `mono-core` endpoints. The readiness gap list in [`docs/final-product-readiness.md`](./docs/final-product-readiness.md) enumerates which screens are live vs blocked.
 - **Operator-targets are not bundled.** The Logs view dropdown is empty by default. To populate it locally, copy [`examples/operators.json.example`](./examples/operators.json.example) to `examples/operators.json` (gitignored) and edit — an in-app loader that reads this on launch is a later milestone.
 - **Signed releases are published through GitHub Actions.** `.github/workflows/release.yml` defines a four-platform build matrix (macOS arm64/x64, Linux x64, Windows x64) with Azure Trusted Signing for Windows. `*-preview` tags are published as pre-releases; plain `v*` tags publish to the release channel.
@@ -24,7 +24,8 @@ A working operator console pointed at the public testnet. Set expectations befor
 
 ## What's in the console
 
-- **Welcome onboarding (`/welcome`)** — one persistent ten-step checklist from blank machine to a signing cluster seat: flash the Monarch OS image → pair the node → create or import the PQM-1 operator key (in-app generation, shown once) → fund the 5,000 LYTH bond → register → set an operator name → publish the seal key → publish chat peers → join or form a cluster → DKG attestation. Step state is **detected** from the node, the keychain, and the chain — not remembered — so progress survives restarts and never lies.
+- **In-app node provisioning (no `talosctl`).** Connect to a Monarch OS node by IP and Desktop probes `:50000` (Talos maintenance API) and `:8545` (Protocore RPC). If the node is unprovisioned, the **Provision** step enumerates the node's disks, you pick the install disk, and Desktop generates the full Talos cluster PKI plus a full-node config Rust-side (enrollment-free, TPM-binding off, `NODE_MODE=full`), dry-runs it, applies + reboots the node, then polls `:8545` until it serves chain RPC. The operator never runs `talosctl` by hand. After connect, the flow **branches by role**: a relay or full node simply syncs and serves RPC, while an operator continues to key → fund → register → cluster.
+- **Welcome onboarding (`/welcome`)** — one persistent checklist from a freshly provisioned node to a signing cluster seat: connect + provision the node → create or import the PQM-1 operator key (in-app generation, shown once) → fund the 5,000 LYTH bond → register → set an operator name → publish the seal key → publish chat peers → join or form a cluster → DKG attestation. Step state is **detected** from the node, the keychain, and the chain — not remembered — so progress survives restarts and never lies.
 - **Operations drawer** — every privileged action routes through one `preview → auth → executing → done` state machine with pre-submit preflight checks (key stored, registered, balance ≥ bond, seal key published), plain-English error translation with the raw RPC error in expandable details, typed confirmations for irreversible verbs (e.g. type `RESIGN` to resign a cluster seat), and a local receipt/audit trail.
 - **Operator chat** — signed ML-DSA-65 envelopes between registered operators, per-cluster channels plus ceremony channels, unread tracking, and operator monikers. Senders are verified against on-chain registration before a message is accepted.
 - **The Ceremony Room (`/ceremony`)** — a live lobby for forming a new cluster: propose a 10-seat roster (7 active + 3 standby) and terms, claim seats over the signed channel, freeze, collect ten ML-DSA-65 consents over one digest, and submit a single `formCluster` transaction — with a JSON export/import fallback for offline coordination. Full guide: [`docs/ceremony.md`](./docs/ceremony.md).
@@ -190,9 +191,9 @@ Ask Monarch does not ship canned operational answers. Outside Tauri, without a c
 
 ### Tag convention
 
-A signed, notarized production release is cut by pushing a **non-preview** semver tag — `v<version>` with no suffix, e.g. `v0.0.6` (the tag version must equal `tauri.conf.json > version`). That tag runs the full four-platform signed matrix and publishes a `Latest`, non-prerelease GitHub Release.
+A signed, notarized production release is cut by pushing a **non-preview** semver tag — `v<version>` with no suffix, e.g. `v0.0.20` (the tag version must equal `tauri.conf.json > version`). That tag runs the full four-platform signed matrix and publishes a `Latest`, non-prerelease GitHub Release.
 
-`*-preview` tags (e.g. `v0.0.6-preview`) are **excluded from the auto-publish trigger** and never publish a "Latest" release — only plain `v*` tags (like the current `v0.0.13`) reach the release channel operators install from. For a preview or dry-run build, use the manual `workflow_dispatch` instead: leave the `tag` input empty for a build-only dry run, or set it to a preview tag to attach preview artifacts deliberately.
+`*-preview` tags (e.g. `v0.0.20-preview`) are **excluded from the auto-publish trigger** and never publish a "Latest" release — only plain `v*` tags (like the current `v0.0.20`) reach the release channel operators install from. For a preview or dry-run build, use the manual `workflow_dispatch` instead: leave the `tag` input empty for a build-only dry run, or set it to a preview tag to attach preview artifacts deliberately.
 
 The release-readiness test subset now requires Talos identity pinning, healthy
 Protocore RPC readiness, release-digest attestation, Talos operation receipts,
