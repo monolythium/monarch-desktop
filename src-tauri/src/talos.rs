@@ -450,7 +450,7 @@ fn normalise_endpoint(endpoint: &str) -> Result<String, TalosError> {
     Ok(trimmed.to_string())
 }
 
-fn endpoint_url(endpoint: &str) -> Result<String, TalosError> {
+pub(crate) fn endpoint_url(endpoint: &str) -> Result<String, TalosError> {
     let endpoint = normalise_endpoint(endpoint)?;
     if endpoint.contains("://") {
         return Ok(endpoint);
@@ -461,7 +461,7 @@ fn endpoint_url(endpoint: &str) -> Result<String, TalosError> {
     Ok(format!("https://{endpoint}:50000"))
 }
 
-fn node_address(endpoint: &str) -> String {
+pub(crate) fn node_address(endpoint: &str) -> String {
     let without_scheme = endpoint
         .strip_prefix("https://")
         .or_else(|| endpoint.strip_prefix("http://"))
@@ -1508,7 +1508,7 @@ fn disk_io_telemetry(response: machine::DiskStatsResponse) -> Vec<TalosDiskIoTel
         .collect()
 }
 
-fn disk_type_label(raw: i32) -> String {
+pub(crate) fn disk_type_label(raw: i32) -> String {
     storage::disk::DiskType::try_from(raw)
         .map(|kind| kind.as_str_name().to_ascii_lowercase())
         .unwrap_or_else(|_| "unknown".to_string())

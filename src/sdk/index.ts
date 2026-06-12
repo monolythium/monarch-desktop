@@ -33,6 +33,18 @@ export {
 } from "./setupProbe";
 export type { NodeProbeResult, ProbeOutcome } from "./setupProbe";
 export {
+  buildFullNodeConfig,
+  normalizeDevice,
+  validateDevice,
+  PROVISION_CHAIN_ID,
+  PROVISION_REGISTRY_NETWORK,
+} from "./provisionConfig";
+export type {
+  BuildFullNodeConfigOptions,
+  DeviceValidation,
+  ProvisionNodeMode,
+} from "./provisionConfig";
+export {
   bpsToPercent,
   formatLythHex,
   hostingClassLabel,
@@ -425,6 +437,10 @@ export {
   talosLogCancel,
   talosLogStream,
   talosLogs,
+  talosGenerateMachineSecrets,
+  talosMaintenanceApply,
+  talosMaintenanceDisks,
+  talosMaintenanceProbe,
   talosOperatorSealEk,
   talosProtocoreReadiness,
   talosRollback,
@@ -440,6 +456,10 @@ export type {
   AiProvider,
   AskDonePayload,
   AskErrorPayload,
+  MaintenanceApplyMode,
+  MaintenanceDisk,
+  MaintenanceProbe,
+  TalosMachineSecrets,
   ProposedAction,
   ProposedField,
   SshStatus,

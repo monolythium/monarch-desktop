@@ -326,6 +326,65 @@ export type TalosUpgradeInput = {
   rebootMode: "default" | "powercycle";
 };
 
+// ---- Talos maintenance-mode provisioning --------------------------
+//
+// A freshly flashed Monarch OS node boots Talos straight into maintenance
+// mode: the gRPC API on :50000 answers an unauthenticated handshake and does
+// NOT serve protocore RPC on :8545 yet. These three commands (backed by
+// `src-tauri/src/talos_maintenance.rs`) let the Setup wizard detect such a
+// node, enumerate its disks, and apply a machine config to install Monarch OS
+// — over an insecure channel, since the cluster PKI does not exist yet.
+//
+// Field names below match the Rust `#[serde(rename_all = "camelCase")]`
+// shapes: `MaintenanceProbe` and `TalosDisk`. The apply command returns the
+// existing `TalosTextResult`.
+
+/**
+ * Result of an unauthenticated probe against the Talos maintenance API.
+ * `maintenance: true` is inferred from a successful unauthenticated `Version`
+ * response — a provisioned node enforcing mTLS would refuse the no-client-cert
+ * call. A connection failure yields `reachable: false` with the cause in
+ * `error`. The Rust command never rejects, so the wrapper never throws.
+ */
+export type MaintenanceProbe = {
+  reachable: boolean;
+  maintenance: boolean;
+  talosVersion: string | null;
+  error: string | null;
+};
+
+/**
+ * A single disk reported by a maintenance-mode node, normalised for the
+ * install-disk picker. `deviceName` is already in `/dev/<name>` form (the Rust
+ * side prefixes the bare kernel name). `readonly` / cdrom-class disks must not
+ * be offered as an install target.
+ */
+export type MaintenanceDisk = {
+  deviceName: string;
+  model: string;
+  sizeBytes: number;
+  sizeHuman: string;
+  diskType: string;
+  readonly: boolean;
+  systemDiskHint: boolean;
+};
+
+/** Apply mode passed to the Talos `ApplyConfiguration` RPC. */
+export type MaintenanceApplyMode = "reboot" | "auto" | "no-reboot" | "staged" | "try";
+
+/**
+ * A node's freshly minted Talos machine identity: the issuing CA (base64-PEM)
+ * and a bootstrap token. Generated per node by the Rust side (the
+ * `talosctl gen secrets` equivalent) and fed into `buildFullNodeConfig` so the
+ * machine config carries the `machine.ca` Talos requires. NOT a protocore chain
+ * key; never shared between nodes.
+ */
+export type TalosMachineSecrets = {
+  caCrt: string;
+  caKey: string;
+  token: string;
+};
+
 export const EMPTY_TALOS_STATUS: TalosStatus = {
   configured: false,
   reachable: false,
@@ -504,6 +563,75 @@ export async function talosLogStream(
 export async function talosLogCancel(sessionId: number): Promise<void> {
   if (!inTauri()) return;
   await invoke<void>("talos_log_cancel", { sessionId });
+}
+
+/**
+ * Detect whether a node is reachable on the Talos maintenance API and in
+ * maintenance mode. Never rejects: a connection failure comes back as
+ * `{ reachable: false, maintenance: false, error }`. Outside Tauri, returns an
+ * unavailable result rather than fabricating a fresh-node signal.
+ */
+export async function talosMaintenanceProbe(host: string): Promise<MaintenanceProbe> {
+  if (!inTauri()) {
+    return {
+      reachable: false,
+      maintenance: false,
+      talosVersion: null,
+      error: "Talos maintenance API unavailable — running outside Tauri",
+    };
+  }
+  return await invoke<MaintenanceProbe>("talos_maintenance_probe", { host });
+}
+
+/**
+ * Enumerate a maintenance-mode node's disks for the install-disk picker.
+ * Rejects (the Rust returns `Result`) when StorageService is not served in
+ * maintenance mode on this Talos version — callers catch that and fall back to
+ * manual disk entry.
+ */
+export async function talosMaintenanceDisks(host: string): Promise<MaintenanceDisk[]> {
+  if (!inTauri()) {
+    throw new Error("talos_maintenance_disks unavailable — running outside Tauri");
+  }
+  return await invoke<MaintenanceDisk[]>("talos_maintenance_disks", { host });
+}
+
+/**
+ * Generate a fresh Talos machine identity (issuing CA + bootstrap token) for a
+ * node about to be provisioned. Pure CPU work in Rust; each call is unique.
+ * Feed the result into `buildFullNodeConfig` — Talos rejects a machine config
+ * without an issuing CA.
+ */
+export async function talosGenerateMachineSecrets(): Promise<TalosMachineSecrets> {
+  if (!inTauri()) {
+    throw new Error("talos_generate_machine_secrets unavailable — running outside Tauri");
+  }
+  return await invoke<TalosMachineSecrets>("talos_generate_machine_secrets");
+}
+
+/**
+ * Apply a machine config to a maintenance-mode node. `dryRun: true` validates
+ * without writing; `dryRun: false` commits. `mode` maps to the Talos
+ * `ApplyConfiguration` mode — "try" for the dry-run pass, "reboot" for the
+ * committing install. Rejects with the node's own message on a rejected
+ * config; surface it verbatim.
+ */
+export async function talosMaintenanceApply(args: {
+  host: string;
+  configYaml: string;
+  dryRun: boolean;
+  mode: MaintenanceApplyMode;
+}): Promise<TalosTextResult> {
+  if (!inTauri()) {
+    throw new Error("talos_maintenance_apply unavailable — running outside Tauri");
+  }
+  recordE2eCommand(`talos_maintenance_apply:${args.dryRun ? "dry-run" : "commit"}`);
+  return await invoke<TalosTextResult>("talos_maintenance_apply", {
+    host: args.host,
+    configYaml: args.configYaml,
+    dryRun: args.dryRun,
+    mode: args.mode,
+  });
 }
 
 // ---- streaming exec ------------------------------------------------

@@ -40,12 +40,22 @@ mod chat_store;
 mod keychain;
 mod ssh;
 mod talos;
+// Public so the `maintenance_probe` example binary can drive the insecure
+// channel functions directly (read-only) for off-GUI validation.
+pub mod talos_maintenance;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install the rustls ring crypto provider once, before any TLS is set up.
+    // The maintenance-mode Talos bridge builds a rustls ClientConfig by hand;
+    // without a process-wide default provider that construction panics. Tauri
+    // never installs one for us, so do it here, idempotently — a second install
+    // returns Err and is intentionally ignored.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let ssh_state: ssh::SshState = Arc::new(Mutex::new(ssh::SshStateInner::new()));
     let ai_state: ai::AiState = Arc::new(Mutex::new(ai::AiStateInner::new()));
     let talos_state: talos::TalosState = Arc::new(Mutex::new(talos::TalosStateInner::default()));
@@ -91,6 +101,10 @@ pub fn run() {
             talos::talos_log_stream,
             talos::talos_log_cancel,
             talos::talos_protocore_restart,
+            talos_maintenance::talos_maintenance_probe,
+            talos_maintenance::talos_maintenance_disks,
+            talos_maintenance::talos_maintenance_apply,
+            talos_maintenance::talos_generate_machine_secrets,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

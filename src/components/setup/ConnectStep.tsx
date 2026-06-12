@@ -4,10 +4,21 @@
 // reachability probe (`probeNodeEndpoint`) against that exact endpoint —
 // chain id, latest height, sync state, client version — without touching the
 // shared `rpc` client. On a green probe the endpoint is persisted via
-// `setStoredRpcEndpoint` and the step is marked done. The "guide me / I have
-// a node" toggle is the owner's "install monarchos (checkbox for yourself)":
-// it just records intent so the Configure step can adapt its copy; the live
-// probe is the same either way.
+// `setStoredRpcEndpoint` and the step is marked done.
+//
+// When the RPC probe comes back REFUSED (connection refused / nothing
+// listening on :8545 — NOT a timeout), the node may be a freshly flashed
+// Monarch OS box sitting in Talos maintenance mode. We follow up with a
+// lightweight `talosMaintenanceProbe` against :50000; if it answers an
+// unauthenticated Version, the node is unprovisioned and we offer to provision
+// it in-app (a distinct banner + `onUnprovisionedDetected`). A refused RPC
+// with NO maintenance answer keeps the plain "connection refused" copy — we
+// don't offer provisioning, to avoid a false positive on a firewalled-but-
+// provisioned node.
+//
+// The "guide me through installing Monarch OS" toggle routes to the same
+// `onUnprovisionedDetected` handler so an operator can force the provision
+// branch even before a probe.
 
 import { useCallback, useState } from "react";
 import {
@@ -15,6 +26,8 @@ import {
   normalizeNodeEndpoint,
   probeNodeEndpoint,
   setStoredRpcEndpoint,
+  talosMaintenanceProbe,
+  type MaintenanceProbe,
   type NodeProbeResult,
 } from "../../sdk";
 import { MONARCH_OS_ISO_URL } from "../../sdk/onboarding";
@@ -23,12 +36,26 @@ import { StepShell } from "./StepShell";
 
 export type NodePlan = "have-node" | "install";
 
+/**
+ * Pull the bare host out of a normalized `http(s)://host:port` endpoint, so the
+ * Talos maintenance probe (which targets :50000, not the RPC port) can dial it.
+ * Falls back to the raw input if URL parsing fails.
+ */
+function hostFromEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).hostname || endpoint;
+  } catch {
+    return endpoint;
+  }
+}
+
 export function ConnectStep({
   n,
   initialEndpoint,
   plan,
   onPlanChange,
   onConnected,
+  onUnprovisionedDetected,
   result,
   onResult,
 }: {
@@ -38,6 +65,12 @@ export function ConnectStep({
   onPlanChange: (plan: NodePlan) => void;
   /** Called with the normalized, persisted endpoint when the probe is green. */
   onConnected: (endpoint: string) => void;
+  /**
+   * Called with the node host when the RPC is dead but Talos answers in
+   * maintenance mode (detection), or when the operator picks the "install
+   * Monarch OS" path manually. Hands provisioning to the wizard.
+   */
+  onUnprovisionedDetected: (host: string, probe: MaintenanceProbe | null) => void;
   /** Lifted probe result so the wizard can keep it on step re-entry. */
   result: NodeProbeResult | null;
   onResult: (result: NodeProbeResult | null) => void;
@@ -47,10 +80,14 @@ export function ConnectStep({
   );
   const [inputError, setInputError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  // Maintenance-mode detection follow-up state.
+  const [maintProbing, setMaintProbing] = useState(false);
+  const [maint, setMaint] = useState<{ host: string; probe: MaintenanceProbe } | null>(null);
 
   const runTest = useCallback(async () => {
     setInputError(null);
     onResult(null);
+    setMaint(null);
     let normalized: string;
     try {
       normalized = normalizeNodeEndpoint(draft);
@@ -67,6 +104,26 @@ export function ConnectStep({
       if (probe.outcome === "ok") {
         setStoredRpcEndpoint(normalized);
         onConnected(normalized);
+        return;
+      }
+      // A refused/unreachable RPC (nothing serving :8545) on a node that IS
+      // reachable on the Talos maintenance API means a fresh, unprovisioned
+      // Monarch OS box. We only follow up on the "unreachable" outcome — a
+      // wrong-chain node is provisioned, just on the wrong network.
+      if (probe.outcome === "unreachable") {
+        const host = hostFromEndpoint(normalized);
+        setMaintProbing(true);
+        try {
+          const mp = await talosMaintenanceProbe(host);
+          if (mp.reachable && mp.maintenance) {
+            setMaint({ host, probe: mp });
+          }
+        } catch {
+          // The maintenance probe never rejects, but stay defensive: a failure
+          // here just means we keep the plain "connection refused" copy.
+        } finally {
+          setMaintProbing(false);
+        }
       }
     } finally {
       setTesting(false);
@@ -74,6 +131,21 @@ export function ConnectStep({
   }, [draft, onConnected, onResult]);
 
   const ok = result?.outcome === "ok";
+
+  // Manual route into provisioning: the operator selected "install Monarch OS".
+  // Use whatever host they've typed (best-effort) and hand over with no probe.
+  const startManualProvision = useCallback(() => {
+    onPlanChange("install");
+    let host = draft.trim();
+    if (host) {
+      try {
+        host = hostFromEndpoint(normalizeNodeEndpoint(draft));
+      } catch {
+        // keep the raw draft
+      }
+    }
+    onUnprovisionedDetected(host, maint?.probe ?? null);
+  }, [draft, maint, onPlanChange, onUnprovisionedDetected]);
 
   return (
     <StepShell
@@ -181,9 +253,48 @@ export function ConnectStep({
                 <p style={{ fontSize: 12, color: "var(--fg-300)", margin: "4px 0 0", lineHeight: 1.5 }}>
                   {result.error}
                 </p>
+                {maintProbing ? (
+                  <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: "6px 0 0" }}>
+                    checking whether this is a fresh Monarch OS node…
+                  </p>
+                ) : null}
               </div>
             </div>
           )}
+        </div>
+      ) : null}
+
+      {/* Detection banner: RPC dead, but Talos answered in maintenance mode. */}
+      {maint ? (
+        <div
+          className="halo halo--gold"
+          style={{
+            marginTop: 14,
+            whiteSpace: "normal",
+            lineHeight: 1.5,
+            alignItems: "flex-start",
+            display: "flex",
+            gap: 10,
+          }}
+        >
+          <span className="dot" style={{ marginTop: 4, flex: "0 0 auto" }} />
+          <div style={{ flex: 1 }}>
+            <b style={{ fontSize: 13, color: "var(--fg-100)", display: "block" }}>
+              Unprovisioned node detected
+            </b>
+            <span style={{ fontSize: 12, color: "var(--fg-300)", display: "block", marginTop: 3 }}>
+              Monarch OS is booted but the node isn't configured yet
+              {maint.probe.talosVersion ? ` · Talos ${maint.probe.talosVersion}` : ""}.
+            </span>
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              style={{ marginTop: 10 }}
+              onClick={() => onUnprovisionedDetected(maint.host, maint.probe)}
+            >
+              Provision this node →
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -199,22 +310,23 @@ export function ConnectStep({
         <button
           type="button"
           className={`setup__toggle-opt${plan === "install" ? " setup__toggle-opt--on" : ""}`}
-          onClick={() => onPlanChange("install")}
+          onClick={startManualProvision}
         >
           <b>Guide me through installing Monarch OS</b>
-          <span>I don't have a node yet — show me how to flash the signed image and pair it.</span>
+          <span>I have a freshly flashed node in maintenance mode — provision it in-app.</span>
         </button>
       </div>
 
-      {plan === "install" ? (
+      {plan === "install" && !maint ? (
         <div
           className="halo halo--info"
           style={{ marginTop: 14, whiteSpace: "normal", lineHeight: 1.5, alignItems: "flex-start" }}
         >
           <span className="dot" style={{ marginTop: 4, flex: "0 0 auto" }} />
           <span>
-            Flash the signed <b>Monarch OS</b> image to your machine, boot it, and pair it from the
-            Install page — then come back and enter the node's IP above.{" "}
+            Flash the signed <b>Monarch OS</b> image to your machine and boot it — it comes up in
+            maintenance mode. Enter the node's IP above and hit <b>Test connection</b>: Monarch
+            detects the fresh node and walks you through provisioning it.{" "}
             <a href={MONARCH_OS_ISO_URL} target="_blank" rel="noreferrer" style={{ color: "var(--gold)" }}>
               Download Monarch OS ↗
             </a>
