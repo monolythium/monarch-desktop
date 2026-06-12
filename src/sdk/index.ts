@@ -430,6 +430,7 @@ export {
   talosLogCancel,
   talosLogStream,
   talosLogs,
+  talosBootstrap,
   talosGenerateFullNodeConfig,
   talosMaintenanceApply,
   talosMaintenanceDisks,

@@ -57,6 +57,19 @@ pub const PROVISION_CHAIN_ID: u32 = 69_420;
 /// chain-registry network key a fresh node resolves genesis + peers from.
 pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 
+/// Installer image that `machine.install.image` MUST use — a Talos installer
+/// baked WITH the protocore system extension, published by monarch-os-talos's
+/// `build-installer` workflow to ghcr.
+///
+/// 🛑 Do NOT use the plain `ghcr.io/siderolabs/installer`: the ISO/raw bake the
+/// extension for BOOT, but a maintenance-mode fresh install pulls THIS image to
+/// write the system to disk. The plain installer has no extension, so the
+/// installed node runs vanilla Talos — `ext-protocore` never registers and
+/// `:8545` never serves. Pinned to the protocore release the chain runs; bump
+/// alongside the OS/protocore version.
+pub const MONARCH_OS_INSTALLER_IMAGE: &str =
+    "ghcr.io/monolythium/monarch-os-installer:v0.1.51-testnet";
+
 /// CA validity mirroring `talosctl gen secrets` (10 years).
 const CA_VALIDITY_DAYS: i64 = 3650;
 
@@ -471,7 +484,7 @@ machine:
         disableManifestsDirectory: true
     install:
         disk: {disk}
-        image: ghcr.io/siderolabs/installer:{TALOS_VERSION}
+        image: {MONARCH_OS_INSTALLER_IMAGE}
         wipe: false
         grubUseUKICmdline: true
     features:
@@ -683,7 +696,7 @@ mod tests {
         assert!(yaml.contains(&format!("    install:\n        disk: {TEST_DISK}\n")));
         assert!(yaml.contains("        wipe: false\n"));
         assert!(yaml.contains(&format!(
-            "        image: ghcr.io/siderolabs/installer:{TALOS_VERSION}\n"
+            "        image: {MONARCH_OS_INSTALLER_IMAGE}\n"
         )));
         assert!(yaml.contains("        grubUseUKICmdline: true\n"));
 

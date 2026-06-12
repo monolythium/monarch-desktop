@@ -3,7 +3,9 @@
 // nav-keys hook share one registry. Active item gets a gold halo
 // accent (gold-discipline rule: primary action only).
 
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { getVersion } from "@tauri-apps/api/app";
 import { NAV_ROUTES } from "../nav/routes";
 import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { rpcEndpoint, useChainStatus, useNodeStatus } from "../sdk";
@@ -20,6 +22,20 @@ const PREVIEW_GROUP_LABEL = "Preview";
 export function SideNav() {
   const status = useNodeStatus();
   const chain = useChainStatus();
+  // Real app version (Tauri runtime); "" outside Tauri / while the IPC resolves,
+  // so the brand never shows a fake build tag.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    void getVersion()
+      .then((v) => {
+        if (!cancelled) setVersion(v);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Surface the Setup group FIRST while no operator key is stored — a
   // brand-new operator should see the wizard / Install / Keys before dashboards.
   const presence = useKeychainPresence();
@@ -41,10 +57,14 @@ export function SideNav() {
   return (
     <nav className="monarch-sidenav" aria-label="Primary">
       <div className="monarch-sidenav__brand">
-        <div className="monarch-sidenav__mark" aria-hidden />
+        <div className="monarch-sidenav__mark">
+          <img src="/favicon.svg" alt="Monolythium" width={28} height={28} />
+        </div>
         <div className="monarch-sidenav__name">
           Monarch
-          <small>Operator console <span>v0.9β</span></small>
+          <small>
+            Operator console{version ? <span>v{version}</span> : null}
+          </small>
         </div>
       </div>
 

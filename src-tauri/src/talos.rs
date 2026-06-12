@@ -2417,6 +2417,52 @@ pub async fn talos_upgrade(
     })
 }
 
+/// One-time etcd bootstrap for a freshly-provisioned single controlplane node —
+/// the in-app equivalent of `talosctl bootstrap`. The maintenance-mode install
+/// path produces a controlplane that wedges in "Booting" waiting for etcd; until
+/// the machine reaches "ready", extension services (including `ext-protocore`)
+/// never start and `:8545` never serves. Retries through the post-install reboot
+/// until the node's secured API answers, then bootstraps. An already-bootstrapped
+/// node is idempotent success.
+#[tauri::command]
+pub async fn talos_bootstrap(host: String, talosconfig_path: String) -> Result<String, String> {
+    let endpoint = endpoint_url(&host).map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let mut last_err = String::from("node did not answer its secured API");
+    loop {
+        if let Ok(mut client) = machine_client(&endpoint, &talosconfig_path).await {
+            match timeout(
+                TALOS_TIMEOUT,
+                client.bootstrap(machine::BootstrapRequest {
+                    recover_etcd: false,
+                    recover_skip_hash_check: false,
+                }),
+            )
+            .await
+            {
+                Ok(Ok(_)) => return Ok("etcd bootstrap requested".to_string()),
+                Ok(Err(status)) => {
+                    let m = status.message().to_ascii_lowercase();
+                    if m.contains("already")
+                        || m.contains("not empty")
+                        || m.contains("data directory")
+                    {
+                        return Ok("node already bootstrapped".to_string());
+                    }
+                    last_err = status.message().to_string();
+                }
+                Err(_) => last_err = "bootstrap call timed out".to_string(),
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "etcd bootstrap did not complete within the reboot window: {last_err}"
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
 #[tauri::command]
 pub async fn talos_rollback(state: State<'_, TalosState>) -> Result<TalosTextResult, String> {
     let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;

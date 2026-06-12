@@ -19,7 +19,6 @@ import { TopBar } from "./components/TopBar";
 import { AskBar } from "./components/AskBar";
 import { AskRail } from "./components/AskRail";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { TweaksPanel, useTweaks } from "./components/TweaksPanel";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { checkForUpdate, type UpdateAvailable } from "./sdk/updater";
 import { rpcEndpoint } from "./sdk/client";
@@ -182,8 +181,6 @@ const CeremonyRoute = lazy(async () => {
 
 function ShellInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [tweaks, setTweaks] = useTweaks();
   const ops = useOps();
   const location = useLocation();
   // Pending self-update, if the launch-time check found one. Banner
@@ -229,7 +226,7 @@ function ShellInner() {
 
   // `g+letter` nav — paused while the palette is open so `g` doesn't
   // arm chord state inside the cmdk input.
-  useNavKeys(paletteOpen || tweaksOpen);
+  useNavKeys(paletteOpen);
 
   useEffect(() => {
     if (!NAV_ROUTES.some((r) => r.path === location.pathname)) return;
@@ -252,16 +249,6 @@ function ShellInner() {
   }, []);
 
   useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      const data = e.data as { type?: string } | null;
-      if (data?.type === "__activate_edit_mode") setTweaksOpen(true);
-      if (data?.type === "__deactivate_edit_mode") setTweaksOpen(false);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
-
-  useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (paletteOpen) {
@@ -270,15 +257,11 @@ function ShellInner() {
       }
       if (ops.open) {
         ops.cancel();
-        return;
-      }
-      if (tweaksOpen) {
-        setTweaksOpen(false);
       }
     };
     window.addEventListener("keydown", onEsc);
     return () => window.removeEventListener("keydown", onEsc);
-  }, [ops, paletteOpen, tweaksOpen]);
+  }, [ops, paletteOpen]);
 
   const openPalette = useCallback(() => setPaletteOpen(true), []);
 
@@ -288,10 +271,7 @@ function ShellInner() {
         <div className="bg" aria-hidden="true"><div className="bg__canvas"/><div className="bg__bloom bg__bloom--a"/><div className="bg__bloom bg__bloom--b"/><div className="bg__bloom bg__bloom--c"/><div className="bg__grid"/><div className="bg__grain"/><div className="bg__vignette"/></div>
         <SideNav />
         <div className="monarch-main">
-          <TopBar
-            onOpenPalette={openPalette}
-            onOpenTweaks={() => setTweaksOpen((prev) => !prev)}
-          />
+          <TopBar onOpenPalette={openPalette} />
           <main className="monarch-content">
             <ErrorBoundary resetKey={location.pathname}>
               <Suspense fallback={<RouteSkeleton />}>
@@ -342,12 +322,6 @@ function ShellInner() {
         </div>
         <OperationsDrawer />
         <AskRail />
-        <TweaksPanel
-          open={tweaksOpen}
-          tweaks={tweaks}
-          setTweaks={setTweaks}
-          onClose={() => setTweaksOpen(false)}
-        />
       </div>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       {pendingUpdate ? (

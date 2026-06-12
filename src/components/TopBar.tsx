@@ -15,10 +15,8 @@ import "../styles/livedata.css";
 
 export function TopBar({
   onOpenPalette,
-  onOpenTweaks,
 }: {
   onOpenPalette: () => void;
-  onOpenTweaks: () => void;
 }) {
   const status = useNodeStatus();
   const chain = useChainStatus();
@@ -123,24 +121,6 @@ export function TopBar({
       {version ? <div className="monarch-topbar__version">v{version}</div> : null}
 
       <ThemeSwitcher />
-
-      <button
-        type="button"
-        className="btn btn--icon btn--ghost monarch-topbar__tool"
-        aria-label="Open tweaks"
-        title="Tweaks — tune the chrome"
-        onClick={onOpenTweaks}
-      >
-        {/* sliders glyph — clearer affordance than the old "TK" text */}
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-          <line x1="4" y1="6" x2="20" y2="6" />
-          <circle cx="9" cy="6" r="2.2" fill="var(--ink-100)" />
-          <line x1="4" y1="12" x2="20" y2="12" />
-          <circle cx="15" cy="12" r="2.2" fill="var(--ink-100)" />
-          <line x1="4" y1="18" x2="20" y2="18" />
-          <circle cx="8" cy="18" r="2.2" fill="var(--ink-100)" />
-        </svg>
-      </button>
 
       <button
         type="button"

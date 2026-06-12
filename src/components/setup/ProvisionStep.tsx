@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   probeNodeEndpoint,
   setStoredRpcEndpoint,
+  talosBootstrap,
   talosGenerateFullNodeConfig,
   talosMaintenanceApply,
   talosMaintenanceDisks,
@@ -258,11 +259,23 @@ export function ProvisionStep({
 
   // Bring-up poller: tolerate the reboot gap, poll RPC on backoff until the
   // node answers eth_chainId, then persist + hand off.
-  const startBringUp = useCallback(async () => {
+  const startBringUp = useCallback(async (talosconfigPath: string | null) => {
     cancelPoll.current = false;
     setPhase("waiting");
     setPollAttempts(0);
     setPollElapsedMs(0);
+    // A single Talos controlplane needs a one-time etcd bootstrap to finish
+    // booting — otherwise it wedges in "Booting" waiting for etcd and the
+    // ext-protocore extension service (hence :8545) never starts. talosBootstrap
+    // waits out the post-install reboot internally and is idempotent, so this is
+    // best-effort: the RPC poll below is the real readiness gate.
+    if (talosconfigPath) {
+      try {
+        await talosBootstrap(host, talosconfigPath);
+      } catch {
+        // Node may already be progressing; let the RPC poll decide.
+      }
+    }
     const endpoint = `http://${host}:8545`;
     let delay = POLL_START_MS;
     let elapsed = 0;
@@ -312,8 +325,9 @@ export function ProvisionStep({
       setTalosconfigSaveError(result.talosconfigError ?? null);
       // The node now writes config, installs, and reboots — the :50000
       // maintenance API drops. That connection loss is EXPECTED, not an error;
-      // move straight into the RPC bring-up poll.
-      void startBringUp();
+      // bootstrap etcd (over the reboot) then poll for RPC. Pass the persisted
+      // talosconfig path directly — the state set above may not have committed.
+      void startBringUp(result.talosconfigPath ?? null);
     } catch (err) {
       // A reject here means the node refused the apply BEFORE rebooting (config
       // invalid, channel lost mid-call). Surface it; the operator can retry.
@@ -331,8 +345,10 @@ export function ProvisionStep({
 
   const recheck = useCallback(() => {
     if (phase === "waiting" || phase === "applying") return;
-    void startBringUp();
-  }, [phase, startBringUp]);
+    // Re-run bring-up: the node is already provisioned, so reuse the persisted
+    // talosconfig (bootstrap is idempotent if it already completed).
+    void startBringUp(talosconfigPath);
+  }, [phase, startBringUp, talosconfigPath]);
 
   const inProgress = phase === "applying" || phase === "waiting";
 

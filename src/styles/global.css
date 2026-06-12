@@ -311,23 +311,13 @@ input, textarea, select { font: inherit; color: inherit; }
   place-items: center;
 }
 
-.monarch-sidenav__mark::before,
-.monarch-sidenav__mark::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 6px;
-}
-
-.monarch-sidenav__mark::before {
-  background: linear-gradient(135deg, var(--gold) 0%, #ff8a4c 100%);
-  transform: rotate(45deg) scale(0.72);
-  box-shadow: 0 0 20px rgba(var(--gold-glow), 0.4);
-}
-
-.monarch-sidenav__mark::after {
-  background: var(--ink-100);
-  transform: rotate(45deg) scale(0.4);
+/* Real Monolythium mark (public/favicon.svg) sits in the 28px box; a soft gold
+   glow keeps the brand presence the old diamond placeholder used to carry. */
+.monarch-sidenav__mark img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(var(--gold-glow), 0.4));
 }
 
 .monarch-sidenav__name {

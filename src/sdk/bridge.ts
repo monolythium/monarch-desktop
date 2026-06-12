@@ -627,6 +627,21 @@ export async function talosGenerateFullNodeConfig(
 }
 
 /**
+ * One-time etcd bootstrap for a freshly provisioned single controlplane node —
+ * the in-app `talosctl bootstrap`. Without it the install-path node wedges in
+ * "Booting" waiting for etcd and ext-protocore never starts (so :8545 never
+ * serves). Retries through the post-install reboot internally; an
+ * already-bootstrapped node returns success. Called after the committing apply,
+ * before polling the RPC endpoint.
+ */
+export async function talosBootstrap(host: string, talosconfigPath: string): Promise<string> {
+  if (!inTauri()) {
+    throw new Error("talos_bootstrap unavailable — running outside Tauri");
+  }
+  return await invoke<string>("talos_bootstrap", { host, talosconfigPath });
+}
+
+/**
  * Apply a machine config to a maintenance-mode node. `dryRun: true` validates
  * without writing; `dryRun: false` commits. `mode` maps to the Talos
  * `ApplyConfiguration` mode — "try" for the dry-run pass, "reboot" for the
