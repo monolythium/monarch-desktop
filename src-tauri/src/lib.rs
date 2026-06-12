@@ -40,6 +40,9 @@ mod chat_store;
 mod keychain;
 mod ssh;
 mod talos;
+// Public so the `maintenance_probe` example binary can drive the insecure
+// channel functions directly (read-only) for off-GUI validation.
+pub mod talos_maintenance;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -91,6 +94,9 @@ pub fn run() {
             talos::talos_log_stream,
             talos::talos_log_cancel,
             talos::talos_protocore_restart,
+            talos_maintenance::talos_maintenance_probe,
+            talos_maintenance::talos_maintenance_disks,
+            talos_maintenance::talos_maintenance_apply,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

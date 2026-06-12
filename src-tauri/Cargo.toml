@@ -36,6 +36,26 @@ async-trait = "0.1"
 thiserror = "1"
 base64 = "0.22"
 talos-rust-client = { version = "0.1.3", features = ["talosconfig"] }
+# Maintenance-mode Talos channel (src/talos_maintenance.rs). A freshly
+# flashed Monarch OS node answers the Talos API on :50000 with a
+# self-signed cert and NO client-cert requirement (insecure / maintenance
+# mode), which the mTLS `TalosConnector` cannot speak. tonic 0.12 exposes
+# no hook to inject a custom rustls verifier through `ClientTlsConfig`, so
+# the maintenance channel is built by hand: a `tokio-rustls` TLS connector
+# carrying a `rustls` 0.23 ClientConfig with an accept-any-server-cert
+# verifier and no client identity, fed to tonic's
+# `Endpoint::connect_with_connector`. `hyper-util` supplies the `TokioIo`
+# adapter tonic's connector contract expects; `tower` provides the
+# `Service<Uri>` the connector implements. Versions are pinned to the
+# already-resolved lockfile entries (rustls 0.23.39, tokio-rustls 0.26,
+# hyper-util 0.1, tower 0.4) — all transitive deps of the existing tonic
+# stack, promoted to direct so the maintenance module can name them. The
+# insecure verifier is strictly confined to that module and never reaches
+# the trusted mTLS connector in talos.rs.
+rustls = "0.23"
+tokio-rustls = "0.26"
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower = "0.4"
 # SSH bridge over russh. Pinned to 0.46 (latest 0.4x with the
 # stable client::Handler API used in `src/ssh.rs`); russh-keys is the
 # matching key-loading sibling.
