@@ -49,6 +49,13 @@ use tokio::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install the rustls ring crypto provider once, before any TLS is set up.
+    // The maintenance-mode Talos bridge builds a rustls ClientConfig by hand;
+    // without a process-wide default provider that construction panics. Tauri
+    // never installs one for us, so do it here, idempotently — a second install
+    // returns Err and is intentionally ignored.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let ssh_state: ssh::SshState = Arc::new(Mutex::new(ssh::SshStateInner::new()));
     let ai_state: ai::AiState = Arc::new(Mutex::new(ai::AiStateInner::new()));
     let talos_state: talos::TalosState = Arc::new(Mutex::new(talos::TalosStateInner::default()));

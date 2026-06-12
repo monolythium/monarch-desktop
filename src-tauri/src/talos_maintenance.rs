@@ -185,8 +185,18 @@ async fn maintenance_channel(host: &str) -> Result<Channel, String> {
     let tls = Arc::new(insecure_rustls_config());
     let connector = MaintenanceConnector { tls };
 
-    let endpoint = Endpoint::from_shared(url.clone())
-        .map_err(|e| format!("invalid maintenance endpoint {url}: {e}"))?
+    // tonic's built-in connector layer (tls feature compiled in via
+    // talos-rust-client) inspects the endpoint URI scheme *after* our custom
+    // connector runs: an `https://` scheme makes it try to apply *its own* TLS,
+    // and because `connect_with_connector` configures no `ClientTlsConfig` it
+    // fails closed with `HttpsUriWithoutTlsSupport` — never touching the
+    // already-encrypted stream we returned. We do the TLS ourselves in
+    // `MaintenanceConnector`, so the endpoint URI must read `http://` to make
+    // tonic pass our stream through untouched. The connector still dials real
+    // TLS on :50000 because it derives host/port from the URI, not the scheme.
+    let endpoint_url = downgrade_scheme(&url);
+    let endpoint = Endpoint::from_shared(endpoint_url.clone())
+        .map_err(|e| format!("invalid maintenance endpoint {endpoint_url}: {e}"))?
         .connect_timeout(MAINTENANCE_TIMEOUT);
 
     timeout(MAINTENANCE_TIMEOUT, endpoint.connect_with_connector(connector))
@@ -194,6 +204,97 @@ async fn maintenance_channel(host: &str) -> Result<Channel, String> {
         .map_err(|_| format!("timed out connecting to {url}"))?
         .map_err(|e| format!("failed to connect to {url}: {e}"))
 }
+
+/// Rewrite an `https://` endpoint URL to `http://` so tonic's connector does
+/// not try to layer its own (unconfigured) TLS on top of the TLS our
+/// [`MaintenanceConnector`] already performs. See [`maintenance_channel`].
+fn downgrade_scheme(url: &str) -> String {
+    match url.strip_prefix("https://") {
+        Some(rest) => format!("http://{rest}"),
+        None => url.to_string(),
+    }
+}
+
+/// Diagnostic dial used only by the example binary: open the channel and make a
+/// Version call, returning the FULL `{:?}` debug plus the walked
+/// `std::error::Error::source()` chain on failure rather than the collapsed
+/// one-line string `maintenance_channel` produces. Lets a live-node debugging
+/// session see whether the real failure is the TLS handshake, h2, the
+/// `ServerName`, or a timeout. Not wired into the Tauri commands.
+pub async fn debug_channel(host: &str) -> Result<(), String> {
+    let url = endpoint_url(host).map_err(|e| e.to_string())?;
+    eprintln!("[diag] endpoint url: {url}");
+
+    let tls = Arc::new(insecure_rustls_config());
+    eprintln!(
+        "[diag] alpn protocols: {:?}",
+        tls.alpn_protocols
+            .iter()
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect::<Vec<_>>()
+    );
+    let connector = MaintenanceConnector { tls };
+
+    let endpoint_url = downgrade_scheme(&url);
+    eprintln!("[diag] downgraded endpoint url (tonic scheme): {endpoint_url}");
+    let endpoint = Endpoint::from_shared(endpoint_url.clone())
+        .map_err(|e| format!("invalid maintenance endpoint {endpoint_url}: {e:?}"))?
+        .connect_timeout(MAINTENANCE_TIMEOUT);
+
+    let channel = match timeout(
+        MAINTENANCE_TIMEOUT,
+        endpoint.connect_with_connector(connector),
+    )
+    .await
+    {
+        Err(_) => return Err(format!("[diag] connect timed out after {MAINTENANCE_TIMEOUT:?}")),
+        Ok(Err(e)) => {
+            return Err(format!(
+                "[diag] connect_with_connector error:\n  debug: {e:?}\n{}",
+                error_source_chain(&e)
+            ));
+        }
+        Ok(Ok(channel)) => channel,
+    };
+
+    let mut client = MachineServiceClient::new(channel);
+    match timeout(MAINTENANCE_TIMEOUT, client.version(google::protobuf::Empty {})).await {
+        Err(_) => Err("[diag] Version RPC timed out".to_string()),
+        Ok(Err(status)) => Err(format!(
+            "[diag] Version RPC status:\n  code: {:?}\n  message: {}\n  debug: {status:?}\n{}",
+            status.code(),
+            status.message(),
+            error_source_chain(&status)
+        )),
+        Ok(Ok(_)) => Ok(()),
+    }
+}
+
+/// Walk `std::error::Error::source()` and render each level, so a wrapped
+/// transport/IO/rustls cause is not hidden behind the top-level `Display`.
+fn error_source_chain(err: &dyn std::error::Error) -> String {
+    let mut out = String::from("  source chain:\n");
+    let mut current = err.source();
+    let mut depth = 1;
+    while let Some(src) = current {
+        out.push_str(&format!("    [{depth}] {src}\n    [{depth}] (debug) {src:?}\n"));
+        current = src.source();
+        depth += 1;
+    }
+    if depth == 1 {
+        out.push_str("    (no further source)\n");
+    }
+    out
+}
+
+/// The insecure TLS stream the connector hands tonic, wrapped in the `TokioIo`
+/// adapter tonic's `connect_with_connector` contract expects.
+type MaintenanceStream = hyper_util::rt::TokioIo<tokio_rustls::client::TlsStream<TcpStream>>;
+
+/// Boxed future the connector's `tower::Service::call` returns.
+type MaintenanceConnectFuture = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<MaintenanceStream, std::io::Error>> + Send>,
+>;
 
 /// tower connector that produces an insecure (accept-any-cert, no client
 /// identity) TLS stream tonic can run HTTP/2 over.
@@ -203,16 +304,9 @@ struct MaintenanceConnector {
 }
 
 impl tower::Service<Uri> for MaintenanceConnector {
-    type Response = hyper_util::rt::TokioIo<
-        tokio_rustls::client::TlsStream<TcpStream>,
-    >;
+    type Response = MaintenanceStream;
     type Error = std::io::Error;
-    type Future = std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<Self::Response, Self::Error>>
-                + Send,
-        >,
-    >;
+    type Future = MaintenanceConnectFuture;
 
     fn poll_ready(
         &mut self,

@@ -15,6 +15,7 @@ use monarch_desktop_lib::talos_maintenance;
 
 #[tokio::main]
 async fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let host = match std::env::args().nth(1) {
         Some(host) => host,
         None => {
@@ -24,6 +25,24 @@ async fn main() {
     };
 
     println!("probing maintenance API on {host}:50000 ...");
+
+    // Opt-in verbose diagnostic: dial the raw maintenance channel so the FULL
+    // error source chain is visible (TLS handshake / h2 / ServerName / timeout),
+    // instead of the probe's collapsed "transport error" string. Off by default
+    // so the example's normal output is clean; set MAINTENANCE_PROBE_DIAG=1 to
+    // re-enable when debugging a node that won't connect.
+    if std::env::var("MAINTENANCE_PROBE_DIAG").as_deref() == Ok("1") {
+        println!("\n[diag] raw channel dial:");
+        match talos_maintenance::debug_channel(&host).await {
+            Ok(()) => println!("[diag] raw channel + Version OK"),
+            Err(report) => {
+                eprintln!("[diag] raw channel FAILED:");
+                eprintln!("{report}");
+            }
+        }
+        println!();
+    }
+
     let probe = talos_maintenance::probe(&host).await;
     println!("  reachable:      {}", probe.reachable);
     println!("  maintenance:    {}", probe.maintenance);
