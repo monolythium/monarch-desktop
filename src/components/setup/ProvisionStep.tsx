@@ -58,7 +58,9 @@ type DryRunState =
 // ~5 minutes total (the reboot + first-boot genesis resolution is variable).
 const POLL_START_MS = 3_000;
 const POLL_MAX_MS = 15_000;
-const POLL_CEILING_MS = 5 * 60_000;
+// A fresh node resolves genesis from chain-registry, builds its state DB, peers
+// with the fleet, then binds RPC — usually 2–5 min, longer on a slow link.
+const POLL_CEILING_MS = 8 * 60_000;
 
 function isCdromish(disk: MaintenanceDisk): boolean {
   if (disk.readonly) return true;
@@ -98,6 +100,7 @@ export function ProvisionStep({
   const [applyError, setApplyError] = useState<string | null>(null);
   const [liveChainId, setLiveChainId] = useState<number | null>(null);
   const [pollAttempts, setPollAttempts] = useState(0);
+  const [pollElapsedMs, setPollElapsedMs] = useState(0);
   // The node's Talos machine identity (issuing CA + token), generated once per
   // provision session. Talos rejects a machine config without an issuing CA, so
   // the config can't be built until this is ready.
@@ -218,12 +221,14 @@ export function ProvisionStep({
     cancelPoll.current = false;
     setPhase("waiting");
     setPollAttempts(0);
+    setPollElapsedMs(0);
     const endpoint = `http://${host}:8545`;
     let delay = POLL_START_MS;
     let elapsed = 0;
     // Initial settle: the node is rebooting; don't hammer it immediately.
     await sleep(delay);
     elapsed += delay;
+    setPollElapsedMs(elapsed);
     while (!cancelPoll.current && elapsed < POLL_CEILING_MS) {
       setPollAttempts((a) => a + 1);
       try {
@@ -241,6 +246,7 @@ export function ProvisionStep({
       if (cancelPoll.current) return;
       await sleep(delay);
       elapsed += delay;
+      setPollElapsedMs(elapsed);
       delay = Math.min(Math.round(delay * 1.3), POLL_MAX_MS);
     }
     if (!cancelPoll.current) setPhase("timeout");
@@ -536,6 +542,7 @@ export function ProvisionStep({
             phase={phase}
             applyOutput={applyOutput}
             pollAttempts={pollAttempts}
+            pollElapsedMs={pollElapsedMs}
             chainId={liveChainId}
             host={host}
           />
@@ -583,15 +590,23 @@ function ProgressPanel({
   phase,
   applyOutput,
   pollAttempts,
+  pollElapsedMs,
   chainId,
   host,
 }: {
   phase: ApplyPhase;
   applyOutput: string | null;
   pollAttempts: number;
+  pollElapsedMs: number;
   chainId: number | null;
   host: string;
 }) {
+  const elapsedSec = Math.floor(pollElapsedMs / 1000);
+  const elapsedLabel = `${Math.floor(elapsedSec / 60)}:${String(elapsedSec % 60).padStart(2, "0")}`;
+  // Time-based progress against the poll ceiling — a fresh node usually serves
+  // RPC well before the ceiling, so this reads as "how long has it been" rather
+  // than a hard deadline.
+  const pct = Math.min(100, Math.round((pollElapsedMs / POLL_CEILING_MS) * 100));
   const rows: Array<{ label: string; detail: string; status: RowStatus }> = [
     {
       label: "Applying config & rebooting",
@@ -644,6 +659,30 @@ function ProgressPanel({
           <pre className="mono" style={{ margin: 0, fontSize: 10.5, color: "var(--fg-400)", whiteSpace: "pre-wrap" }}>
             {applyOutput}
           </pre>
+        </div>
+      ) : null}
+      {phase === "waiting" ? (
+        <div style={{ padding: "14px 18px", borderTop: "1px solid var(--glass-stroke)", background: "rgba(255,255,255,0.02)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--fg-200)", fontWeight: 500 }}>Bringing the node up…</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--fg-400)" }}>{elapsedLabel} elapsed · attempt {pollAttempts}</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.07)", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${Math.max(4, pct)}%`,
+                borderRadius: 999,
+                background: "linear-gradient(90deg, var(--gold-lo, var(--gold)), var(--gold))",
+                transition: "width 600ms var(--e-out, ease)",
+              }}
+            />
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: "10px 0 0", lineHeight: 1.55 }}>
+            This is normal — a fresh node resolves genesis from the chain registry, builds its state
+            database, peers with the network, and then starts serving RPC. It usually takes <b style={{ color: "var(--fg-200)" }}>2–5 minutes</b>{" "}
+            (longer on a slow connection). You can leave this running — Monarch will connect automatically the moment it's ready.
+          </p>
         </div>
       ) : null}
       {phase === "live" ? (
