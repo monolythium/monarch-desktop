@@ -83,6 +83,14 @@ tar = "0.4"
 tauri-plugin-dialog = "2"
 x509-parser = "0.17"
 sha2 = "0.10"
+# Talos machine-identity generation (src/talos_maintenance.rs). A fresh
+# Monarch OS node needs its own Talos machine CA + bootstrap token before
+# Talos will accept a machine config (the `talosctl gen secrets` equivalent).
+# `rcgen` mints the self-signed Ed25519 issuing CA (O=talos), matching the
+# cert shape `talosctl gen secrets` produces; pinned to the resolved
+# lockfile entry (0.13). Promoted from transitive to direct so the
+# maintenance module can name it.
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 # Operator chat (Phase 1 MVP). Self-contained, no mono-core coupling.
 # `libp2p` runs a minimal gossipsub node for cluster channels — only the
 # transport + gossipsub features the chat backend needs (tcp / noise /

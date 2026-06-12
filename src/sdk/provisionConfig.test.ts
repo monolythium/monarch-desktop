@@ -5,10 +5,21 @@ import {
   validateDevice,
   PROVISION_CHAIN_ID,
   PROVISION_REGISTRY_NETWORK,
+  type TalosMachineSecrets,
 } from "./provisionConfig";
 
+// A syntactically valid Talos machine identity for the builder tests. The crt /
+// key are base64 placeholders that satisfy the structural guards (real PEM is
+// generated per node at provision time); the token matches the Talos
+// `<id>.<secret>` shape. These are NOT real keys.
+const MACHINE_SECRETS: TalosMachineSecrets = {
+  caCrt: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCkZBS0VDQQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
+  caKey: "LS0tLS1CRUdJTiBFRDI1NTE5IFBSSVZBVEUgS0VZLS0tLS0KRkFLRUtFWQotLS0tLUVORCBFRDI1NTE5IFBSSVZBVEUgS0VZLS0tLS0K",
+  token: "ustbxo.rbumpdfayhzkl191",
+};
+
 describe("buildFullNodeConfig", () => {
-  const yaml = buildFullNodeConfig({ disk: "/dev/vda", mode: "full" });
+  const yaml = buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: MACHINE_SECRETS });
 
   it("embeds the chosen install disk", () => {
     expect(yaml).toContain("install:");
@@ -34,16 +45,31 @@ describe("buildFullNodeConfig", () => {
     expect(yaml).toContain("name: protocore");
   });
 
-  it("carries NO secret, enrollment, or TPM env", () => {
+  it("carries the Talos machine identity (token + CA) Talos requires", () => {
+    // Talos rejects a machine config without an issuing CA; the builder must
+    // emit machine.token + machine.ca.crt/key.
+    expect(yaml).toMatch(/^\s*token: ustbxo\.rbumpdfayhzkl191$/m);
+    expect(yaml).toMatch(/^\s*ca:$/m);
+    expect(yaml).toContain(`crt: ${MACHINE_SECRETS.caCrt}`);
+    expect(yaml).toContain(`key: ${MACHINE_SECRETS.caKey}`);
+    expect(yaml).toContain("wipe: false");
+  });
+
+  it("carries NO Kubernetes cluster PKI", () => {
+    // A full node needs the Talos machine CA but NOT the k8s cluster PKI.
+    expect(yaml).not.toMatch(/^\s*id:\s/m); // cluster.id
+    expect(yaml).not.toMatch(/^\s*secret:\s/m); // cluster.secret
+    expect(yaml).not.toContain("aggregatorCA");
+    expect(yaml).not.toContain("serviceAccount");
+  });
+
+  it("carries NO operator secret, enrollment, or TPM env", () => {
     expect(yaml).not.toContain("PROTOCORE_REQUIRE_ENROLLMENT");
     expect(yaml).not.toContain("PROTOCORE_REQUIRE_TPM_BINDING");
     expect(yaml).not.toContain("PROTOCORE_KEYSTORE_PASSPHRASE");
     expect(yaml).not.toContain("PROTOCORE_OPERATOR_MNEMONIC");
     expect(yaml).not.toContain("PROTOCORE_OPERATOR_PRIVATE_KEY");
     expect(yaml).not.toMatch(/_SHARE/);
-    // No Talos cluster PKI: no CA, no token, no secrets block. (Match the
-    // YAML keys themselves, not the explanatory comment prose that mentions
-    // "certs/tokens/secrets" to explain their absence.)
     const envLines = yaml
       .split("\n")
       .filter((line) => line.trim().startsWith("- PROTOCORE_"));
@@ -52,28 +78,53 @@ describe("buildFullNodeConfig", () => {
       expect(line.toLowerCase()).not.toContain("passphrase");
       expect(line.toLowerCase()).not.toContain("mnemonic");
     }
-    expect(yaml).not.toMatch(/^\s*token:/m);
-    expect(yaml).not.toMatch(/^\s*ca:/m);
-    expect(yaml).toContain("wipe: false");
   });
 
   it("carries no unfilled placeholder markers", () => {
     // The Rust apply scan rejects these; the generator must never emit them.
-    for (const marker of ["<", "replace-with", "changeme", "placeholder", "example-secret"]) {
-      expect(yaml.toLowerCase()).not.toContain(marker);
+    // (Restricted to the env + structural lines — the explanatory comments
+    // legitimately say "placeholder" when describing the inert endpoint.)
+    const significant = yaml
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n")
+      .toLowerCase();
+    for (const marker of ["replace-with", "changeme", "placeholder", "example-secret"]) {
+      expect(significant).not.toContain(marker);
     }
+    // No angle-bracket placeholder anywhere (base64 PEM never contains '<').
+    expect(yaml).not.toContain("<");
   });
 
   it("reflects a different disk choice", () => {
-    const sda = buildFullNodeConfig({ disk: "/dev/sda", mode: "full" });
+    const sda = buildFullNodeConfig({ disk: "/dev/sda", mode: "full", machineSecrets: MACHINE_SECRETS });
     expect(sda).toContain("disk: /dev/sda");
     expect(sda).not.toContain("disk: /dev/vda");
   });
 
   it("rejects an empty or malformed disk", () => {
-    expect(() => buildFullNodeConfig({ disk: "", mode: "full" })).toThrow();
-    expect(() => buildFullNodeConfig({ disk: "/dev/v da", mode: "full" })).toThrow();
-    expect(() => buildFullNodeConfig({ disk: "0.0.0.0:8545", mode: "full" })).toThrow();
+    expect(() => buildFullNodeConfig({ disk: "", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
+    expect(() => buildFullNodeConfig({ disk: "/dev/v da", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
+    expect(() => buildFullNodeConfig({ disk: "0.0.0.0:8545", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
+  });
+
+  it("rejects missing or malformed machine secrets", () => {
+    const ok = MACHINE_SECRETS;
+    expect(() =>
+      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "" } }),
+    ).toThrow(/CA cert is required/);
+    expect(() =>
+      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caKey: "  " } }),
+    ).toThrow(/CA key is required/);
+    expect(() =>
+      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, token: "not-a-token" } }),
+    ).toThrow(/not a valid Talos token/);
+    expect(() =>
+      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "<replace-with-ca>" } }),
+    ).toThrow(/placeholder/);
+    expect(() =>
+      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "not base64 ###" } }),
+    ).toThrow(/base64/);
   });
 });
 

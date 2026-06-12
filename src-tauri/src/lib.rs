@@ -104,6 +104,7 @@ pub fn run() {
             talos_maintenance::talos_maintenance_probe,
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,
+            talos_maintenance::talos_generate_machine_secrets,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

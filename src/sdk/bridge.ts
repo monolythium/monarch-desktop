@@ -372,6 +372,19 @@ export type MaintenanceDisk = {
 /** Apply mode passed to the Talos `ApplyConfiguration` RPC. */
 export type MaintenanceApplyMode = "reboot" | "auto" | "no-reboot" | "staged" | "try";
 
+/**
+ * A node's freshly minted Talos machine identity: the issuing CA (base64-PEM)
+ * and a bootstrap token. Generated per node by the Rust side (the
+ * `talosctl gen secrets` equivalent) and fed into `buildFullNodeConfig` so the
+ * machine config carries the `machine.ca` Talos requires. NOT a protocore chain
+ * key; never shared between nodes.
+ */
+export type TalosMachineSecrets = {
+  caCrt: string;
+  caKey: string;
+  token: string;
+};
+
 export const EMPTY_TALOS_STATUS: TalosStatus = {
   configured: false,
   reachable: false,
@@ -581,6 +594,19 @@ export async function talosMaintenanceDisks(host: string): Promise<MaintenanceDi
     throw new Error("talos_maintenance_disks unavailable — running outside Tauri");
   }
   return await invoke<MaintenanceDisk[]>("talos_maintenance_disks", { host });
+}
+
+/**
+ * Generate a fresh Talos machine identity (issuing CA + bootstrap token) for a
+ * node about to be provisioned. Pure CPU work in Rust; each call is unique.
+ * Feed the result into `buildFullNodeConfig` — Talos rejects a machine config
+ * without an issuing CA.
+ */
+export async function talosGenerateMachineSecrets(): Promise<TalosMachineSecrets> {
+  if (!inTauri()) {
+    throw new Error("talos_generate_machine_secrets unavailable — running outside Tauri");
+  }
+  return await invoke<TalosMachineSecrets>("talos_generate_machine_secrets");
 }
 
 /**

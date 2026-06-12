@@ -26,11 +26,13 @@ import {
   buildFullNodeConfig,
   probeNodeEndpoint,
   setStoredRpcEndpoint,
+  talosGenerateMachineSecrets,
   talosMaintenanceApply,
   talosMaintenanceDisks,
   validateDevice,
   type MaintenanceDisk,
   type MaintenanceProbe,
+  type TalosMachineSecrets,
 } from "../../sdk";
 import { StepShell } from "./StepShell";
 
@@ -96,15 +98,24 @@ export function ProvisionStep({
   const [applyError, setApplyError] = useState<string | null>(null);
   const [liveChainId, setLiveChainId] = useState<number | null>(null);
   const [pollAttempts, setPollAttempts] = useState(0);
+  // The node's Talos machine identity (issuing CA + token), generated once per
+  // provision session. Talos rejects a machine config without an issuing CA, so
+  // the config can't be built until this is ready.
+  const [machineSecrets, setMachineSecrets] = useState<TalosMachineSecrets | null>(null);
+  const [secretsError, setSecretsError] = useState<string | null>(null);
   const cancelPoll = useRef(false);
 
   // The applied config always targets a FULL node (operator mode is deferred).
   // We still surface the operator option so the choice is honest, but the YAML
   // is full either way.
   const effectiveDisk = diskState.kind === "manual" ? manualDevice : device;
-  const configYaml = effectiveDisk
-    ? safeBuild(effectiveDisk)
-    : "# choose an install disk to preview the machine config";
+  const configYaml = !machineSecrets
+    ? secretsError
+      ? `# could not generate this node's Talos machine identity: ${secretsError}`
+      : "# generating this node's Talos machine identity…"
+    : effectiveDisk
+      ? safeBuild(effectiveDisk, machineSecrets)
+      : "# choose an install disk to preview the machine config";
 
   // Enumerate disks on mount over the insecure maintenance channel.
   useEffect(() => {
@@ -137,6 +148,26 @@ export function ProvisionStep({
     };
   }, [host]);
 
+  // Mint the node's Talos machine identity (issuing CA + token) once. Talos
+  // rejects a machine config without an issuing CA, so this gates the build /
+  // dry-run / apply. Re-generated only if the host changes (a different node).
+  useEffect(() => {
+    let cancelled = false;
+    setMachineSecrets(null);
+    setSecretsError(null);
+    void (async () => {
+      try {
+        const secrets = await talosGenerateMachineSecrets();
+        if (!cancelled) setMachineSecrets(secrets);
+      } catch (err) {
+        if (!cancelled) setSecretsError((err as Error)?.message ?? String(err));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [host]);
+
   // Validate the chosen device. In manual mode an unknown device requires the
   // explicit override ack; an enumerated device is validated against the list.
   const enumerated = diskState.kind === "ready" ? diskState.disks : [];
@@ -150,7 +181,11 @@ export function ProvisionStep({
       : validateDevice(device, enumerated);
 
   const canDryRun =
-    phase === "idle" && effectiveDisk.length > 0 && deviceValidation.ok && dryRun.kind !== "running";
+    phase === "idle" &&
+    effectiveDisk.length > 0 &&
+    deviceValidation.ok &&
+    machineSecrets !== null &&
+    dryRun.kind !== "running";
   const canApply =
     phase === "idle" && dryRun.kind === "ok" && confirmed && deviceValidation.ok;
 
@@ -523,9 +558,9 @@ export function ProvisionStep({
   );
 }
 
-function safeBuild(disk: string): string {
+function safeBuild(disk: string, machineSecrets: TalosMachineSecrets): string {
   try {
-    return buildFullNodeConfig({ disk: normalizeDeviceForBuild(disk), mode: "full" });
+    return buildFullNodeConfig({ disk: normalizeDeviceForBuild(disk), mode: "full", machineSecrets });
   } catch (err) {
     return `# ${(err as Error)?.message ?? String(err)}`;
   }
