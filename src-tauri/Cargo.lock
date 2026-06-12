@@ -3699,6 +3699,7 @@ dependencies = [
  "russh",
  "russh-keys",
  "rustls",
+ "sec1",
  "serde",
  "serde_json",
  "sha2",

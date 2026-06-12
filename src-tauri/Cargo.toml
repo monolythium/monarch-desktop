@@ -82,6 +82,13 @@ toml = "0.8"
 tar = "0.4"
 tauri-plugin-dialog = "2"
 x509-parser = "0.17"
+# SEC1 `EC PRIVATE KEY` encoding for the Kubernetes-side CAs. p256's own
+# `to_sec1_pem()` OMITS the optional named-curve parameters field, which makes
+# Go's `x509.ParseECPrivateKey` (and therefore Talos) reject the key with
+# "unknown elliptic curve". We construct the `EcPrivateKey` by hand with the
+# prime256v1 OID present, matching what talosctl emits. Pinned to the same 0.7
+# line p256 0.13 already resolves.
+sec1 = { version = "0.7", default-features = false, features = ["der", "pem", "alloc"] }
 sha2 = "0.10"
 # Talos machine-identity generation (src/talos_maintenance.rs). A fresh
 # Monarch OS node needs its own Talos machine CA + bootstrap token before

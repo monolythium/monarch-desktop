@@ -254,25 +254,51 @@ fn generate_machine_ca() -> Result<GeneratedCa, String> {
 /// `org = None` produces the empty-subject aggregator CA. The key is
 /// re-encoded to the SEC1 `EC PRIVATE KEY` PEM talosctl emits.
 fn generate_ecdsa_ca(org: Option<&str>) -> Result<GeneratedCa, String> {
-    use p256::pkcs8::{DecodePrivateKey, LineEnding};
-
     let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
         .map_err(|e| format!("failed to generate P-256 CA key: {e}"))?;
     let cert = ca_params(org)
         .self_signed(&key_pair)
         .map_err(|e| format!("failed to self-sign P-256 CA: {e}"))?;
-    // rcgen/ring hold the key as PKCS#8; Talos expects the Go-style SEC1
-    // `EC PRIVATE KEY` PEM (named-curve params + public key included).
-    let sec1_pem = p256::SecretKey::from_pkcs8_der(&key_pair.serialize_der())
-        .map_err(|e| format!("failed to re-parse P-256 CA key: {e}"))?
-        .to_sec1_pem(LineEnding::LF)
-        .map_err(|e| format!("failed to encode P-256 CA key as SEC1: {e}"))?;
+    let sec1_pem = ecdsa_key_to_sec1_pem(&key_pair)?;
     Ok(GeneratedCa {
         crt_b64: b64(&cert.pem()),
         key_b64: b64(&sec1_pem),
         cert,
         key_pair,
     })
+}
+
+/// Encode an rcgen P-256 key as the SEC1 `EC PRIVATE KEY` PEM talosctl emits —
+/// crucially WITH the `[0]` named-curve parameters (prime256v1) present.
+///
+/// p256's own `SecretKey::to_sec1_pem()` sets that optional field to `None`.
+/// A bare SEC1 key with no curve OID parses fine in OpenSSL but makes Go's
+/// `x509.ParseECPrivateKey` (hence Talos, which is Go) fail with
+/// "x509: unknown elliptic curve" — `etcd`/the Kubernetes controllers then
+/// wedge and `ext-protocore` never reaches serving state. We rebuild the
+/// `EcPrivateKey` structure by hand with the OID included.
+fn ecdsa_key_to_sec1_pem(key_pair: &rcgen::KeyPair) -> Result<String, String> {
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::pkcs8::DecodePrivateKey;
+    use sec1::der::{asn1::ObjectIdentifier, pem::LineEnding, EncodePem};
+    use sec1::{EcParameters, EcPrivateKey};
+
+    // prime256v1 / NIST P-256.
+    const P256_OID: ObjectIdentifier =
+        ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+
+    let secret = p256::SecretKey::from_pkcs8_der(&key_pair.serialize_der())
+        .map_err(|e| format!("failed to re-parse P-256 CA key: {e}"))?;
+    let scalar = secret.to_bytes();
+    let public_point = secret.public_key().to_encoded_point(false);
+    let ec_key = EcPrivateKey {
+        private_key: scalar.as_slice(),
+        parameters: Some(EcParameters::NamedCurve(P256_OID)),
+        public_key: Some(public_point.as_bytes()),
+    };
+    ec_key
+        .to_pem(LineEnding::LF)
+        .map_err(|e| format!("failed to encode P-256 CA key as SEC1: {e}"))
 }
 
 /// Mint the Kubernetes service-account signing key: RSA-4096, PKCS#1 PEM —
@@ -591,6 +617,35 @@ mod tests {
         CONFIG.get_or_init(|| {
             generate_full_node_config(TEST_HOST, TEST_DISK).expect("generation succeeds")
         })
+    }
+
+    /// Regression guard for the "x509: unknown elliptic curve" wedge: the SEC1
+    /// `EC PRIVATE KEY` for the Kubernetes-side CAs MUST carry the prime256v1
+    /// named-curve OID in its `[0]` parameters field. p256's stock
+    /// `to_sec1_pem()` omits it, which Go/Talos reject — etcd + the k8s
+    /// controllers then wedge and ext-protocore never serves.
+    #[test]
+    fn ecdsa_ca_key_carries_named_curve_oid() {
+        use sec1::der::{asn1::ObjectIdentifier, Decode, Document};
+        use sec1::{EcParameters, EcPrivateKey};
+
+        let ca = generate_ecdsa_ca(Some("kubernetes")).expect("gen ecdsa ca");
+        let key_pem = String::from_utf8(decode_b64(&ca.key_b64)).unwrap();
+        assert!(
+            key_pem.contains("BEGIN EC PRIVATE KEY"),
+            "key must be SEC1 EC PRIVATE KEY PEM, got: {}",
+            key_pem.lines().next().unwrap_or_default()
+        );
+        let (_, doc) = Document::from_pem(&key_pem).expect("SEC1 PEM decodes");
+        let ec = EcPrivateKey::from_der(doc.as_bytes()).expect("SEC1 DER parses");
+        let p256_oid = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+        assert_eq!(
+            ec.parameters,
+            Some(EcParameters::NamedCurve(p256_oid)),
+            "SEC1 key must carry the prime256v1 named-curve OID or Go/Talos \
+             rejects it with 'unknown elliptic curve'"
+        );
+        assert!(ec.public_key.is_some(), "SEC1 key should embed the public key");
     }
 
     /// Return the value of the first YAML line with this exact prefix
