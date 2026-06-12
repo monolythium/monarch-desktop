@@ -27,6 +27,12 @@ export type {
 export { useNodeStatus } from "./useNodeStatus";
 export type { NodeStatus } from "./useNodeStatus";
 export {
+  DEFAULT_RPC_PORT,
+  normalizeNodeEndpoint,
+  probeNodeEndpoint,
+} from "./setupProbe";
+export type { NodeProbeResult, ProbeOutcome } from "./setupProbe";
+export {
   bpsToPercent,
   formatLythHex,
   hostingClassLabel,

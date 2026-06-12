@@ -38,6 +38,7 @@ import { Operations } from "./views/Operations";
 import { Metrics } from "./views/Metrics";
 import { Logs } from "./views/Logs";
 import { Welcome } from "./views/Welcome";
+import { Setup } from "./views/Setup";
 import { quickConfiguredProbe } from "./sdk/onboarding";
 
 // Code-split the heavier, less-trafficked surfaces: the eleven design
@@ -81,8 +82,8 @@ const VIEW_KEY = "monarch:view";
 
 // First-run gate: instead of dropping a fresh operator on a dashboard
 // of em-dashes, probe whether ANYTHING is configured (operator key /
-// Talos / SSH — bounded to ~1.2s). Nothing configured → /welcome;
-// otherwise restore the last view as before.
+// Talos / SSH — bounded to ~1.2s). Nothing configured → the /setup
+// wizard (node-connect first); otherwise restore the last view as before.
 function LastViewRedirect() {
   const [target, setTarget] = useState<string | null>(null);
 
@@ -93,7 +94,7 @@ function LastViewRedirect() {
       .then((configured) => {
         if (cancelled) return;
         if (!configured) {
-          setTarget("/welcome");
+          setTarget("/setup");
           return;
         }
         const saved =
@@ -318,6 +319,7 @@ function ShellInner() {
                       </Suspense>
                     }
                   />
+                  <Route path="/setup" element={<Setup />} />
                   <Route path="/welcome" element={<Welcome />} />
                   <Route path="/install" element={<Install />} />
                   <Route path="/marketplace" element={<Marketplace />} />

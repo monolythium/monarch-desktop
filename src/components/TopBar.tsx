@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { useChainStatus, useNodeStatus } from "../sdk";
+import { EndpointChip } from "./EndpointChip";
 import "../styles/livedata.css";
 
 export function TopBar({
@@ -51,8 +52,6 @@ export function TopBar({
     <header className="monarch-topbar" role="banner">
       <div className="monarch-topbar__breadcrumb">
         <span>chain {chainId ?? "—"}</span>
-        <span className="monarch-topbar__sep">/</span>
-        <span>{status.endpoint}</span>
         <span className="monarch-topbar__sep">/</span>
         <b>{current}</b>
       </div>
@@ -99,6 +98,8 @@ export function TopBar({
         <span>operators</span>
         <b>{operatorCount || "—"}</b>
       </div>
+
+      <EndpointChip />
 
       <div className="monarch-topbar__version">v0.9β</div>
 

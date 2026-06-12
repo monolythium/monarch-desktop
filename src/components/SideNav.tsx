@@ -11,18 +11,31 @@ import { rpcEndpoint, useChainStatus, useNodeStatus } from "../sdk";
 const GROUP_ORDER = ["Operator", "Cluster", "Node service", "Chain", "Setup"] as const;
 const SETUP_FIRST_GROUP_ORDER = ["Setup", "Operator", "Cluster", "Node service", "Chain"] as const;
 
+// Preview routes are design placeholders, not shipping features. They keep
+// their registry entry (palette + chords + e2e parity still reach them) but
+// the sidebar pulls them out of the real groups into one clearly-labelled
+// "Preview" section so a brand-new operator isn't fooled.
+const PREVIEW_GROUP_LABEL = "Preview";
+
 export function SideNav() {
   const status = useNodeStatus();
   const chain = useChainStatus();
   // Surface the Setup group FIRST while no operator key is stored — a
-  // brand-new operator should see Welcome/Install/Keys before dashboards.
+  // brand-new operator should see the wizard / Install / Keys before dashboards.
   const presence = useKeychainPresence();
   const order =
     !presence.checking && !presence.hasOperatorKey ? SETUP_FIRST_GROUP_ORDER : GROUP_ORDER;
-  const grouped = order.map((label) => ({
-    label,
-    items: NAV_ROUTES.filter((r) => r.group === label),
-  }));
+  const liveRoutes = NAV_ROUTES.filter((r) => !r.preview);
+  const previewRoutes = NAV_ROUTES.filter((r) => r.preview);
+  const grouped: { label: string; items: typeof liveRoutes }[] = order
+    .map((label) => ({
+      label: label as string,
+      items: liveRoutes.filter((r) => r.group === label),
+    }))
+    .filter((group) => group.items.length > 0);
+  if (previewRoutes.length > 0) {
+    grouped.push({ label: PREVIEW_GROUP_LABEL, items: previewRoutes });
+  }
   const chainId = chain.data?.chainId ?? status.chainId;
 
   return (
@@ -35,9 +48,21 @@ export function SideNav() {
         </div>
       </div>
 
-      {grouped.map((group) => (
+      {grouped.map((group) => {
+        const isPreview = group.label === PREVIEW_GROUP_LABEL;
+        return (
         <div className="monarch-sidenav__group" key={group.label}>
-          <div className="monarch-sidenav__group-label">{group.label}</div>
+          <div className="monarch-sidenav__group-label">
+            {group.label}
+            {isPreview ? (
+              <span
+                title="Design previews — these screens show prototype data and are not live features yet."
+                style={{ marginLeft: 6, color: "var(--fg-500)", fontSize: 9, letterSpacing: "0.04em" }}
+              >
+                · prototype
+              </span>
+            ) : null}
+          </div>
           <ul className="monarch-sidenav__list">
             {group.items.map((item) => (
               <li key={item.path}>
@@ -48,6 +73,7 @@ export function SideNav() {
                       ? "monarch-sidenav__item monarch-sidenav__item--active"
                       : "monarch-sidenav__item"
                   }
+                  style={isPreview ? { opacity: 0.62 } : undefined}
                 >
                   <span className="monarch-sidenav__item-main">
                     <span className="monarch-sidenav__icon" aria-hidden>{item.icon}</span>
@@ -59,7 +85,8 @@ export function SideNav() {
             ))}
           </ul>
         </div>
-      ))}
+        );
+      })}
 
       <div className="monarch-sidenav__footer">
         <b>

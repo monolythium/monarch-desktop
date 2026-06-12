@@ -26,90 +26,11 @@ import {
   keychainGet,
   keychainSet,
 } from "../sdk";
+import { generatePqm1Mnemonic } from "@monolythium/core-sdk/crypto";
 import {
-  PQM1_ALGO_TAG_MLDSA65,
-  PQM1_V1_MNEMONIC_WORDS,
-  Pqm1Error,
-  generatePqm1Mnemonic,
-  pqm1MnemonicToPayload,
-} from "@monolythium/core-sdk/crypto";
-
-type ValidationResult =
-  | { ok: true }
-  | { ok: false; tone: "err" | "warn"; text: string };
-
-/**
- * Validate that `raw` is a 24-word PQM-1 mnemonic with algo tag 0x01.
- *
- * Delegates to the SDK decoder so this matches exactly what
- * `pqm1MnemonicToMlDsa65Backend` will accept at signing time. The decoder
- * throws `Pqm1Error` with a typed `kind` we map to actionable copy:
- *   - `unsupportedAlgorithm` → a non-0x01 tag, the MetaMask/BIP-32 case →
- *     a hard WARN that this is not a Monolythium operator key.
- *   - the rest (`badWordCount` / `bip39Decode` / `badPayloadLength` /
- *     `unsupportedVersion`) → a plain error.
- */
-function validateOperatorMnemonic(raw: string): ValidationResult {
-  const normalized = raw.trim().replace(/\s+/g, " ");
-  if (!normalized) {
-    return { ok: false, tone: "err", text: "Enter the operator mnemonic." };
-  }
-  try {
-    const payload = pqm1MnemonicToPayload(normalized);
-    // The decoder already enforces algoTag === 0x01, but assert it
-    // explicitly so the contract is visible at this call site.
-    if (payload.algoTag !== PQM1_ALGO_TAG_MLDSA65) {
-      return {
-        ok: false,
-        tone: "warn",
-        text:
-          "This mnemonic is not a Monolythium operator key (algo tag is not 0x01). " +
-          "MetaMask / BIP-32 seed phrases are NOT compatible — use a PQM-1 (ML-DSA-65) mnemonic.",
-      };
-    }
-    return { ok: true };
-  } catch (err) {
-    if (err instanceof Pqm1Error) {
-      switch (err.kind) {
-        case "unsupportedAlgorithm":
-          return {
-            ok: false,
-            tone: "warn",
-            text:
-              "This mnemonic is not a Monolythium operator key (algo tag is not 0x01). " +
-              "MetaMask / BIP-32 seed phrases are NOT compatible — use a PQM-1 (ML-DSA-65) mnemonic.",
-          };
-        case "badWordCount":
-          return {
-            ok: false,
-            tone: "err",
-            text: `Operator mnemonic must be ${PQM1_V1_MNEMONIC_WORDS} words.`,
-          };
-        case "bip39Decode":
-          return {
-            ok: false,
-            tone: "err",
-            text: "Not a valid BIP-39 mnemonic (bad word or checksum).",
-          };
-        case "badPayloadLength":
-          return {
-            ok: false,
-            tone: "err",
-            text: "Decoded payload is not 32 bytes — not a PQM-1 mnemonic.",
-          };
-        case "unsupportedVersion":
-          return {
-            ok: false,
-            tone: "warn",
-            text: "Unsupported PQM-1 version tag — expected version 0x01.",
-          };
-        default:
-          return { ok: false, tone: "err", text: err.message };
-      }
-    }
-    return { ok: false, tone: "err", text: (err as Error)?.message ?? String(err) };
-  }
-}
+  validateOperatorMnemonic,
+  type MnemonicValidation as ValidationResult,
+} from "../sdk/operatorMnemonic";
 
 type GenerationState = {
   stage: "reveal" | "confirm";
