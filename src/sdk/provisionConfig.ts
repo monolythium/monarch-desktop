@@ -129,7 +129,7 @@ machine:
 cluster:
   # No Kubernetes cluster PKI (id/secret/ca): protocore is a Talos system
   # extension, not a k8s workload, and genesis/peers resolve at runtime from
-  # chain-registry baked into the image. Only an inert endpoint placeholder is
+  # chain-registry baked into the image. Only an inert endpoint stub is
   # carried (Monarch never bootstraps etcd/k8s).
   controlPlane:
     endpoint: https://127.0.0.1:6443

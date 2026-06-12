@@ -493,7 +493,6 @@ export function ProvisionStep({
             <input
               type="checkbox"
               checked={confirmed}
-              disabled={dryRun.kind !== "ok"}
               onChange={(e) => setConfirmed(e.target.checked)}
               style={{ marginTop: 2 }}
             />

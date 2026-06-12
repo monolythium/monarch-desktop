@@ -707,7 +707,16 @@ const PLACEHOLDER_MARKERS: [&str; 5] = [
 /// Refuse a config that carries inline secrets, unfilled placeholders, or the
 /// full-node-with-enrollment trap before it reaches the node.
 fn scan_config(config_yaml: &str) -> Result<(), String> {
-    let lower = config_yaml.to_ascii_lowercase();
+    // Scan only the non-comment content: strip each line's `#` comment first so
+    // an explanatory comment (e.g. one that uses the word "placeholder" or "<")
+    // can never trip the placeholder/secret markers. An actual unfilled value
+    // like `disk: <placeholder>` is still caught because it is not a comment.
+    let scanned: String = config_yaml
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lower = scanned.to_ascii_lowercase();
 
     for marker in PLACEHOLDER_MARKERS {
         if lower.contains(marker) {
