@@ -63,9 +63,14 @@ describe("buildFullNodeConfig", () => {
     expect(yaml).not.toContain("serviceAccount");
   });
 
-  it("carries NO operator secret, enrollment, or TPM env", () => {
-    expect(yaml).not.toContain("PROTOCORE_REQUIRE_ENROLLMENT");
-    expect(yaml).not.toContain("PROTOCORE_REQUIRE_TPM_BINDING");
+  it("explicitly disables enrollment + TPM and carries NO operator secret env", () => {
+    // The image's embedded protocore config defaults these true; a full node
+    // must turn them off explicitly or ext-protocore crashes on the missing
+    // enrollment digest. So they MUST be present and set to false.
+    expect(yaml).toContain("PROTOCORE_REQUIRE_ENROLLMENT=false");
+    expect(yaml).toContain("PROTOCORE_REQUIRE_TPM_BINDING=false");
+    expect(yaml).not.toContain("PROTOCORE_REQUIRE_ENROLLMENT=true");
+    expect(yaml).not.toContain("PROTOCORE_REQUIRE_TPM_BINDING=true");
     expect(yaml).not.toContain("PROTOCORE_KEYSTORE_PASSPHRASE");
     expect(yaml).not.toContain("PROTOCORE_OPERATOR_MNEMONIC");
     expect(yaml).not.toContain("PROTOCORE_OPERATOR_PRIVATE_KEY");

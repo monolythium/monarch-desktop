@@ -51,6 +51,8 @@ kind: ExtensionServiceConfig
 name: protocore
 environment:
   - PROTOCORE_NODE_MODE=full
+  - PROTOCORE_REQUIRE_ENROLLMENT=false
+  - PROTOCORE_REQUIRE_TPM_BINDING=false
   - PROTOCORE_RPC_LISTEN=0.0.0.0:8545
   - PROTOCORE_P2P_LISTEN=/ip4/0.0.0.0/tcp/29898
   - PROTOCORE_DISCOVERY=hybrid
@@ -69,6 +71,7 @@ async fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mut args = std::env::args().skip(1);
+    let mut commit = std::env::var("MAINTENANCE_COMMIT").is_ok();
     let host = match args.next() {
         Some(host) => host,
         None => {
@@ -80,6 +83,7 @@ async fn main() {
     let mut config_file: Option<String> = None;
     let mut disk = "/dev/vda".to_string();
     while let Some(arg) = args.next() {
+        if arg == "--commit" { commit = true; continue; }
         match arg.as_str() {
             "--disk" => {
                 disk = args.next().unwrap_or_else(|| {
@@ -125,7 +129,11 @@ async fn main() {
 
     // dry_run=true, mode="try": Talos validates the config and reports
     // warnings/diff WITHOUT writing it. Nothing is installed; no reboot.
-    match talos_maintenance::apply(&host, &config_yaml, true, "try").await {
+    let (dry_run, mode) = if commit { (false, "reboot") } else { (true, "try") };
+    if commit {
+        println!("!! COMMITTING apply (dry_run=false, mode=reboot) — destructive, installs + reboots the node");
+    }
+    match talos_maintenance::apply(&host, &config_yaml, dry_run, mode).await {
         Ok(result) => {
             println!("RESULT: Talos ACCEPTED the config (dry-run).");
             println!("  node:     {}", result.node_address);

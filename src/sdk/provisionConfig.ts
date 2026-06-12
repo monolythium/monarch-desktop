@@ -28,7 +28,8 @@
 //
 // What this builder NEVER emits: a chain-operator enrollment bundle, TPM
 // binding, operator mnemonic/keystore passphrase, or any threshold/key share.
-// `PROTOCORE_REQUIRE_ENROLLMENT` is never set (a full node carries no enrollment
+// `PROTOCORE_REQUIRE_ENROLLMENT` / `PROTOCORE_REQUIRE_TPM_BINDING` are explicitly
+// set false to override the image's embedded true defaults (a full node carries no enrollment
 // material — setting it would fail the node closed). Operator (signing)
 // provisioning needs an enrollment bundle the app cannot produce yet and is
 // intentionally out of scope here.
@@ -138,6 +139,13 @@ kind: ExtensionServiceConfig
 name: protocore
 environment:
   - PROTOCORE_NODE_MODE=full
+  # The image's embedded protocore service config requires enrollment + TPM
+  # binding by default. A
+  # full (non-signing) node carries no enrollment bundle or TPM material, so we
+  # MUST explicitly turn both off — otherwise ext-protocore crashes after the
+  # maintenance apply with "PROTOCORE_EXPECTED_DIGEST_FILE is not readable".
+  - PROTOCORE_REQUIRE_ENROLLMENT=false
+  - PROTOCORE_REQUIRE_TPM_BINDING=false
   - PROTOCORE_RPC_LISTEN=0.0.0.0:8545
   - PROTOCORE_P2P_LISTEN=/ip4/0.0.0.0/tcp/29898
   - PROTOCORE_DISCOVERY=hybrid
