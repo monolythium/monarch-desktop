@@ -40,6 +40,10 @@ export const GLOSSARY: Record<string, string> = {
     "The public, human-readable name other operators and explorers see for your node.",
   nonce:
     "A counter that makes each signed action unique. Each new action must use a higher number than the last accepted one.",
+  ServiceScore:
+    "The per-cluster score the chain reads each block to size your reward. It is earned from the services your cluster proves - signing, archive custody, GPU proving, RPC, indexing, and roster diversity - not from how much stake it holds.",
+  "service reward":
+    "Block rewards are paid for proved service, not stake. Stake only sets your cluster's rank; what you earn tracks your cluster's settled ServiceScore.",
 };
 
 export type TermProps = {

@@ -9,7 +9,11 @@ import {
   clusterLabel,
   formatLythHex,
   operatorRiskView,
+  serviceRewardEarningsView,
   signingActivityView,
+  useClusterCharter,
+  useClusterDiversity,
+  useClusterServiceScore,
   useClusterStatus,
   useNodeStatus,
   useOperatorAuthority,
@@ -58,6 +62,19 @@ export function Operator() {
   const duties = useUpcomingDuties(authorityIndex, 500);
   const routerCfg = useOperatorRouterConfig();
   const prover = useProverMarketStatus();
+
+  // Service-reward earnings rollup — this cluster's reward weight is its
+  // settled ServiceScore (proved service), NOT its stake (stake = rank only).
+  const earningsClusterId = self.clusterId ?? clusterData?.id ?? ACTIVE_CLUSTER_ID;
+  const serviceScore = useClusterServiceScore(earningsClusterId);
+  const diversity = useClusterDiversity(earningsClusterId);
+  const charter = useClusterCharter(earningsClusterId);
+  const earnings = serviceRewardEarningsView({
+    score: serviceScore.data,
+    diversity: diversity.data,
+    proverActive: false,
+    charter: charter.data,
+  });
 
   const v = operator.data;
   const setSize = clusterData?.members.length ?? null;
@@ -442,6 +459,97 @@ export function Operator() {
               : signing.error ?? "Signing activity is loading from the connected endpoint."}
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <div className="card__head">
+          <div>
+            <h3>Service rewards · your earnings</h3>
+            <div className="sub">
+              cluster {clusterLabel(earningsClusterId)} · reward weight = proved service, not stake
+            </div>
+          </div>
+          <span
+            className={
+              earnings.scored
+                ? "halo halo--ok"
+                : serviceScore.notExposed
+                  ? "halo halo--warn"
+                  : "halo halo--info"
+            }
+          >
+            <span className="dot" />{" "}
+            {earnings.scored
+              ? "scored"
+              : serviceScore.notExposed
+                ? "score read not exposed"
+                : "not scored yet"}
+          </span>
+        </div>
+
+        <div className="grid-2">
+          <div>
+            <div className="cap">settled ServiceScore</div>
+            <div className="numeral numeral--gold">
+              {serviceScore.notExposed ? "—" : earnings.scoreLabel}
+            </div>
+            <div className="stat__sub">
+              the per-cluster score the reward path reads each block (node-registry Component A)
+            </div>
+          </div>
+          <div>
+            <div className="cap">how your reward splits</div>
+            <div className="numeral">
+              {charter.notExposed
+                ? "—"
+                : earnings.split.present
+                  ? `${bpsToPercent(earnings.split.delegatorShareBps)} to delegators`
+                  : "default split"}
+            </div>
+            <div className="stat__sub">
+              {charter.notExposed
+                ? "active-charter read not exposed by this endpoint"
+                : earnings.split.present
+                  ? `operators keep ${bpsToPercent(10000 - earnings.split.delegatorShareBps)} of the cluster pot; delegators take ${bpsToPercent(earnings.split.delegatorShareBps)}`
+                  : "this cluster uses the default operator/delegator split — amend it on the Cluster screen's charter panel"}
+            </div>
+          </div>
+        </div>
+
+        <p style={{ fontSize: 12, color: "var(--fg-400)", margin: "12px 0 4px" }}>
+          Your rewards come from the services your cluster <b>proves</b> — signing, archive custody,
+          GPU proving, RPC, indexing, and roster diversity — <b>not</b> from how much stake it holds.
+          Stake only sets your cluster's rank. The chain folds the proofs below into the single
+          settled ServiceScore above.
+        </p>
+
+        <div className="key-grid">
+          {earnings.families.map((fam) => (
+            <div className="key-row" key={fam.key}>
+              <div>
+                <div className="stat__label">{fam.label}</div>
+                <div className="stat__sub">{fam.blurb}</div>
+                <div className="mono" style={{ fontSize: 11, color: "var(--fg-500)", marginTop: 3 }}>
+                  {fam.detail}
+                </div>
+              </div>
+              <span
+                className={
+                  fam.status === "active"
+                    ? "halo halo--ok"
+                    : fam.status === "available"
+                      ? "halo halo--info"
+                      : fam.status === "scored"
+                        ? "halo halo--gold"
+                        : "halo halo--warn"
+                }
+                style={{ alignSelf: "flex-start" }}
+              >
+                <span className="dot" /> {fam.status}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="card">

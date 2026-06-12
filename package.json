@@ -1,7 +1,7 @@
 {
   "name": "@monolythium/monarch-desktop",
   "private": true,
-  "version": "0.0.14",
+  "version": "0.0.15",
   "type": "module",
   "description": "Monarch Desktop — operator and cluster GUI for Monolythium v5.0 (Tauri 2, React 19)",
   "license": "Apache-2.0",
@@ -24,7 +24,7 @@
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
-    "@monolythium/core-sdk": "0.4.16",
+    "@monolythium/core-sdk": "0.4.17",
     "@noble/hashes": "2.2.0",
     "@radix-ui/react-dialog": "1.1.15",
     "@tauri-apps/api": "2.10.1",

@@ -10,6 +10,7 @@
 
 import { useMemo } from "react";
 import type {
+  ActiveCharterView,
   BridgeHealthResponse,
   ClusterDirectoryEntryResponse,
   ClusterDiversityView,
@@ -213,6 +214,32 @@ export function useClusterDiversity(clusterId: number): RpcSlice<ClusterDiversit
   return usePolledRpc(
     `lyth_getClusterDiversity:${clusterId}`,
     () => rpc.lythGetClusterDiversity(clusterId),
+    (err) => isMethodNotFound(err) || isNotFound(err),
+  );
+}
+
+// Component A — the settled per-cluster ServiceScore the reward path reads
+// each block. SDK 0.4.17 SLOADs the `TAG_SERVICE_SCORE` slot at `0x1005`;
+// `0n` means the cluster has never been scored (not an error). This is the
+// headline of the service-reward model: rewards track this PROVED-SERVICE
+// score, not the cluster's stake (which only sets rank).
+export function useClusterServiceScore(clusterId: number | null): RpcSlice<bigint> {
+  return usePolledRpc(
+    `lyth_getClusterServiceScore:${clusterId ?? ""}`,
+    () => (clusterId !== null ? rpc.lythGetClusterServiceScore(clusterId) : Promise.reject(NO_TARGET)),
+    (err) => isMethodNotFound(err) || isNotFound(err),
+  );
+}
+
+// Component H — the cluster's ACTIVE economics charter (operator/delegator
+// split + per-seat shares). SDK 0.4.17 reads it from node-registry storage;
+// `{ present: false }` for genesis / 3-arg-formCluster clusters that never
+// adopted a charter. Used here only for the operator/delegator earnings
+// split term-read, NOT for amendment (that path lives in CharterPanel).
+export function useClusterCharter(clusterId: number | null): RpcSlice<ActiveCharterView> {
+  return usePolledRpc(
+    `lyth_getClusterCharter:${clusterId ?? ""}`,
+    () => (clusterId !== null ? rpc.lythGetClusterCharter(clusterId) : Promise.reject(NO_TARGET)),
     (err) => isMethodNotFound(err) || isNotFound(err),
   );
 }

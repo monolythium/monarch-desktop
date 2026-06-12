@@ -32,10 +32,12 @@ export {
   hostingClassLabel,
   useBridgeHealth,
   useChainStatus,
+  useClusterCharter,
   useClusterDirectory,
   useClusterDiversity,
   useClusterJoinRequestView,
   useClusterResignations,
+  useClusterServiceScore,
   useClusterStatus,
   useCurrentRound,
   useIndexerStatus,
@@ -101,6 +103,18 @@ export type {
   OperatorRiskView,
   SigningActivityView,
 } from "./operatorTelemetry";
+export {
+  serviceRewardEarningsView,
+  sumMemberShareBps,
+} from "./serviceRewardEarnings";
+export type {
+  EarningsSplit,
+  ServiceFamilyKey,
+  ServiceFamilyRow,
+  ServiceFamilyStatus,
+  ServiceRewardEarningsInputs,
+  ServiceRewardEarningsView,
+} from "./serviceRewardEarnings";
 export {
   NODE_REGISTRY_CONSENSUS_POP_BYTES,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
