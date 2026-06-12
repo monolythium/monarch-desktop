@@ -15,6 +15,12 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import "./styles/global.css";
+// Theme palettes — imported AFTER global.css so [data-theme] wins over :root.
+import "./styles/themes.css";
+import { applyTheme, readStoredTheme } from "./components/ThemeSwitcher";
+
+// Apply the saved theme before first paint so there's no default→saved flash.
+applyTheme(readStoredTheme());
 
 const container = document.getElementById("root");
 if (!container) {
