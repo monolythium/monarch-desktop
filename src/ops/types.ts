@@ -17,6 +17,7 @@ export const OP_KINDS = [
   "cluster-swap",
   "cluster-accept-invite",
   "cluster-form",
+  "cluster-update-charter",
   "cluster-request-join",
   "cluster-vote-admit",
   "cluster-resign",
@@ -126,6 +127,20 @@ export type ClusterFormInput = {
   charterHex?: string;
 };
 
+// Inputs for the live-cluster `updateCharter(uint32,bytes,bytes,bytes)`
+// amendment (Component H). `charterHex` is the proposed 30-byte charter;
+// `signerPubkeysHex` / `signaturesHex` are the ≥7 active-member ML-DSA-65
+// consent pubkeys + signatures over the updateCharter consent digest (1:1,
+// signer order). The executor encodes the calldata and submits from the
+// caller's operator key; the chain enforces the 7-of-10 active-member
+// threshold and applies the new terms only after the cooldown.
+export type ClusterUpdateCharterInput = {
+  clusterId: string;
+  charterHex: string;
+  signerPubkeysHex: string[];
+  signaturesHex: string[];
+};
+
 // Inputs for the Q120 voluntary cluster resignation
 // (`Tx::ClusterResignation`). The resigning operator signs the native
 // frame with the PQM-1-derived ML-DSA-65 consensus key; the runtime
@@ -221,6 +236,9 @@ export type OpRequest = {
   clusterResignationInput?: ClusterResignationInput;
   /** Present only when `kind === "cluster-form"`. */
   clusterFormInput?: ClusterFormInput;
+  /** Present only when `kind === "cluster-update-charter"`. Carries the
+   *  proposed 30-byte charter + the collected active-member consents. */
+  clusterUpdateCharterInput?: ClusterUpdateCharterInput;
   /** Present only when `kind === "rotate-keys"`. Carries the DKG re-share
    *  attestation payload produced by the external ceremony. */
   dkgReshareInput?: DkgReshareAttestationInput;

@@ -444,6 +444,37 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "cluster-update-charter",
+    category: "cluster",
+    icon: "UC",
+    risk: "high",
+    title: "Amend cluster charter",
+    sub: "Change per-operator shares + delegator split",
+    intro:
+      "Changes how a live cluster splits its rewards: the per-operator seat shares and the operator/delegator split. 7 of the 10 currently-active operators must consent, and a notice period passes before the new terms take effect — the current terms stay in force until then, so delegators can leave first.",
+    technical:
+      "Submits updateCharter(uint32,bytes,bytes,bytes) to node-registry 0x1005 carrying the new 30-byte charter and the 7-of-10 active-member ML-DSA-65 consents over the PROTOCORE_NODE_REGISTRY_CLUSTER_UPDATE_CHARTER_V1 digest. The chain applies the charter only after the delegator-protective cooldown (2 epochs in production); the old terms apply until the effective epoch.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign charter amendment",
+    keywords: ["cluster", "charter", "amend", "shares", "delegator", "split", "cooldown", "economics"],
+    effects: [
+      "Encodes the new 30-byte charter: per-seat operator shares (sum 10000 bps) and the delegator share (protocol floor 20%).",
+      "Carries the active-member consent signatures; every signature verifies over the recomputed updateCharter digest.",
+      "Applies the new terms only after the cooldown — the current terms apply until then, so delegators can undelegate first.",
+    ],
+    diff: [
+      { key: "cluster", label: "Cluster", value: "charter amendment" },
+      { key: "effective", label: "Effective", value: "after the cooldown (pending)" },
+      { key: "executor", label: "Executor", value: "updateCharter(uint32,bytes,bytes,bytes)" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "operator-supplied uint32" },
+      { key: "consents", label: "Consents", value: "7-of-10 active-member ML-DSA-65" },
+      { key: "executor", label: "Executor", value: "updateCharter(uint32,bytes,bytes,bytes)" },
+    ],
+  },
+  {
     kind: "cluster-request-join",
     category: "cluster",
     icon: "RJ",

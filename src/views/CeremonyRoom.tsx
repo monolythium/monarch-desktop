@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseLythToLythoshi } from "@monolythium/core-sdk";
+import { CharterEditor } from "../components/CharterEditor";
 import { mergeChatMessage } from "../hooks/useChat";
 import { useOps } from "../ops";
 import type { ClusterFormInput } from "../ops/types";
@@ -20,8 +21,6 @@ import type { ChatInitResult, ChatMessage } from "../sdk/chat";
 import { rpc, rpcEndpoint } from "../sdk/client";
 import {
   FORM_CLUSTER_ACTIVE_COUNT,
-  FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS,
-  FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS,
   FORM_CLUSTER_MEMBER_COUNT,
   FORM_CLUSTER_STANDBY_COUNT,
   FORM_CLUSTER_THRESHOLD,
@@ -29,6 +28,14 @@ import {
   validateClusterCharterHex,
   type DecodedClusterCharter,
 } from "../sdk/clusterFormOps";
+import {
+  CHARTER_DEFAULT_DELEGATOR_SHARE_BPS,
+  bpsToPct,
+  charterSeatLabel,
+  defaultMemberShareStrings,
+  validateCharterDraft,
+  CharterDraftError,
+} from "../sdk/charterShare";
 import {
   CEREMONY_SCHEMA_VERSION,
   CeremonyTransportUnavailableError,
@@ -118,20 +125,7 @@ function errText(err: unknown): string {
 
 // ---- charter helpers -----------------------------------------------------
 
-const CHARTER_DEFAULT_MEMBER_SHARE_BPS = 1000;
-const CHARTER_DEFAULT_DELEGATOR_SHARE_BPS = 5000;
 const CHARTER_DEFAULT_EXPIRY_MS = 48 * 3_600_000; // now + 48h
-
-/** Member-declaration order labels: members 0..6 = active, 7..9 = standby. */
-function charterSeatLabel(memberIndex: number): string {
-  return memberIndex < FORM_CLUSTER_ACTIVE_COUNT
-    ? `active ${memberIndex + 1}`
-    : `standby ${memberIndex - FORM_CLUSTER_ACTIVE_COUNT + 1}`;
-}
-
-function bpsToPct(bps: number, digits = 1): string {
-  return `${(bps / 100).toFixed(digits)}%`;
-}
 
 function toDatetimeLocalValue(ms: number): string {
   const d = new Date(ms);
@@ -369,9 +363,7 @@ export default function CeremonyRoom() {
   // charter (V2 economic terms) editor
   const [withCharter, setWithCharter] = useState(true);
   const [charterShares, setCharterShares] = useState<string[]>(() =>
-    Array.from({ length: FORM_CLUSTER_MEMBER_COUNT }, () =>
-      String(CHARTER_DEFAULT_MEMBER_SHARE_BPS),
-    ),
+    defaultMemberShareStrings(),
   );
   const [charterDelegatorBps, setCharterDelegatorBps] = useState(
     CHARTER_DEFAULT_DELEGATOR_SHARE_BPS,
@@ -422,15 +414,6 @@ export default function CeremonyRoom() {
   const effectiveDigest = state.frozenDigest ?? state.localDigest;
   const termsCharter = useMemo(() => decodeTermsCharter(state), [state]);
   const charterExpired = termsCharter !== null && nowMs >= termsCharter.expiresMs;
-  const charterShareSum = useMemo(
-    () =>
-      charterShares.reduce((sum, raw) => {
-        const bps = Number.parseInt(raw.trim(), 10);
-        return Number.isInteger(bps) && bps >= 0 ? sum + bps : Number.NaN;
-      }, 0),
-    [charterShares],
-  );
-
   const handleTransportError = useCallback((err: unknown) => {
     if (err instanceof CeremonyTransportUnavailableError) {
       setTransportNotice(err.message);
@@ -602,23 +585,16 @@ export default function CeremonyRoom() {
     let charterHex = "";
     let charterHash = "";
     if (withCharter) {
-      const shares = charterShares.map((raw) => Number.parseInt(raw.trim(), 10));
-      if (shares.some((bps) => !Number.isInteger(bps) || bps < 0 || bps > FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS)) {
-        setError(`Charter member shares must be whole numbers between 0 and ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps.`);
-        return;
-      }
-      const sum = shares.reduce((acc, bps) => acc + bps, 0);
-      if (sum !== FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS) {
-        setError(`Charter member shares must sum to exactly ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps — currently ${sum}.`);
-        return;
-      }
-      if (
-        charterDelegatorBps < FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS ||
-        charterDelegatorBps > FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS
-      ) {
-        setError(
-          `Charter delegator share must be between ${FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS} bps (protocol floor) and ${FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS} bps.`,
-        );
+      let draft;
+      try {
+        // Shared charter guardrails: exactly 10 shares summing to 10000,
+        // delegator share within the protocol floor/ceiling band.
+        draft = validateCharterDraft({
+          memberShareRows: charterShares,
+          delegatorShareBps: charterDelegatorBps,
+        });
+      } catch (err) {
+        setError(err instanceof CharterDraftError ? `Charter: ${err.message}` : errText(err));
         return;
       }
       const charterExpiresMs = parseDatetimeLocalValue(charterExpiryLocal);
@@ -628,8 +604,8 @@ export default function CeremonyRoom() {
       }
       try {
         charterHex = encodeClusterCharterHex({
-          memberShareBps: shares,
-          delegatorShareBps: charterDelegatorBps,
+          memberShareBps: draft.memberShareBps,
+          delegatorShareBps: draft.delegatorShareBps,
           expiresMs: charterExpiresMs,
         });
         validateClusterCharterHex(charterHex, { nowMs: Date.now() });
@@ -1006,60 +982,17 @@ export default function CeremonyRoom() {
                 </span>
                 {withCharter ? (
                   <>
-                    <div style={{ display: "grid", gap: 6 }}>
-                      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                        <span className="cap" style={{ fontSize: 10 }}>Per-seat shares (bps of the operator pot)</span>
-                        <span
-                          className={charterShareSum === FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS ? "halo halo--ok" : "halo halo--err"}
-                          style={{ fontSize: 10.5 }}
-                        >
-                          <span className="dot" />
-                          {Number.isNaN(charterShareSum) ? "invalid" : charterShareSum} / {FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS}
-                          {charterShareSum === FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS ? "" : " — must sum to exactly 10000"}
-                        </span>
-                      </div>
-                      {charterShares.map((value, index) => {
-                        const bps = Number.parseInt(value.trim(), 10);
-                        const pct = Number.isInteger(bps) && bps >= 0 ? bpsToPct(bps) : "—";
-                        return (
-                          <div key={`charter-share-${index}`} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <span className="kv__k" style={{ width: 86, flex: "0 0 auto" }}>
-                              {charterSeatLabel(index)}
-                            </span>
-                            <input
-                              className="mono"
-                              inputMode="numeric"
-                              value={value}
-                              onChange={(event) => {
-                                const next = [...charterShares];
-                                next[index] = event.target.value;
-                                setCharterShares(next);
-                              }}
-                              style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.1)", color: "var(--fg-200)", padding: "6px 8px", borderRadius: 6, fontSize: 12, width: 90 }}
-                            />
-                            <span className="mono" style={{ fontSize: 11, color: "var(--fg-400)" }}>
-                              = {pct}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-                      <span className="kv__k">
-                        Delegator share — {bpsToPct(charterDelegatorBps)} ({charterDelegatorBps} bps)
-                      </span>
-                      <input
-                        type="range"
-                        min={FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS}
-                        max={FORM_CLUSTER_CHARTER_SHARE_DENOM_BPS}
-                        step={50}
-                        value={charterDelegatorBps}
-                        onChange={(event) => setCharterDelegatorBps(Number.parseInt(event.target.value, 10))}
-                      />
-                      <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-                        Protocol floor {bpsToPct(FORM_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS, 0)} — a charter cannot starve delegators below it.
-                      </span>
-                    </label>
+                    <CharterEditor
+                      memberShareRows={charterShares}
+                      onMemberShareChange={(index, value) => {
+                        const next = [...charterShares];
+                        next[index] = value;
+                        setCharterShares(next);
+                      }}
+                      delegatorShareBps={charterDelegatorBps}
+                      onDelegatorShareChange={setCharterDelegatorBps}
+                      disabled={busy}
+                    />
                     <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
                       <span className="kv__k">Charter consent expiry (chain rejects execution after this moment)</span>
                       <input

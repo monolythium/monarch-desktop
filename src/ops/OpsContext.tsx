@@ -44,6 +44,7 @@ import {
 } from "../sdk/clusterJoinOps";
 import { submitClusterResignation } from "../sdk/clusterResignations";
 import { submitFormCluster } from "../sdk/clusterFormOps";
+import { submitUpdateCharter } from "../sdk/charterAmendmentOps";
 import { submitRedelegate } from "../sdk/delegationOps";
 import { submitDkgReshareAttestation } from "../sdk/dkgReshareOps";
 import {
@@ -870,6 +871,52 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runUpdateCharterFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.clusterUpdateCharterInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Charter amendment form is missing required fields." },
+          { transport: "cluster-update-charter-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "cluster-update-charter-tx" },
+          );
+          return;
+        }
+        const res = await submitUpdateCharter({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: Number(input.clusterId),
+          charterHex: input.charterHex,
+          signerPubkeysHex: input.signerPubkeysHex,
+          signaturesHex: input.signaturesHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Submitted updateCharter for cluster ${res.clusterId} with ${res.signatureCount} active-member consents (tx ${res.txHash.slice(0, 10)}...). The new terms take effect after the cooldown; the current terms apply until then.`,
+            txHash: res.txHash,
+          },
+          { transport: "cluster-update-charter-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "cluster-update-charter-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
   const runDkgReshareFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.dkgReshareInput;
@@ -1214,6 +1261,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "cluster-update-charter") {
+      if (inTauri()) {
+        await runUpdateCharterFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "rotate-keys") {
       if (inTauri()) {
         await runDkgReshareFlow(req);
@@ -1314,6 +1369,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   }, [
     blockBrowserExecution,
     runClusterFormFlow,
+    runUpdateCharterFlow,
     runChatBootstrapPeersFlow,
     runClusterNameFlow,
     runClusterJoinRequestFlow,

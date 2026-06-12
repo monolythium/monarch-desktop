@@ -113,6 +113,14 @@ const INBOUND_BUCKET_MAX_SENDERS: usize = 4096;
 // `clusterFormOps.formClusterConsentMessageHex`).
 const FORM_CLUSTER_CONSENT_DOMAIN_V1: &[u8] = b"PROTOCORE_NODE_REGISTRY_CLUSTER_FORM_V1\x00";
 const FORM_CLUSTER_CONSENT_DOMAIN_V2: &[u8] = b"PROTOCORE_NODE_REGISTRY_CLUSTER_FORM_V2\x00";
+/// Domain for the live-cluster `updateCharter` consent digest. Distinct
+/// from the formCluster domains so a formation consent can never replay as
+/// an amendment consent (and vice-versa). Byte-for-byte mirror of mono-core
+/// `cluster_form::UPDATE_CHARTER_DOMAIN` and the SDK
+/// `NODE_REGISTRY_UPDATE_CHARTER_MESSAGE_DOMAIN` (note the trailing NUL —
+/// it is part of the hashed preimage).
+const UPDATE_CHARTER_CONSENT_DOMAIN: &[u8] =
+    b"PROTOCORE_NODE_REGISTRY_CLUSTER_UPDATE_CHARTER_V1\x00";
 const FORM_CLUSTER_ACTIVE_COUNT: u16 = 7;
 const FORM_CLUSTER_STANDBY_COUNT: u16 = 3;
 const FORM_CLUSTER_THRESHOLD: u16 = 7;
@@ -1861,6 +1869,93 @@ async fn chat_sign_form_cluster_consent_impl(
     })
 }
 
+// ---- updateCharter consent signing ----------------------------------
+
+/// Compute the live-cluster `updateCharter` consent digest. Byte-for-byte
+/// mirror of mono-core `cluster_form::update_charter_message` and the SDK
+/// `updateCharterMessage`:
+///
+/// `BLAKE3(UPDATE_CHARTER_DOMAIN ‖ cluster_id_be32 ‖ threshold_be16 ‖
+///  charter.len_be32 ‖ charter)`.
+fn update_charter_consent_digest(cluster_id: u32, charter: &[u8]) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(UPDATE_CHARTER_CONSENT_DOMAIN);
+    h.update(&cluster_id.to_be_bytes());
+    h.update(&FORM_CLUSTER_THRESHOLD.to_be_bytes());
+    h.update(&(charter.len() as u32).to_be_bytes());
+    h.update(charter);
+    h.finalize().into()
+}
+
+/// Parse + validate the amendment inputs and derive the digest. As with
+/// the formCluster signer this is a CONSENT signer, not a blind-signing
+/// oracle: the charter must be exactly the 30-byte wire shape, so the
+/// webview can never feed an arbitrary blob to the consensus/wallet key.
+fn build_update_charter_consent_digest(
+    cluster_id: u32,
+    charter_hex: &str,
+) -> Result<[u8; 32], ChatError> {
+    let charter = hex_to_bytes(charter_hex)
+        .ok_or_else(|| ChatError::BadConsentInput("charter: invalid hex".to_string()))?;
+    if charter.len() != FORM_CLUSTER_CHARTER_LEN {
+        return Err(ChatError::BadConsentInput(format!(
+            "charter: expected exactly {FORM_CLUSTER_CHARTER_LEN} bytes, got {}",
+            charter.len()
+        )));
+    }
+    Ok(update_charter_consent_digest(cluster_id, &charter))
+}
+
+/// Sign a live-cluster `updateCharter` consent with the operator's key.
+/// The BLAKE3 consent digest is RE-DERIVED IN RUST from `(cluster_id,
+/// charter)` under the distinct UPDATE_CHARTER domain; the webview never
+/// supplies a raw digest. The TS caller ALWAYS cross-checks the returned
+/// `digest_hex` against its locally recomputed `updateCharterMessageHex`
+/// and refuses on mismatch — same discipline as the formCluster signer.
+#[tauri::command]
+pub async fn chat_sign_update_charter_consent(
+    state: State<'_, ChatState>,
+    cluster_id: u32,
+    charter_hex: String,
+) -> Result<FormClusterConsentSignature, String> {
+    chat_sign_update_charter_consent_impl(state, cluster_id, charter_hex)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn chat_sign_update_charter_consent_impl(
+    state: State<'_, ChatState>,
+    cluster_id: u32,
+    charter_hex: String,
+) -> Result<FormClusterConsentSignature, ChatError> {
+    let digest = build_update_charter_consent_digest(cluster_id, &charter_hex)?;
+
+    // Prefer the already-derived chat identity; fall back to a one-shot
+    // keychain derivation so the Charter panel works even before
+    // chat_initialize has run (mirrors the formCluster signer).
+    let identity = {
+        let guard = state.lock().await;
+        guard.identity.clone()
+    };
+    let identity = match identity {
+        Some(identity) => identity,
+        None => {
+            let mnemonic = match keychain::read_credential(OPERATOR_MNEMONIC_ACCOUNT) {
+                Ok(m) => Zeroizing::new(m),
+                Err(keychain::KeychainError::NotFound) => return Err(ChatError::MissingMnemonic),
+                Err(e) => return Err(ChatError::BadMnemonic(e.to_string())),
+            };
+            Arc::new(ChatIdentity::from_mnemonic(&mnemonic)?)
+        }
+    };
+
+    let signature = identity.sign(&digest)?;
+    Ok(FormClusterConsentSignature {
+        digest_hex: bytes_to_hex(&digest),
+        signature_hex: bytes_to_hex(&signature),
+    })
+}
+
 #[tauri::command]
 pub async fn chat_unsubscribe_channel(
     state: State<'_, ChatState>,
@@ -2859,6 +2954,53 @@ mod tests {
         );
         // Domain separation: a V1 consent can never replay as V2.
         assert_ne!(v1, v2);
+    }
+
+    /// PARITY FIXTURE — pins the Rust `updateCharter` consent digest to
+    /// mono-core `cluster_form::update_charter_message` and the SDK
+    /// `updateCharterMessage(clusterId, charter)`. The expected values
+    /// were computed with `@monolythium/core-sdk` `updateCharterMessageHex`
+    /// (independent of this Rust path) over `FIXTURE_CHARTER_HEX`. The
+    /// digest binds the cluster id, so two clusters get distinct digests.
+    #[test]
+    fn update_charter_digest_matches_sdk_parity_fixture() {
+        let charter = hex_to_bytes(FIXTURE_CHARTER_HEX).unwrap();
+        let d7 = update_charter_consent_digest(7, &charter);
+        assert_eq!(
+            bytes_to_hex(&d7),
+            "0x906cb4dc71924576772310d4ad144fb6ee67c73dcc8d15cf378d7e0548acbd87",
+            "updateCharter digest (cluster 7) must match SDK updateCharterMessage"
+        );
+        let d9 = update_charter_consent_digest(9, &charter);
+        assert_eq!(
+            bytes_to_hex(&d9),
+            "0x9a31331ffbc192794ccf6e14b90258afb5964384f4aaff24c75eda3c2f021ccf",
+            "updateCharter digest (cluster 9) must match SDK updateCharterMessage"
+        );
+        // The amendment domain is distinct from the formation domains, so
+        // a formation consent can never replay as an amendment consent.
+        let (active, standby) = fixture_roster_hex();
+        let form_v2 =
+            build_form_cluster_consent_digest(&active, &standby, Some(FIXTURE_CHARTER_HEX)).unwrap();
+        assert_ne!(d7, form_v2);
+        // The cluster-id binding makes per-cluster digests distinct.
+        assert_ne!(d7, d9);
+    }
+
+    #[test]
+    fn update_charter_digest_rejects_malformed_charter() {
+        // Wrong charter length.
+        assert!(matches!(
+            build_update_charter_consent_digest(7, "0xdeadbeef"),
+            Err(ChatError::BadConsentInput(_))
+        ));
+        // Non-hex charter.
+        assert!(matches!(
+            build_update_charter_consent_digest(7, &format!("0x{}", "zz".repeat(30))),
+            Err(ChatError::BadConsentInput(_))
+        ));
+        // Valid 30-byte charter succeeds.
+        assert!(build_update_charter_consent_digest(7, FIXTURE_CHARTER_HEX).is_ok());
     }
 
     #[test]

@@ -269,6 +269,39 @@ export type {
   SubmitFormClusterResult,
 } from "./clusterFormOps";
 export {
+  bpsToPct,
+  charterSeatLabel,
+  CharterDraftError,
+  defaultMemberShareStrings,
+  memberShareStringsFrom,
+  memberShareSum,
+  memberShareSumIsExact,
+  validateCharterDraft,
+} from "./charterShare";
+export type { CharterDraft, CharterDraftErrorCode } from "./charterShare";
+export {
+  CHARTER_COOLDOWN_EPOCHS,
+  UPDATE_CHARTER_THRESHOLD,
+  clusterCharterSlotHex,
+  decodeCharterDraftHex,
+  encodeCharterDraftHex,
+  encodeUpdateCharterCalldataHex,
+  readActiveCharter,
+  readPendingCharter,
+  reduceCharterAmendment,
+  signUpdateCharterConsent,
+  submitUpdateCharter,
+  updateCharterConsentDigestHex,
+} from "./charterAmendmentOps";
+export type {
+  ActiveCharter,
+  CharterAmendmentReadiness,
+  CollectedCharterConsent,
+  PendingCharterView,
+  SubmitUpdateCharterArgs,
+  SubmitUpdateCharterResult,
+} from "./charterAmendmentOps";
+export {
   ATTEST_DKG_RESHARE_SELECTOR,
   buildDkgReshareAttestationTxFields,
   DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT,

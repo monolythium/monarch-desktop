@@ -1,6 +1,7 @@
 import { ClusterRing } from "../components/ClusterRing";
 import { ConsensusPulse } from "../components/ConsensusPulse";
 import { UpdatedAgo } from "../components/UpdatedAgo";
+import { CharterPanel } from "./CharterPanel";
 import { useOps } from "../ops";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
@@ -574,6 +575,12 @@ export function Cluster() {
           </div>
         </div>
       </div>
+
+      <CharterPanel
+        clusterId={activeClusterId}
+        clusterLabel={activeClusterLabel}
+        currentEpoch={c?.epoch ?? null}
+      />
     </section>
   );
 }

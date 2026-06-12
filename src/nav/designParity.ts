@@ -247,6 +247,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "chat-bootstrap-peers",
   "cluster-name-register",
   "cluster-form",
+  "cluster-update-charter",
   "cluster-request-join",
   "cluster-vote-admit",
   "cluster-resign",

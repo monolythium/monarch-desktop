@@ -102,6 +102,7 @@ pub fn run() {
             chat::chat_mark_read,
             chat::chat_get_member_monikers,
             chat::chat_sign_form_cluster_consent,
+            chat::chat_sign_update_charter_consent,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

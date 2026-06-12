@@ -19,6 +19,7 @@ export type OperationReceiptTransport =
   | "cluster-vote-admit-tx"
   | "cluster-resignation-tx"
   | "cluster-form-tx"
+  | "cluster-update-charter-tx"
   | "dkg-reshare-tx"
   | "incident-freeze-admission-tx"
   | "incident-emergency-key-rotation-tx"
