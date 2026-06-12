@@ -12,6 +12,14 @@ export type NavRoute = {
   icon: string;
   /** Extra search keywords for the fuzzy palette. */
   keywords: string[];
+  /**
+   * Mock-data design preview, not a shipping feature. These routes stay
+   * registered (the ⌘K palette, `g+letter` chords, and design-parity / e2e
+   * coverage still reach them) but the sidebar groups them under a clearly
+   * labelled "Preview" section so a brand-new operator isn't fooled into
+   * thinking the placeholder screens are live. See SideNav.
+   */
+  preview?: boolean;
 };
 
 export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
@@ -59,6 +67,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Operator",
     icon: "TR",
     keywords: ["wallet", "treasury", "bond", "fee", "stake", "redelegate"],
+    preview: true,
   },
   {
     path: "/audit",
@@ -68,6 +77,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Operator",
     icon: "AU",
     keywords: ["audit", "receipts", "hash", "trail"],
+    preview: true,
   },
   {
     path: "/cluster",
@@ -104,6 +114,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Cluster",
     icon: "MP",
     keywords: ["marketplace", "providers", "clusters", "seat", "join"],
+    preview: true,
   },
   {
     path: "/services",
@@ -113,6 +124,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Node service",
     icon: "SV",
     keywords: ["services", "roles", "router", "prover", "oracle", "bridge"],
+    preview: true,
   },
   {
     path: "/metrics",
@@ -140,6 +152,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Chain",
     icon: "GV",
     keywords: ["governance", "proposal", "memo", "vote", "signal"],
+    preview: true,
   },
   {
     path: "/alerts",
@@ -149,15 +162,25 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Chain",
     icon: "AL",
     keywords: ["alerts", "rules", "notifications", "incident"],
+    preview: true,
+  },
+  {
+    path: "/setup",
+    label: "Setup wizard",
+    chord: "n",
+    hint: "g n",
+    group: "Setup",
+    icon: "SW",
+    keywords: ["setup", "wizard", "first run", "connect", "node", "url", "onboard", "start", "begin", "get started"],
   },
   {
     path: "/welcome",
-    label: "Welcome",
+    label: "Setup status",
     chord: "b",
     hint: "g b",
     group: "Setup",
     icon: "WL",
-    keywords: ["welcome", "onboarding", "first run", "checklist", "start", "begin", "setup"],
+    keywords: ["welcome", "onboarding", "first run", "checklist", "status", "progress", "detected", "begin"],
   },
   {
     path: "/install",
@@ -194,6 +217,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Setup",
     icon: "AT",
     keywords: ["attestation", "ota", "upgrade", "release", "digest"],
+    preview: true,
   },
   {
     path: "/keys",
@@ -212,6 +236,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Setup",
     icon: "RC",
     keywords: ["recovery", "restore", "incident", "backup", "emergency"],
+    preview: true,
   },
 ];
 
