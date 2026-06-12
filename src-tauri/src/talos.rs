@@ -2048,6 +2048,48 @@ async fn build_status(state: &TalosState) -> Result<TalosStatus, TalosError> {
     }
 }
 
+/// Persist + activate a talosconfig selection: store the endpoint and config
+/// path in the keychain (the same accounts `resolve_config` reads back), drop
+/// any log streams bound to the previous node, and update the in-memory state.
+/// Shared by `talos_connect` and the post-provision registration path.
+async fn store_talos_selection(
+    state: &TalosState,
+    endpoint: String,
+    config_path: String,
+) -> Result<(), TalosError> {
+    keychain::store_credential(TALOS_ENDPOINT_ACCOUNT, &endpoint)?;
+    keychain::store_credential(TALOS_CONFIG_PATH_ACCOUNT, &config_path)?;
+
+    let mut guard = state.lock().await;
+    for (_, stream) in guard.log_streams.drain() {
+        stream.abort.abort();
+    }
+    guard.endpoint = Some(endpoint);
+    guard.config_path = Some(config_path);
+    Ok(())
+}
+
+/// Register a freshly provisioned node's talosconfig as the app's active Talos
+/// identity, so `talos_status` / `talos_config_info` (and every view on top of
+/// them) resolve it immediately — no manual connect step after provisioning.
+///
+/// Also pins the CA fingerprint (`talos:ca-fingerprint`): unlike a talosconfig
+/// imported from elsewhere, this CA was minted by this app seconds ago for
+/// this exact node, so trusting it is first-party — not trust-on-first-use of
+/// unknown material. Privileged operations therefore work as soon as the node
+/// is back up.
+pub(crate) async fn register_provisioned_talosconfig(
+    state: &TalosState,
+    host: &str,
+    config_path: &str,
+) -> Result<(), TalosError> {
+    let endpoint = endpoint_url(host)?;
+    let config_path = validate_config_path(config_path)?;
+    let info = build_config_info(Some(&endpoint), &config_path)?;
+    keychain::store_credential(TALOS_CA_FINGERPRINT_ACCOUNT, &info.ca_fingerprint)?;
+    store_talos_selection(state, endpoint, config_path).await
+}
+
 #[tauri::command]
 pub async fn talos_connect(
     state: State<'_, TalosState>,
@@ -2057,18 +2099,9 @@ pub async fn talos_connect(
     let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
     let config_path = validate_config_path(&config_path).map_err(|e| e.to_string())?;
 
-    keychain::store_credential(TALOS_ENDPOINT_ACCOUNT, &endpoint).map_err(|e| e.to_string())?;
-    keychain::store_credential(TALOS_CONFIG_PATH_ACCOUNT, &config_path)
+    store_talos_selection(&state, endpoint, config_path)
+        .await
         .map_err(|e| e.to_string())?;
-
-    {
-        let mut guard = state.lock().await;
-        for (_, stream) in guard.log_streams.drain() {
-            stream.abort.abort();
-        }
-        guard.endpoint = Some(endpoint);
-        guard.config_path = Some(config_path);
-    }
 
     build_status(&state).await.map_err(|e| e.to_string())
 }

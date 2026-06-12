@@ -1,135 +1,134 @@
-import { describe, expect, it } from "vitest";
-import {
-  buildFullNodeConfig,
-  normalizeDevice,
-  validateDevice,
-  PROVISION_CHAIN_ID,
-  PROVISION_REGISTRY_NETWORK,
-  type TalosMachineSecrets,
-} from "./provisionConfig";
+// Disk-helper tests + provisioning IPC wiring tests.
+//
+// The machine-config YAML is generated RUST-SIDE (src-tauri/src/provision.rs);
+// its content assertions (full cluster PKI, cleared file envs, full-node
+// flags, host/disk threading) live in that module's Rust unit tests. What the
+// TS layer owns — and what is tested here — is the disk picker helpers and the
+// IPC wiring: the right commands invoked with the right payloads, and the
+// Rust-side result shapes surfaced unchanged.
 
-// A syntactically valid Talos machine identity for the builder tests. The crt /
-// key are base64 placeholders that satisfy the structural guards (real PEM is
-// generated per node at provision time); the token matches the Talos
-// `<id>.<secret>` shape. These are NOT real keys.
-const MACHINE_SECRETS: TalosMachineSecrets = {
-  caCrt: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCkZBS0VDQQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
-  caKey: "LS0tLS1CRUdJTiBFRDI1NTE5IFBSSVZBVEUgS0VZLS0tLS0KRkFLRUtFWQotLS0tLUVORCBFRDI1NTE5IFBSSVZBVEUgS0VZLS0tLS0K",
-  token: "ustbxo.rbumpdfayhzkl191",
-};
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("buildFullNodeConfig", () => {
-  const yaml = buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: MACHINE_SECRETS });
+const invokeMock = vi.fn();
 
-  it("embeds the chosen install disk", () => {
-    expect(yaml).toContain("install:");
-    expect(yaml).toContain("disk: /dev/vda");
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+  isTauri: () => true,
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => () => {}),
+}));
+
+import { normalizeDevice, validateDevice } from "./provisionConfig";
+import { talosGenerateFullNodeConfig, talosMaintenanceApply } from "./bridge";
+
+beforeEach(() => {
+  invokeMock.mockReset();
+});
+
+describe("talosGenerateFullNodeConfig wiring", () => {
+  it("invokes the Rust generator with host + disk and returns the bundle", async () => {
+    const bundle = {
+      configYaml: "version: v1alpha1\n",
+      talosconfigYaml: "context: monarch-node\n",
+    };
+    invokeMock.mockResolvedValueOnce(bundle);
+
+    const result = await talosGenerateFullNodeConfig("10.0.0.5", "/dev/vda");
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("talos_generate_full_node_config", {
+      host: "10.0.0.5",
+      disk: "/dev/vda",
+    });
+    expect(result).toEqual(bundle);
   });
 
-  it("pins the node to full (non-signing) mode", () => {
-    expect(yaml).toContain("PROTOCORE_NODE_MODE=full");
+  it("surfaces a Rust-side validation rejection", async () => {
+    invokeMock.mockRejectedValueOnce(new Error('invalid install disk "vda"'));
+    await expect(talosGenerateFullNodeConfig("10.0.0.5", "vda")).rejects.toThrow(
+      /invalid install disk/,
+    );
+  });
+});
+
+describe("talosMaintenanceApply wiring", () => {
+  const textResult = {
+    endpoint: "https://10.0.0.5:50000",
+    nodeAddress: "10.0.0.5",
+    command: "talos apply-config --insecure --mode try (dry-run)",
+    output: "dry-run accepted; no validation warnings reported",
+    service: null,
+  };
+
+  it("dry-run: forwards the YAML without a talosconfig", async () => {
+    invokeMock.mockResolvedValueOnce({
+      ...textResult,
+      talosconfigPath: null,
+      talosconfigError: null,
+    });
+
+    const result = await talosMaintenanceApply({
+      host: "10.0.0.5",
+      configYaml: "version: v1alpha1\n",
+      dryRun: true,
+      mode: "try",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("talos_maintenance_apply", {
+      host: "10.0.0.5",
+      configYaml: "version: v1alpha1\n",
+      dryRun: true,
+      mode: "try",
+      talosconfigYaml: null,
+    });
+    expect(result.output).toContain("dry-run accepted");
+    expect(result.talosconfigPath).toBeNull();
   });
 
-  it("emits the RPC / p2p / discovery / chain / registry pins", () => {
-    expect(yaml).toContain("PROTOCORE_RPC_LISTEN=0.0.0.0:8545");
-    expect(yaml).toContain("PROTOCORE_P2P_LISTEN=/ip4/0.0.0.0/tcp/29898");
-    expect(yaml).toContain("PROTOCORE_DISCOVERY=hybrid");
-    expect(yaml).toContain(`PROTOCORE_CHAIN_ID=${PROVISION_CHAIN_ID}`);
-    expect(yaml).toContain(`PROTOCORE_REGISTRY_NETWORK=${PROVISION_REGISTRY_NETWORK}`);
+  it("commit: forwards the talosconfig and surfaces the persisted path", async () => {
+    invokeMock.mockResolvedValueOnce({
+      ...textResult,
+      talosconfigPath: "/appdata/talosconfigs/10.0.0.5.talosconfig",
+      talosconfigError: null,
+    });
+
+    const result = await talosMaintenanceApply({
+      host: "10.0.0.5",
+      configYaml: "version: v1alpha1\n",
+      dryRun: false,
+      mode: "reboot",
+      talosconfigYaml: "context: monarch-node\n",
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("talos_maintenance_apply", {
+      host: "10.0.0.5",
+      configYaml: "version: v1alpha1\n",
+      dryRun: false,
+      mode: "reboot",
+      talosconfigYaml: "context: monarch-node\n",
+    });
+    expect(result.talosconfigPath).toBe("/appdata/talosconfigs/10.0.0.5.talosconfig");
+    expect(result.talosconfigError).toBeNull();
   });
 
-  it("is a two-document machine config with the protocore extension", () => {
-    expect(yaml).toContain("version: v1alpha1");
-    expect(yaml).toContain("\n---\n");
-    expect(yaml).toContain("kind: ExtensionServiceConfig");
-    expect(yaml).toContain("name: protocore");
-  });
+  it("commit: a persist failure is surfaced without masking the apply", async () => {
+    invokeMock.mockResolvedValueOnce({
+      ...textResult,
+      talosconfigPath: null,
+      talosconfigError: "could not save the node's talosconfig: disk full",
+    });
 
-  it("carries the Talos machine identity (token + CA) Talos requires", () => {
-    // Talos rejects a machine config without an issuing CA; the builder must
-    // emit machine.token + machine.ca.crt/key.
-    expect(yaml).toMatch(/^\s*token: ustbxo\.rbumpdfayhzkl191$/m);
-    expect(yaml).toMatch(/^\s*ca:$/m);
-    expect(yaml).toContain(`crt: ${MACHINE_SECRETS.caCrt}`);
-    expect(yaml).toContain(`key: ${MACHINE_SECRETS.caKey}`);
-    expect(yaml).toContain("wipe: false");
-  });
+    const result = await talosMaintenanceApply({
+      host: "10.0.0.5",
+      configYaml: "version: v1alpha1\n",
+      dryRun: false,
+      mode: "reboot",
+      talosconfigYaml: "context: monarch-node\n",
+    });
 
-  it("carries NO Kubernetes cluster PKI", () => {
-    // A full node needs the Talos machine CA but NOT the k8s cluster PKI.
-    expect(yaml).not.toMatch(/^\s*id:\s/m); // cluster.id
-    expect(yaml).not.toMatch(/^\s*secret:\s/m); // cluster.secret
-    expect(yaml).not.toContain("aggregatorCA");
-    expect(yaml).not.toContain("serviceAccount");
-  });
-
-  it("explicitly disables enrollment + TPM and carries NO operator secret env", () => {
-    // The image's embedded protocore config defaults these true; a full node
-    // must turn them off explicitly or ext-protocore crashes on the missing
-    // enrollment digest. So they MUST be present and set to false.
-    expect(yaml).toContain("PROTOCORE_REQUIRE_ENROLLMENT=false");
-    expect(yaml).toContain("PROTOCORE_REQUIRE_TPM_BINDING=false");
-    expect(yaml).not.toContain("PROTOCORE_REQUIRE_ENROLLMENT=true");
-    expect(yaml).not.toContain("PROTOCORE_REQUIRE_TPM_BINDING=true");
-    expect(yaml).not.toContain("PROTOCORE_KEYSTORE_PASSPHRASE");
-    expect(yaml).not.toContain("PROTOCORE_OPERATOR_MNEMONIC");
-    expect(yaml).not.toContain("PROTOCORE_OPERATOR_PRIVATE_KEY");
-    expect(yaml).not.toMatch(/_SHARE/);
-    const envLines = yaml
-      .split("\n")
-      .filter((line) => line.trim().startsWith("- PROTOCORE_"));
-    for (const line of envLines) {
-      expect(line.toLowerCase()).not.toContain("secret");
-      expect(line.toLowerCase()).not.toContain("passphrase");
-      expect(line.toLowerCase()).not.toContain("mnemonic");
-    }
-  });
-
-  it("carries no unfilled placeholder markers", () => {
-    // The Rust apply scan rejects these; the generator must never emit them.
-    // (Restricted to the env + structural lines — the explanatory comments
-    // legitimately say "placeholder" when describing the inert endpoint.)
-    const significant = yaml
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("#"))
-      .join("\n")
-      .toLowerCase();
-    for (const marker of ["replace-with", "changeme", "placeholder", "example-secret"]) {
-      expect(significant).not.toContain(marker);
-    }
-    // No angle-bracket placeholder anywhere (base64 PEM never contains '<').
-    expect(yaml).not.toContain("<");
-  });
-
-  it("reflects a different disk choice", () => {
-    const sda = buildFullNodeConfig({ disk: "/dev/sda", mode: "full", machineSecrets: MACHINE_SECRETS });
-    expect(sda).toContain("disk: /dev/sda");
-    expect(sda).not.toContain("disk: /dev/vda");
-  });
-
-  it("rejects an empty or malformed disk", () => {
-    expect(() => buildFullNodeConfig({ disk: "", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
-    expect(() => buildFullNodeConfig({ disk: "/dev/v da", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
-    expect(() => buildFullNodeConfig({ disk: "0.0.0.0:8545", mode: "full", machineSecrets: MACHINE_SECRETS })).toThrow();
-  });
-
-  it("rejects missing or malformed machine secrets", () => {
-    const ok = MACHINE_SECRETS;
-    expect(() =>
-      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "" } }),
-    ).toThrow(/CA cert is required/);
-    expect(() =>
-      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caKey: "  " } }),
-    ).toThrow(/CA key is required/);
-    expect(() =>
-      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, token: "not-a-token" } }),
-    ).toThrow(/not a valid Talos token/);
-    expect(() =>
-      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "<replace-with-ca>" } }),
-    ).toThrow(/placeholder/);
-    expect(() =>
-      buildFullNodeConfig({ disk: "/dev/vda", mode: "full", machineSecrets: { ...ok, caCrt: "not base64 ###" } }),
-    ).toThrow(/base64/);
+    expect(result.output).toBeTruthy();
+    expect(result.talosconfigError).toContain("could not save");
   });
 });
 

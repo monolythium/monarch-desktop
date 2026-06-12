@@ -91,6 +91,19 @@ sha2 = "0.10"
 # lockfile entry (0.13). Promoted from transitive to direct so the
 # maintenance module can name it.
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
+# Full-node provisioning PKI (src/provision.rs). The validated machine config
+# carries the complete Talos cluster PKI, so the generator mints every key
+# shape talosctl emits: `p256` re-encodes the rcgen/ring P-256 CA keys to the
+# SEC1 `EC PRIVATE KEY` PEM Talos's Go parser switches on, `rsa` mints the
+# RSA-4096 PKCS#1 service-account key, `time` pins the talosctl-shaped 10-year
+# CA validity windows on rcgen params, and `rand_core06` is the rand_core 0.6
+# OsRng the `rsa` 0.9 keygen API expects (the workspace `rand` is 0.9, whose
+# rand_core is incompatible). All pinned to already-resolved lockfile entries
+# (transitive deps promoted to direct).
+p256 = "0.13"
+rsa = "0.9"
+time = "0.3"
+rand_core06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
 # Operator chat (Phase 1 MVP). Self-contained, no mono-core coupling.
 # `libp2p` runs a minimal gossipsub node for cluster channels — only the
 # transport + gossipsub features the chat backend needs (tcp / noise /
@@ -115,3 +128,13 @@ zeroize = "1"
 # Default to no custom features. Production builds opt in via `--features custom-protocol`.
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# RSA-4096 keygen via the pure-Rust `rsa` crate is unusably slow at opt-level 0
+# (minutes per key in dev/test builds). Optimize just the bignum-heavy crates
+# in dev so the provisioning generator stays at seconds; release builds are
+# already fully optimized.
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

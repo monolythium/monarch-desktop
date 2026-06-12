@@ -14,7 +14,9 @@
 //!     the install-disk picker (falls back to manual entry when unavailable).
 //!   * [`talos_maintenance_apply`] — `MachineService.ApplyConfiguration`, with
 //!     an in-app reject scan that mirrors the protocore entrypoint so a bad
-//!     config is refused before it can brick the node.
+//!     config is refused before it can brick the node. A committing apply also
+//!     persists + registers the node's freshly generated talosconfig (see
+//!     [`crate::provision`] for the generator).
 //!
 //! # Trust boundary
 //!
@@ -44,9 +46,6 @@ use rustls::client::danger::{
 };
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
-
-use base64::Engine as _;
-use rand::RngCore as _;
 
 use crate::talos::{disk_type_label, endpoint_url, node_address, TalosTextResult};
 
@@ -98,24 +97,21 @@ pub struct TalosDisk {
     pub system_disk_hint: bool,
 }
 
-/// A node's freshly minted Talos machine identity: the issuing CA (base64-PEM,
-/// as Talos stores it in the machine config) and a bootstrap token. This is the
-/// `talosctl gen secrets` equivalent for a single node — the machine's own
-/// apid/trustd PKI, NOT a protocore chain key, and never shared between nodes.
-///
-/// Talos's `v1alpha1.Config` validator hard-rejects a machine config without an
-/// issuing CA, so a Monarch FULL node still needs this even though it never
-/// bootstraps etcd/Kubernetes. The full k8s cluster PKI is deliberately not
-/// generated — a full node does not need it.
+/// Result of a maintenance-mode apply: the node's own response, plus — for a
+/// committing apply that carried a talosconfig — where that talosconfig was
+/// persisted (or why persisting failed). The talosconfig is the node's ONLY
+/// management credential after provisioning (Monarch OS has no SSH), so a save
+/// failure is surfaced rather than swallowed, while the apply itself still
+/// reports success (the node IS provisioned either way).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TalosMachineSecrets {
-    /// Issuing CA certificate, base64-encoded PEM (the `machine.ca.crt` value).
-    pub ca_crt: String,
-    /// Issuing CA private key, base64-encoded PEM (the `machine.ca.key` value).
-    pub ca_key: String,
-    /// Bootstrap token (`machine.token`), shaped `<6 alnum>.<16 alnum>`.
-    pub token: String,
+pub struct MaintenanceApplyOutcome {
+    #[serde(flatten)]
+    pub result: TalosTextResult,
+    /// Absolute path the talosconfig was written to (committing apply only).
+    pub talosconfig_path: Option<String>,
+    /// Set when persisting or registering the talosconfig failed.
+    pub talosconfig_error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -618,65 +614,60 @@ fn format_apply_response(
 }
 
 // ---------------------------------------------------------------------------
-// Talos machine-identity generation.
+// Talosconfig persistence (after a committing apply).
 // ---------------------------------------------------------------------------
 
-/// Generate a fresh Talos machine identity for one node: a self-signed Ed25519
-/// issuing CA (`O=talos`, matching the cert `talosctl gen secrets` produces) and
-/// a bootstrap token. The CA crt/key are returned base64-encoded PEM — the exact
-/// form Talos stores under `machine.ca` — so the frontend can drop them straight
-/// into [`build_full_node_config`-style YAML](crate::talos_maintenance).
-///
-/// Pure CPU work (key generation + self-signing); no I/O, no network. Each call
-/// returns a unique identity — never cache or share the result between nodes.
-pub fn generate_machine_secrets() -> Result<TalosMachineSecrets, String> {
-    use rcgen::{
-        BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-        PKCS_ED25519,
-    };
-
-    let key_pair = KeyPair::generate_for(&PKCS_ED25519)
-        .map_err(|e| format!("failed to generate machine CA key: {e}"))?;
-
-    let mut params = CertificateParams::default();
-    // talosctl gen secrets issues the machine ("os") CA with O=talos and a long
-    // validity (10y). Mirror that shape so the identity is indistinguishable
-    // from a talosctl-generated one to the node.
-    params.distinguished_name.push(DnType::OrganizationName, "talos");
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![
-        KeyUsagePurpose::DigitalSignature,
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-    ];
-    // rcgen's CertificateParams::default() already sets a long validity window
-    // (not_before/not_after spanning decades), which suits a long-lived machine
-    // CA; we leave it as-is rather than pull in a direct `time` dependency.
-
-    let cert = params
-        .self_signed(&key_pair)
-        .map_err(|e| format!("failed to self-sign machine CA: {e}"))?;
-
-    let b64 = base64::engine::general_purpose::STANDARD;
-    Ok(TalosMachineSecrets {
-        ca_crt: b64.encode(cert.pem()),
-        ca_key: b64.encode(key_pair.serialize_pem()),
-        token: generate_talos_token(),
-    })
+/// Reduce a host to a safe filename stem (`10.0.0.5` → `10.0.0.5`,
+/// anything exotic → underscored). The host was already validated by the
+/// config generator, but the apply command accepts arbitrary hosts, so
+/// sanitise again before touching the filesystem.
+fn host_filename_stem(host: &str) -> String {
+    let stem: String = host
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if stem.is_empty() || stem.chars().all(|c| c == '.') {
+        "node".to_string()
+    } else {
+        stem
+    }
 }
 
-/// Mint a Talos bootstrap token: `<6 lowercase-alnum>.<16 lowercase-alnum>`,
-/// the kubeadm-style shape Talos expects for `machine.token`. Drawn from the
-/// OS CSPRNG.
-fn generate_talos_token() -> String {
-    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::rng();
-    let mut bytes = [0u8; 22];
-    rng.fill_bytes(&mut bytes);
-    let glyph = |b: u8| ALPHABET[(b as usize) % ALPHABET.len()] as char;
-    let id: String = bytes[..6].iter().map(|&b| glyph(b)).collect();
-    let secret: String = bytes[6..22].iter().map(|&b| glyph(b)).collect();
-    format!("{id}.{secret}")
+/// Write the freshly generated talosconfig to the app data dir
+/// (`<appdata>/talosconfigs/<host>.talosconfig`, mode 0600 on Unix) and return
+/// the absolute path. This file is the node's ONLY management credential —
+/// losing it makes the node unmanageable (no SSH on Monarch OS).
+fn persist_talosconfig(
+    app: &tauri::AppHandle,
+    host: &str,
+    talosconfig_yaml: &str,
+) -> Result<String, String> {
+    use tauri::Manager as _;
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve the app data dir: {e}"))?
+        .join("talosconfigs");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{}.talosconfig", host_filename_stem(host)));
+    std::fs::write(&path, talosconfig_yaml)
+        .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("could not restrict permissions on {}: {e}", path.display()))?;
+    }
+    Ok(path.display().to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -705,8 +696,10 @@ const PLACEHOLDER_MARKERS: [&str; 5] = [
 ];
 
 /// Refuse a config that carries inline secrets, unfilled placeholders, or the
-/// full-node-with-enrollment trap before it reaches the node.
-fn scan_config(config_yaml: &str) -> Result<(), String> {
+/// full-node-with-enrollment trap before it reaches the node. Also run by the
+/// config generator ([`crate::provision`]) so a regressed template can never
+/// even be previewed.
+pub(crate) fn scan_config(config_yaml: &str) -> Result<(), String> {
     // Scan only the non-comment content: strip each line's `#` comment first so
     // an explanatory comment (e.g. one that uses the word "placeholder" or "<")
     // can never trip the placeholder/secret markers. An actual unfilled value
@@ -805,24 +798,55 @@ pub async fn talos_maintenance_disks(host: String) -> Result<Vec<TalosDisk>, Str
     disks(&host).await
 }
 
-/// Generate a fresh Talos machine identity (issuing CA + bootstrap token) for a
-/// node about to be provisioned. The frontend feeds the result into
-/// `buildFullNodeConfig` so the emitted machine config carries the `machine.ca`
-/// Talos requires.
-#[tauri::command]
-pub fn talos_generate_machine_secrets() -> Result<TalosMachineSecrets, String> {
-    generate_machine_secrets()
-}
-
 /// Apply a machine config (dry-run or commit) over the insecure channel.
+///
+/// A committing apply (`dry_run: false`) that carries `talosconfig_yaml` also
+/// persists that talosconfig to the app data dir and registers it as the app's
+/// active Talos identity (keychain `talos:endpoint` / `talos:config-path` +
+/// pinned CA fingerprint), so the Hardware / Install views can manage the node
+/// the moment it finishes rebooting. Persistence problems never mask a
+/// successful apply — they come back in `talosconfig_error`.
 #[tauri::command]
 pub async fn talos_maintenance_apply(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::talos::TalosState>,
     host: String,
     config_yaml: String,
     dry_run: bool,
     mode: String,
-) -> Result<TalosTextResult, String> {
-    apply(&host, &config_yaml, dry_run, &mode).await
+    talosconfig_yaml: Option<String>,
+) -> Result<MaintenanceApplyOutcome, String> {
+    let result = apply(&host, &config_yaml, dry_run, &mode).await?;
+
+    let mut outcome = MaintenanceApplyOutcome {
+        result,
+        talosconfig_path: None,
+        talosconfig_error: None,
+    };
+    if !dry_run {
+        if let Some(yaml) = talosconfig_yaml.filter(|y| !y.trim().is_empty()) {
+            match persist_talosconfig(&app, &host, &yaml) {
+                Ok(path) => {
+                    if let Err(err) =
+                        crate::talos::register_provisioned_talosconfig(&state, &host, &path).await
+                    {
+                        outcome.talosconfig_error = Some(format!(
+                            "talosconfig saved to {path} but could not be registered: {err}"
+                        ));
+                    }
+                    outcome.talosconfig_path = Some(path);
+                }
+                Err(err) => {
+                    outcome.talosconfig_error = Some(format!(
+                        "could not save the node's talosconfig: {err}. Copy it from the \
+                         provisioning screen now — it is the only credential that can \
+                         manage this node."
+                    ));
+                }
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -917,47 +941,12 @@ environment:
     }
 
     #[test]
-    fn generated_machine_secrets_are_well_formed() {
-        let s = generate_machine_secrets().expect("generation should succeed");
-
-        // Token shape: <6 alnum>.<16 alnum>.
-        let (id, secret) = s.token.split_once('.').expect("token has a dot");
-        assert_eq!(id.len(), 6, "token id len: {}", s.token);
-        assert_eq!(secret.len(), 16, "token secret len: {}", s.token);
-        assert!(
-            s.token.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.'),
-            "token alphabet: {}",
-            s.token
-        );
-
-        // CA crt/key are base64 of a PEM. Decode and confirm the PEM markers,
-        // and that the CA carries O=talos like talosctl gen secrets.
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let crt = String::from_utf8(b64.decode(&s.ca_crt).expect("crt is base64")).unwrap();
-        let key = String::from_utf8(b64.decode(&s.ca_key).expect("key is base64")).unwrap();
-        assert!(crt.contains("BEGIN CERTIFICATE"), "crt PEM: {crt}");
-        assert!(key.contains("BEGIN PRIVATE KEY"), "key PEM: {key}");
-
-        // Two calls produce distinct identities.
-        let s2 = generate_machine_secrets().unwrap();
-        assert_ne!(s.token, s2.token, "tokens must be unique");
-        assert_ne!(s.ca_crt, s2.ca_crt, "CAs must be unique");
-    }
-
-    #[test]
-    fn scan_accepts_a_config_built_from_generated_secrets() {
-        let s = generate_machine_secrets().unwrap();
-        let yaml = format!(
-            "version: v1alpha1\n\
-             machine:\n  type: controlplane\n  token: {}\n  ca:\n    crt: {}\n    key: {}\n  install:\n    disk: /dev/vda\n    wipe: false\n\
-             cluster:\n  controlPlane:\n    endpoint: https://127.0.0.1:6443\n\
-             ---\n\
-             apiVersion: v1alpha1\nkind: ExtensionServiceConfig\nname: protocore\nenvironment:\n  - PROTOCORE_NODE_MODE=full\n",
-            s.token, s.ca_crt, s.ca_key
-        );
-        // The in-app reject scan must pass a clean generated config (base64 PEM
-        // never contains the '<' placeholder marker, no inline secrets).
-        assert!(scan_config(&yaml).is_ok(), "scan should accept generated config");
+    fn host_filename_stem_sanitises() {
+        assert_eq!(host_filename_stem("10.0.0.5"), "10.0.0.5");
+        assert_eq!(host_filename_stem("node-1.lan"), "node-1.lan");
+        assert_eq!(host_filename_stem("a/b\\c:d"), "a_b_c_d");
+        assert_eq!(host_filename_stem(""), "node");
+        assert_eq!(host_filename_stem(".."), "node");
     }
 
     #[test]

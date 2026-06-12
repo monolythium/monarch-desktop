@@ -38,6 +38,10 @@ mod ai;
 mod chat;
 mod chat_store;
 mod keychain;
+// Full-node machine-config + talosconfig generation. Public so the
+// `maintenance_dryrun` example binary can exercise the exact generator the
+// provision flow uses against a live node.
+pub mod provision;
 mod ssh;
 mod talos;
 // Public so the `maintenance_probe` example binary can drive the insecure
@@ -104,7 +108,7 @@ pub fn run() {
             talos_maintenance::talos_maintenance_probe,
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,
-            talos_maintenance::talos_generate_machine_secrets,
+            provision::talos_generate_full_node_config,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

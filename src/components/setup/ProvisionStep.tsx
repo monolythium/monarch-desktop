@@ -11,28 +11,31 @@
 //      doesn't serve StorageService pre-config;
 //   3. lets the operator pick a node mode (only `full` is provisionable in v1;
 //      operator/signing needs an enrollment bundle the app can't produce yet);
-//   4. previews the EXACT machine-config YAML to be applied
-//      (`buildFullNodeConfig`);
+//   4. generates the EXACT provisioning bundle Rust-side once per (host, disk)
+//      (`talosGenerateFullNodeConfig`: machine config with the full cluster
+//      PKI + the node's talosconfig) and previews the machine-config YAML —
+//      the SAME bundle backs preview, dry-run and apply;
 //   5. gates a destructive apply behind a clean dry-run AND a named-disk
 //      confirmation checkbox;
-//   6. applies + reboots, then polls the RPC endpoint (`probeNodeEndpoint`)
-//      through the reboot gap until the node is live and serving chain id.
+//   6. applies + reboots (the committing apply also persists + registers the
+//      talosconfig — the node's only management credential), then polls the
+//      RPC endpoint (`probeNodeEndpoint`) through the reboot gap until the
+//      node is live and serving chain id.
 //
 // Nothing is faked: the dry-run and apply go to the real Talos maintenance API
 // via the Rust commands; bring-up is confirmed only by a real eth_chainId.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  buildFullNodeConfig,
   probeNodeEndpoint,
   setStoredRpcEndpoint,
-  talosGenerateMachineSecrets,
+  talosGenerateFullNodeConfig,
   talosMaintenanceApply,
   talosMaintenanceDisks,
   validateDevice,
+  type FullNodeConfig,
   type MaintenanceDisk,
   type MaintenanceProbe,
-  type TalosMachineSecrets,
 } from "../../sdk";
 import { StepShell } from "./StepShell";
 
@@ -53,6 +56,19 @@ type DryRunState =
   | { kind: "running" }
   | { kind: "ok"; output: string }
   | { kind: "err"; message: string };
+
+// Rust-side provisioning-bundle generation lifecycle, keyed by `host|disk` so
+// a stale bundle (different disk, different node) can never be applied.
+type ConfigState =
+  | { kind: "idle" }
+  | { kind: "generating"; key: string }
+  | { kind: "ready"; key: string; config: FullNodeConfig }
+  | { kind: "err"; key: string; message: string };
+
+// Debounce before asking Rust to mint a bundle: manual disk entry types
+// through several transient values, and each generation mints a full PKI
+// (RSA-4096 included — seconds of CPU).
+const GENERATE_DEBOUNCE_MS = 500;
 
 // Bring-up poll backoff: start at 3s, grow gently, cap at 15s; give up after
 // ~5 minutes total (the reboot + first-boot genesis resolution is variable).
@@ -101,24 +117,30 @@ export function ProvisionStep({
   const [liveChainId, setLiveChainId] = useState<number | null>(null);
   const [pollAttempts, setPollAttempts] = useState(0);
   const [pollElapsedMs, setPollElapsedMs] = useState(0);
-  // The node's Talos machine identity (issuing CA + token), generated once per
-  // provision session. Talos rejects a machine config without an issuing CA, so
-  // the config can't be built until this is ready.
-  const [machineSecrets, setMachineSecrets] = useState<TalosMachineSecrets | null>(null);
-  const [secretsError, setSecretsError] = useState<string | null>(null);
+  // The full provisioning bundle (machine config + talosconfig), minted
+  // Rust-side once per (host, disk). The SAME bundle backs preview, dry-run
+  // and apply — never regenerate between a green dry-run and the apply.
+  const [configState, setConfigState] = useState<ConfigState>({ kind: "idle" });
+  // Where the committing apply persisted the node's talosconfig (or why it
+  // couldn't) — the node's only management credential.
+  const [talosconfigPath, setTalosconfigPath] = useState<string | null>(null);
+  const [talosconfigSaveError, setTalosconfigSaveError] = useState<string | null>(null);
   const cancelPoll = useRef(false);
+  const configStateRef = useRef<ConfigState>(configState);
+  configStateRef.current = configState;
 
   // The applied config always targets a FULL node (operator mode is deferred).
   // We still surface the operator option so the choice is honest, but the YAML
   // is full either way.
   const effectiveDisk = diskState.kind === "manual" ? manualDevice : device;
-  const configYaml = !machineSecrets
-    ? secretsError
-      ? `# could not generate this node's Talos machine identity: ${secretsError}`
-      : "# generating this node's Talos machine identity…"
-    : effectiveDisk
-      ? safeBuild(effectiveDisk, machineSecrets)
-      : "# choose an install disk to preview the machine config";
+  const configYaml =
+    configState.kind === "ready"
+      ? configState.config.configYaml
+      : configState.kind === "err"
+        ? `# could not generate this node's machine config: ${configState.message}`
+        : configState.kind === "generating"
+          ? "# generating this node's machine config + PKI (a few seconds)…"
+          : "# choose an install disk to preview the machine config";
 
   // Enumerate disks on mount over the insecure maintenance channel.
   useEffect(() => {
@@ -151,25 +173,39 @@ export function ProvisionStep({
     };
   }, [host]);
 
-  // Mint the node's Talos machine identity (issuing CA + token) once. Talos
-  // rejects a machine config without an issuing CA, so this gates the build /
-  // dry-run / apply. Re-generated only if the host changes (a different node).
+  // Mint the provisioning bundle Rust-side once per (host, disk): the machine
+  // config with the node's full PKI plus its talosconfig. Debounced (manual
+  // disk entry types through transient values) and keyed so an already-ready
+  // bundle for the same target is never regenerated — the YAML shown, the
+  // YAML dry-run and the YAML applied must be the same bytes.
   useEffect(() => {
+    const disk = effectiveDisk.trim();
+    if (!disk) {
+      setConfigState({ kind: "idle" });
+      return;
+    }
+    const key = `${host}|${disk}`;
+    const prev = configStateRef.current;
+    if (prev.kind === "ready" && prev.key === key) return;
+    setConfigState({ kind: "generating", key });
     let cancelled = false;
-    setMachineSecrets(null);
-    setSecretsError(null);
-    void (async () => {
-      try {
-        const secrets = await talosGenerateMachineSecrets();
-        if (!cancelled) setMachineSecrets(secrets);
-      } catch (err) {
-        if (!cancelled) setSecretsError((err as Error)?.message ?? String(err));
-      }
-    })();
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const config = await talosGenerateFullNodeConfig(host, disk);
+          if (!cancelled) setConfigState({ kind: "ready", key, config });
+        } catch (err) {
+          if (!cancelled) {
+            setConfigState({ kind: "err", key, message: (err as Error)?.message ?? String(err) });
+          }
+        }
+      })();
+    }, GENERATE_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [host]);
+  }, [host, effectiveDisk]);
 
   // Validate the chosen device. In manual mode an unknown device requires the
   // explicit override ack; an enumerated device is validated against the list.
@@ -183,22 +219,25 @@ export function ProvisionStep({
         : { ok: false as const, reason: "Enter the install device." }
       : validateDevice(device, enumerated);
 
+  const configReady =
+    configState.kind === "ready" && configState.key === `${host}|${effectiveDisk.trim()}`;
   const canDryRun =
     phase === "idle" &&
     effectiveDisk.length > 0 &&
     deviceValidation.ok &&
-    machineSecrets !== null &&
+    configReady &&
     dryRun.kind !== "running";
   const canApply =
-    phase === "idle" && dryRun.kind === "ok" && confirmed && deviceValidation.ok;
+    phase === "idle" && dryRun.kind === "ok" && confirmed && deviceValidation.ok && configReady;
 
   const runDryRun = useCallback(async () => {
+    if (configState.kind !== "ready") return;
     setDryRun({ kind: "running" });
     setApplyError(null);
     try {
       const result = await talosMaintenanceApply({
         host,
-        configYaml,
+        configYaml: configState.config.configYaml,
         dryRun: true,
         mode: "try",
       });
@@ -206,14 +245,16 @@ export function ProvisionStep({
     } catch (err) {
       setDryRun({ kind: "err", message: (err as Error)?.message ?? String(err) });
     }
-  }, [host, configYaml]);
+  }, [host, configState]);
 
-  // A config change after a green dry-run invalidates it.
+  // Any change to the previewed YAML (disk switch, bundle regeneration) after
+  // a green dry-run invalidates it — what gets applied must be what was
+  // dry-run.
   useEffect(() => {
     setDryRun((prev) => (prev.kind === "ok" ? { kind: "none" } : prev));
     setConfirmed(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDisk]);
+  }, [configYaml]);
 
   // Bring-up poller: tolerate the reboot gap, poll RPC on backoff until the
   // node answers eth_chainId, then persist + hand off.
@@ -253,16 +294,22 @@ export function ProvisionStep({
   }, [host, onProvisioned]);
 
   const runApply = useCallback(async () => {
+    if (configState.kind !== "ready") return;
     setApplyError(null);
     setPhase("applying");
     try {
       const result = await talosMaintenanceApply({
         host,
-        configYaml,
+        configYaml: configState.config.configYaml,
         dryRun: false,
         mode: "reboot",
+        // The committing apply also persists + registers the node's
+        // talosconfig (its ONLY management credential — no SSH on Monarch OS).
+        talosconfigYaml: configState.config.talosconfigYaml,
       });
       setApplyOutput(result.output);
+      setTalosconfigPath(result.talosconfigPath ?? null);
+      setTalosconfigSaveError(result.talosconfigError ?? null);
       // The node now writes config, installs, and reboots — the :50000
       // maintenance API drops. That connection loss is EXPECTED, not an error;
       // move straight into the RPC bring-up poll.
@@ -273,7 +320,7 @@ export function ProvisionStep({
       setApplyError((err as Error)?.message ?? String(err));
       setPhase("idle");
     }
-  }, [host, configYaml, startBringUp]);
+  }, [host, configState, startBringUp]);
 
   // Cancel any in-flight poll on unmount.
   useEffect(() => {
@@ -546,6 +593,13 @@ export function ProvisionStep({
             chainId={liveChainId}
             host={host}
           />
+          <TalosconfigCard
+            path={talosconfigPath}
+            saveError={talosconfigSaveError}
+            talosconfigYaml={
+              configState.kind === "ready" ? configState.config.talosconfigYaml : null
+            }
+          />
           {phase === "timeout" ? (
             <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
               <button type="button" className="btn btn--primary btn--sm" onClick={recheck}>
@@ -564,22 +618,95 @@ export function ProvisionStep({
   );
 }
 
-function safeBuild(disk: string, machineSecrets: TalosMachineSecrets): string {
-  try {
-    return buildFullNodeConfig({ disk: normalizeDeviceForBuild(disk), mode: "full", machineSecrets });
-  } catch (err) {
-    return `# ${(err as Error)?.message ?? String(err)}`;
-  }
-}
-
-// The builder rejects whitespace/colons; trim and pass the device as-is
-// (already /dev/… from the picker or manual entry).
-function normalizeDeviceForBuild(disk: string): string {
-  return disk.trim();
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Post-apply talosconfig card: where the node's management credential was
+ * saved (the Rust side persisted + registered it), with copy affordances. On
+ * a save failure this is the operator's LAST chance to keep the credential —
+ * the copy button hands over the full talosconfig YAML.
+ */
+function TalosconfigCard({
+  path,
+  saveError,
+  talosconfigYaml,
+}: {
+  path: string | null;
+  saveError: string | null;
+  talosconfigYaml: string | null;
+}) {
+  const [copied, setCopied] = useState<"path" | "yaml" | null>(null);
+  const copy = useCallback((kind: "path" | "yaml", text: string) => {
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(kind);
+        setTimeout(() => setCopied((prev) => (prev === kind ? null : prev)), 2000);
+      })
+      .catch(() => {
+        // Clipboard refusal (focus/permissions) — leave the value visible.
+      });
+  }, []);
+
+  if (!path && !saveError) return null;
+
+  return (
+    <div className="card" style={{ marginTop: 12, padding: "14px 18px", display: "grid", gap: 10 }}>
+      {path ? (
+        <>
+          <div className="halo halo--ok" style={{ alignSelf: "flex-start" }}>
+            <span className="dot" /> talosconfig saved
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: 0, lineHeight: 1.55 }}>
+            This file is the only credential that can manage this node — Monarch OS has no SSH.
+            Monarch registered it for the Hardware / Install views and keeps it at:
+          </p>
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--fg-200)",
+              padding: "8px 10px",
+              background: "rgba(0,0,0,0.32)",
+              border: "1px solid var(--glass-stroke)",
+              borderRadius: "var(--r-sm)",
+              overflowX: "auto",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {path}
+          </div>
+        </>
+      ) : null}
+      {saveError ? (
+        <div
+          className="halo halo--err"
+          style={{ alignSelf: "stretch", whiteSpace: "normal", lineHeight: 1.5, alignItems: "flex-start" }}
+        >
+          <span className="dot" style={{ marginTop: 4, flex: "0 0 auto" }} />
+          <span>{saveError}</span>
+        </div>
+      ) : null}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {path ? (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => copy("path", path)}>
+            {copied === "path" ? "Copied" : "Copy path"}
+          </button>
+        ) : null}
+        {talosconfigYaml ? (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => copy("yaml", talosconfigYaml)}
+          >
+            {copied === "yaml" ? "Copied" : "Copy talosconfig"}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 // Reuse the Install.tsx three-phase badge/halo/text vocabulary so bring-up

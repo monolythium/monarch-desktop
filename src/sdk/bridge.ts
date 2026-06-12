@@ -330,10 +330,11 @@ export type TalosUpgradeInput = {
 //
 // A freshly flashed Monarch OS node boots Talos straight into maintenance
 // mode: the gRPC API on :50000 answers an unauthenticated handshake and does
-// NOT serve protocore RPC on :8545 yet. These three commands (backed by
-// `src-tauri/src/talos_maintenance.rs`) let the Setup wizard detect such a
-// node, enumerate its disks, and apply a machine config to install Monarch OS
-// — over an insecure channel, since the cluster PKI does not exist yet.
+// NOT serve protocore RPC on :8545 yet. These commands (backed by
+// `src-tauri/src/talos_maintenance.rs` + `src-tauri/src/provision.rs`) let the
+// Setup wizard detect such a node, enumerate its disks, generate its full
+// provisioning bundle, and apply the machine config to install Monarch OS —
+// over an insecure channel, since the cluster PKI does not exist yet.
 //
 // Field names below match the Rust `#[serde(rename_all = "camelCase")]`
 // shapes: `MaintenanceProbe` and `TalosDisk`. The apply command returns the
@@ -373,16 +374,28 @@ export type MaintenanceDisk = {
 export type MaintenanceApplyMode = "reboot" | "auto" | "no-reboot" | "staged" | "try";
 
 /**
- * A node's freshly minted Talos machine identity: the issuing CA (base64-PEM)
- * and a bootstrap token. Generated per node by the Rust side (the
- * `talosctl gen secrets` equivalent) and fed into `buildFullNodeConfig` so the
- * machine config carries the `machine.ca` Talos requires. NOT a protocore chain
- * key; never shared between nodes.
+ * The full provisioning bundle minted Rust-side for one (host, disk) pair:
+ * the 3-document machine config (machine identity + complete cluster PKI +
+ * protocore extension env) and the matching talosconfig (admin client cert
+ * signed by the node's machine CA). Every call mints fresh secrets — fetch
+ * once per (host, disk) and reuse the SAME bundle for preview, dry-run and
+ * apply. The talosconfig is the node's only management credential after
+ * provisioning (Monarch OS has no SSH).
  */
-export type TalosMachineSecrets = {
-  caCrt: string;
-  caKey: string;
-  token: string;
+export type FullNodeConfig = {
+  configYaml: string;
+  talosconfigYaml: string;
+};
+
+/**
+ * Result of a maintenance-mode apply. For a committing apply that carried a
+ * talosconfig, `talosconfigPath` is where the Rust side persisted it (also
+ * registered as the app's active Talos identity); `talosconfigError` reports a
+ * persist/register failure WITHOUT masking the successful apply.
+ */
+export type MaintenanceApplyResult = TalosTextResult & {
+  talosconfigPath: string | null;
+  talosconfigError: string | null;
 };
 
 export const EMPTY_TALOS_STATUS: TalosStatus = {
@@ -597,16 +610,20 @@ export async function talosMaintenanceDisks(host: string): Promise<MaintenanceDi
 }
 
 /**
- * Generate a fresh Talos machine identity (issuing CA + bootstrap token) for a
- * node about to be provisioned. Pure CPU work in Rust; each call is unique.
- * Feed the result into `buildFullNodeConfig` — Talos rejects a machine config
- * without an issuing CA.
+ * Generate the full provisioning bundle (machine config + talosconfig) for one
+ * node. Rust-side native crypto: machine CA, the complete Kubernetes cluster
+ * PKI (incl. an RSA-4096 service-account key — expect a few seconds), and an
+ * admin client cert. Each call mints a unique identity; call once per
+ * (host, disk) and reuse the result for preview + dry-run + apply.
  */
-export async function talosGenerateMachineSecrets(): Promise<TalosMachineSecrets> {
+export async function talosGenerateFullNodeConfig(
+  host: string,
+  disk: string,
+): Promise<FullNodeConfig> {
   if (!inTauri()) {
-    throw new Error("talos_generate_machine_secrets unavailable — running outside Tauri");
+    throw new Error("talos_generate_full_node_config unavailable — running outside Tauri");
   }
-  return await invoke<TalosMachineSecrets>("talos_generate_machine_secrets");
+  return await invoke<FullNodeConfig>("talos_generate_full_node_config", { host, disk });
 }
 
 /**
@@ -615,22 +632,29 @@ export async function talosGenerateMachineSecrets(): Promise<TalosMachineSecrets
  * `ApplyConfiguration` mode — "try" for the dry-run pass, "reboot" for the
  * committing install. Rejects with the node's own message on a rejected
  * config; surface it verbatim.
+ *
+ * For the committing apply, pass `talosconfigYaml` (from the same
+ * `talosGenerateFullNodeConfig` bundle as `configYaml`): on success the Rust
+ * side persists it to the app data dir and registers it as the active Talos
+ * identity, returning the saved path in `talosconfigPath`.
  */
 export async function talosMaintenanceApply(args: {
   host: string;
   configYaml: string;
   dryRun: boolean;
   mode: MaintenanceApplyMode;
-}): Promise<TalosTextResult> {
+  talosconfigYaml?: string;
+}): Promise<MaintenanceApplyResult> {
   if (!inTauri()) {
     throw new Error("talos_maintenance_apply unavailable — running outside Tauri");
   }
   recordE2eCommand(`talos_maintenance_apply:${args.dryRun ? "dry-run" : "commit"}`);
-  return await invoke<TalosTextResult>("talos_maintenance_apply", {
+  return await invoke<MaintenanceApplyResult>("talos_maintenance_apply", {
     host: args.host,
     configYaml: args.configYaml,
     dryRun: args.dryRun,
     mode: args.mode,
+    talosconfigYaml: args.talosconfigYaml ?? null,
   });
 }
 
