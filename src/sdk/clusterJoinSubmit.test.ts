@@ -114,7 +114,7 @@ describe("CJ-1 submit helpers", () => {
     };
   });
 
-  it("submits requestClusterJoin as a private native tx after native preview", async () => {
+  it("submits requestClusterJoin as a plaintext native tx after native preview", async () => {
     const res = await submitRequestClusterJoin({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -133,9 +133,10 @@ describe("CJ-1 submit helpers", () => {
     }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(true);
+    // Default is plaintext; a passed seal source is ignored unless private:true.
+    expect(call.private).toBe(false);
     expect(call.clusterId).toBe(7);
-    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
+    expect(call.clusterSealKeysSource).toBeUndefined();
     expect(call.class).toBe(1);
     expect(call.tx.gasLimit).toBe(DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT);
     expect(call.tx.maxPriorityFeePerGas).toBe(800n);
@@ -178,9 +179,9 @@ describe("CJ-1 submit helpers", () => {
     }]);
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(true);
+    expect(call.private).toBe(false);
     expect(call.clusterId).toBe(7);
-    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
+    expect(call.clusterSealKeysSource).toBeUndefined();
     expect(call.class).toBe(1);
     expect(call.tx.value).toBe(0n);
     expect(call.tx.input.startsWith(VOTE_CLUSTER_ADMIT_SELECTOR)).toBe(true);

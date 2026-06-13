@@ -193,12 +193,12 @@ describe("buildRegisterTxFields — SDK sane fee defaults", () => {
   });
 });
 
-describe("submitRegister — defaults to sealed private submission", () => {
+describe("submitRegister — defaults to plaintext submission", () => {
   beforeEach(() => {
     submitWithPrivacy.mockClear();
   });
 
-  it("submits via submitTransactionWithPrivacy with private:true", async () => {
+  it("submits plaintext (private:false, no seal roster) by default", async () => {
     const res = await submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -206,14 +206,15 @@ describe("submitRegister — defaults to sealed private submission", () => {
       capabilities: 0x0001,
       bondLythoshi: "500000000000",
       peerIdHex: "0x" + "cc".repeat(32),
-      clusterSealKeysSource,
     });
 
     expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(true);
+    // Registration is public; sealing buys no privacy and a new operator's
+    // sealed envelope cannot be decrypted by the cluster (-32047).
+    expect(call.private).toBe(false);
+    expect(call.clusterSealKeysSource).toBeUndefined();
     expect(call.clusterId).toBe(0);
-    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
     expect(call.class).toBe(1);
     // Sane fee defaults flow through to the actual submit.
     expect(call.tx.gasLimit).toBe(1_000_000n);
@@ -229,7 +230,7 @@ describe("submitRegister — defaults to sealed private submission", () => {
     expect(res.consensusPubkeyHex).toBe("0x" + "aa".repeat(1952));
   });
 
-  it("can use the plaintext path when privatePreview is explicitly false", async () => {
+  it("can opt into the sealed path when privatePreview is explicitly true", async () => {
     await submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -237,11 +238,12 @@ describe("submitRegister — defaults to sealed private submission", () => {
       capabilities: 0x0001,
       bondLythoshi: "1",
       peerIdHex: "0x" + "cc".repeat(32),
-      privatePreview: false,
+      privatePreview: true,
+      clusterSealKeysSource,
     });
     const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
-    expect(call.clusterSealKeysSource).toBeUndefined();
+    expect(call.private).toBe(true);
+    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
   });
 
   it("rejects malformed hex before submitting a transaction", async () => {

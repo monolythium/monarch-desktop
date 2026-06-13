@@ -433,7 +433,9 @@ export async function submitRequestClusterJoin(
     bondLythoshi: args.bondLythoshi,
     executionUnitLimit: args.executionUnitLimit,
   });
-  const privateSubmit = args.private !== false;
+  // Plaintext by default — CJ-1 admission is public, and a not-yet-member's
+  // sealed envelope cannot be decrypted by the cluster (-32047). Opt-in seal.
+  const privateSubmit = args.private === true;
   const clusterSealKeysSource = privateSubmit
     ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
     : undefined;
@@ -486,7 +488,9 @@ export async function submitVoteClusterAdmit(
     voterPubkeyHex: args.voterPubkeyHex,
     executionUnitLimit: args.executionUnitLimit,
   });
-  const privateSubmit = args.private !== false;
+  // Plaintext by default — CJ-1 admission is public, and a not-yet-member's
+  // sealed envelope cannot be decrypted by the cluster (-32047). Opt-in seal.
+  const privateSubmit = args.private === true;
   const clusterSealKeysSource = privateSubmit
     ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
     : undefined;
