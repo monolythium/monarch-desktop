@@ -48,6 +48,7 @@ import {
   type TalosServiceInfo,
   type TalosStatus,
 } from "../sdk";
+import { shortAddr, toMono1 } from "../sdk/address";
 
 const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
 
@@ -1033,6 +1034,11 @@ export function Wallets() {
       : null;
   const feeConfig = useOperatorFeeConfig(operatorAddress);
   const fundingAddress = operator.data?.address ?? self.address;
+  // The send-to-able form is bech32m mono1…; the raw 0x hex is EVM-format
+  // only and is rejected by send paths, so the receive address shown to
+  // humans must be the mono1 form (the hex is kept as a secondary detail).
+  const fundingMono1 = toMono1(fundingAddress);
+  const fundingHex = fundingAddress && fundingAddress.startsWith("0x") ? fundingAddress : null;
 
   return (
     <section className="view fade-in">
@@ -1055,32 +1061,41 @@ export function Wallets() {
             Set up your operator key →
           </button>
         </div>
-      ) : fundingAddress ? (
+      ) : fundingMono1 ? (
         <div className="card card--padded" style={{ display: "grid", gap: 6 }}>
           <div className="kv" style={{ gap: 12 }}>
             <span className="kv__k">Your funding address</span>
             <span className="mono" style={{ fontSize: 12, overflowWrap: "anywhere", textAlign: "right", minWidth: 0 }}>
-              {fundingAddress}
+              {fundingMono1}
               <button
                 type="button"
                 className="copy-btn"
                 style={{ marginLeft: 8 }}
-                onClick={() => void navigator.clipboard?.writeText(fundingAddress)}
+                onClick={() => void navigator.clipboard?.writeText(fundingMono1)}
                 aria-label="Copy funding address"
               >
                 CP
               </button>
             </span>
           </div>
+          {fundingHex ? (
+            <div className="kv" style={{ gap: 12 }}>
+              <span className="kv__k" style={{ color: "var(--fg-500)" }}>EVM-format</span>
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--fg-500)", overflowWrap: "anywhere", textAlign: "right", minWidth: 0 }}>
+                {fundingHex}
+              </span>
+            </div>
+          ) : null}
           <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-            Send LYTH here to fund the 5,000 LYTH registration <Term k="bond">bond</Term> and
-            transaction fees. The bond is paid from this address when you register.
+            Send LYTH to the <b>mono1…</b> address above to fund the 5,000 LYTH registration{" "}
+            <Term k="bond">bond</Term> and transaction fees — the chain rejects the raw 0x form. The
+            bond is paid from this address when you register.
           </span>
         </div>
       ) : null}
 
       <div className="grid-3">
-        <StatCard label="your account" value={shortHex(fundingAddress, 12, 10)} sub={self.registered === true ? "registered operator" : self.registered === false ? "not registered yet" : "chain address"} tone={fundingAddress ? "ok" : "warn"} />
+        <StatCard label="your account" value={shortAddr(fundingMono1, 12, 10)} sub={self.registered === true ? "registered operator" : self.registered === false ? "not registered yet" : "chain address"} tone={fundingMono1 ? "ok" : "warn"} />
         <StatCard label="bonded stake" value={operator.data?.bondedStake ?? "-"} sub="lythoshi from registry" tone="gold" />
         <StatCard
           label="fee config"

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatLyth } from "@monolythium/core-sdk";
 import { rpc } from "../../sdk";
+import { toMono1 } from "../../sdk/address";
 import { MIN_REGISTER_BOND_LYTH, MIN_REGISTER_BOND_LYTHOSHI } from "../../sdk/onboarding";
 import { CopyButton } from "./CopyButton";
 import { StepShell } from "./StepShell";
@@ -80,8 +81,8 @@ export function FundStep({
           <div style={{ marginBottom: 14 }}>
             <div className="cap" style={{ marginBottom: 6 }}>send LYTH to this address</div>
             <div className="setup__addr">
-              {address}
-              <CopyButton value={address} label="Copy funding address" />
+              {toMono1(address) ?? address}
+              <CopyButton value={toMono1(address) ?? address} label="Copy funding address" />
             </div>
           </div>
 
