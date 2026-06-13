@@ -11,8 +11,8 @@ import {
   delegationAddressHex,
   encodeRedelegateCalldata,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
-  RpcClient,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
@@ -98,7 +98,7 @@ export function buildRedelegateTxFields(args: {
 export async function submitRedelegate(args: RedelegateArgs): Promise<RedelegateResult> {
   assertRedelegateInput(args);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([

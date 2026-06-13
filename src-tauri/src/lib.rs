@@ -95,6 +95,7 @@ pub fn run() {
             talos::talos_protocore_readiness,
             talos::rpc_runtime_provenance,
             talos::rpc_call_json,
+            talos::rpc_proxy,
             talos::talos_host_telemetry,
             talos::talos_upgrade,
             talos::talos_bootstrap,

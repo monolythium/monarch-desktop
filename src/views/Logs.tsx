@@ -133,6 +133,25 @@ export function Logs() {
       };
     if (indexer.data === null)
       return { cls: "halo halo--warn", text: "indexer · disabled" };
+    // A disabled indexer still returns a body ({enabled:false,
+    // status:"disabled", disabledReason}) — the narrow SDK type omits these
+    // runtime fields, so read them via a cast. Without this guard a disabled
+    // indexer would be painted green "caught up".
+    const runtime = indexer.data as {
+      enabled?: boolean;
+      status?: string;
+      disabledReason?: string;
+    };
+    if (runtime.enabled === false || runtime.status === "disabled") {
+      // disabledReason is a snake_case machine code (e.g. "indexer_disabled");
+      // the "indexer ·" prefix already names the subsystem, so show a clean
+      // "disabled" unless the node gives a more specific reason.
+      const reason =
+        runtime.disabledReason && runtime.disabledReason !== "indexer_disabled"
+          ? runtime.disabledReason.replace(/_/g, " ")
+          : "disabled";
+      return { cls: "halo halo--warn", text: `indexer · ${reason}` };
+    }
     const { currentHeight, latestHeight } = indexer.data;
     const current = Number(currentHeight);
     if (latestHeight !== undefined) {

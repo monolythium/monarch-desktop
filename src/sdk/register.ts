@@ -12,7 +12,8 @@
 // their own ML-DSA-65 pubkey; the bond is paid out of the same
 // account.
 
-import { addressToTypedBech32, RpcClient } from "@monolythium/core-sdk";
+import { addressToTypedBech32 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   MempoolClass,
   pqm1MnemonicToMlDsa65Backend,
@@ -301,7 +302,7 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
     ? hexToBytes(args.tpmQuoteHex, "tpmQuote")
     : new Uint8Array(0);
 
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   // Typed `lyth_*` reads via the SDK RpcClient. `ethChainId`

@@ -43,6 +43,12 @@ import {
 } from "./clusterJoinOps";
 
 const RPC_METHOD_NOT_FOUND = -32601;
+// A node can also gate a method off at runtime (e.g. `lyth_chainStatus`
+// returns -32045 "method disabled" on the testnet fleet). For the UI this
+// is identical to "method not found": fall through to the compose-from-
+// primitives fallback / show the honest "not yet exposed" branch rather
+// than treating it as a hard error.
+const RPC_METHOD_DISABLED = -32045;
 
 export type RpcSlice<T> = {
   data: T | null;
@@ -54,12 +60,33 @@ export type RpcSlice<T> = {
 
 export type OperatorNetworkMetadataMap = Record<string, OperatorNetworkMetadataView | null>;
 
-function isMethodNotFound(err: unknown): boolean {
+export function isMethodNotFound(err: unknown): boolean {
   const e = err as { code?: number; message?: string } | null;
   if (!e) return false;
   if (e.code === RPC_METHOD_NOT_FOUND) return true;
   const msg = (e.message ?? "").toLowerCase();
-  return msg.includes("method not found") || msg.includes("not yet exposed");
+  // -32045 is overloaded in mono-core: RpcError::MethodDisabled AND a mempool
+  // spending-policy rejection. Only treat the code as "not exposed" when the
+  // message confirms it's the disabled-method case — never on the bare code,
+  // or a real, actionable policy rejection would be silently hidden.
+  if (e.code === RPC_METHOD_DISABLED && msg.includes("method disabled")) return true;
+  return (
+    msg.includes("method not found") ||
+    msg.includes("method disabled") ||
+    msg.includes("not yet exposed")
+  );
+}
+
+// The #53 ML-DSA-vs-BLS authority-key gap surfaces as a -32603 internal
+// error ("provider returned malformed BLS pubkey ... must be 48 bytes,
+// got 1952") when resolving a real operator's authority. The method works;
+// the chain just can't answer yet — so treat it as "authority not exposed
+// on this node yet" instead of a hard error that masks the real cause.
+export function isOperatorAuthorityUnavailable(err: unknown): boolean {
+  const e = err as { code?: number; message?: string } | null;
+  if (!e) return false;
+  const msg = (e.message ?? "").toLowerCase();
+  return e.code === -32603 && msg.includes("pubkey") && (msg.includes("malformed") || msg.includes("48 bytes"));
 }
 
 function isNotFound(err: unknown): boolean {
@@ -318,7 +345,7 @@ export function useOperatorAuthority(operatorId: string | null): RpcSlice<Operat
   return usePolledRpc(
     `lyth_resolveOperatorAuthority:${operatorId ?? ""}`,
     () => (operatorId ? rpc.lythResolveOperatorAuthority(operatorId) : Promise.reject(NO_TARGET)),
-    (err) => isMethodNotFound(err) || isNotFound(err),
+    (err) => isMethodNotFound(err) || isNotFound(err) || isOperatorAuthorityUnavailable(err),
   );
 }
 

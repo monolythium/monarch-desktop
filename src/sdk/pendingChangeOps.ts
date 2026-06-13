@@ -10,8 +10,8 @@ import {
   addressToTypedBech32,
   nodeRegistryAddressHex,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
-  RpcClient,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
@@ -236,7 +236,7 @@ export async function submitPendingChange(
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId ?? 0n, "intentId");
   const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([

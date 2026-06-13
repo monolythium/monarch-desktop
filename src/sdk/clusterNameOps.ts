@@ -2,8 +2,8 @@ import {
   addressToTypedBech32,
   PRECOMPILE_ADDRESSES,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
-  RpcClient,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
@@ -187,7 +187,7 @@ export async function submitClusterNameRegistration(
   const normalized = normalizeClusterName(args.name);
   const clusterId = parseClusterNameId(args.clusterId);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
   const [chainId, nonce, fee] = await Promise.all([

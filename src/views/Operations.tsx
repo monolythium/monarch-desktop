@@ -1,14 +1,15 @@
 // Operations — the home of the canonical operator verbs. Cards are
 // sourced from `ops/catalog.ts` so the ⌘K palette and this page stay in
 // sync. Every card kicks off the shared Operations drawer state machine;
-// nothing executes inline. Categories follow designs/operations.jsx
-// (system / keys / cluster / treasury / emergency).
+// nothing executes inline. Verbs are grouped by category
+// (system / keys / cluster / treasury / emergency) — matching
+// designs/operations.jsx — so the page reads as distinct operation
+// groups, not one undifferentiated wall of cards.
 //
-// The TalosSettings panel is the production Monarch OS control path:
-// Talos API mTLS via the operator's talosconfig. SshSettings remains a
-// plain-Linux development bridge until all operation verbs are mapped
-// to Talos service/config calls. AiSettings configures Ask Monarch's
-// advisory bridge.
+// Node control + connection settings (Talos mTLS, operator key, SSH dev
+// bridge, Ask Monarch, RPC endpoint) live in their own clearly-separated
+// "Console & connection" block at the bottom so configuration never sits
+// mixed in with the action cards.
 
 import { useState } from "react";
 import { AiSettings } from "../components/AiSettings";
@@ -17,6 +18,7 @@ import { SshSettings } from "../components/SshSettings";
 import { TalosSettings } from "../components/TalosSettings";
 import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { OP_CATALOG, useOps } from "../ops";
+import type { OpCatalogEntry } from "../ops/catalog";
 import { FOUNDATION_OP_KINDS } from "../ops/errors";
 import { getStoredRpcEndpoint, rpcEndpoint, setStoredRpcEndpoint } from "../sdk";
 
@@ -89,6 +91,27 @@ function formatReceiptTime(value: string): string {
   });
 }
 
+/** One operation verb rendered as a card that opens the shared drawer. */
+function OpCard({ v, onRun }: { v: OpCatalogEntry; onRun: (v: OpCatalogEntry) => void }) {
+  const risk = v.risk ?? (v.destructive ? "high" : "low");
+  return (
+    <button type="button" className="ops-card card" onClick={() => onRun(v)}>
+      <span className="ops-card__icon">{v.icon ?? "OP"}</span>
+      <span className="ops-card__body">
+        <span className="ops-card__meta">
+          <b>{v.title}</b>
+          <span className={`risk risk--${risk}`}>{risk} risk</span>
+        </span>
+        <small>{v.sub}</small>
+        <span className="ops-card__auth">
+          {v.needsPasskey ? "keychain required" : "local confirmation"} · {v.fields.length} fields
+        </span>
+      </span>
+      <span className="ops-card__arrow" aria-hidden>→</span>
+    </button>
+  );
+}
+
 export function Operations() {
   const ops = useOps();
   const recentReceipts = ops.receipts.slice(0, 6);
@@ -99,6 +122,22 @@ export function Operations() {
     ? OP_CATALOG
     : OP_CATALOG.filter((entry) => !FOUNDATION_OP_KINDS.has(entry.kind));
   const hiddenCount = OP_CATALOG.length - visibleCatalog.length;
+
+  const runOp = (v: OpCatalogEntry) =>
+    ops.requestOp({
+      kind: v.kind,
+      title: v.title,
+      sub: v.sub,
+      intro: v.intro,
+      fields: v.fields,
+      effects: v.effects,
+      diff: v.diff,
+      icon: v.icon,
+      risk: v.risk,
+      destructive: v.destructive,
+      needsPasskey: v.needsPasskey,
+      confirmLabel: v.confirmLabel,
+    });
 
   return (
     <section className="view fade-in">
@@ -112,28 +151,21 @@ export function Operations() {
       <div className="ops-hero card card--padded">
         <div>
           <div className="cap">operator actions</div>
-          <h2>Every action shows a diff before anything signs.</h2>
-          <p>
-            Monarch routes sensitive changes through preview, keychain approval,
-            execution, and receipt capture. Unsupported actions fail closed until
-            their production path exists.
-          </p>
+          <h2>Every action shows a diff. Every destructive action needs the keychain.</h2>
         </div>
-        <span className="halo halo--gold"><span className="dot" /> preview first</span>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-          gap: 14,
-        }}
-      >
-        <OperatorKeySettings />
-        <TalosSettings />
-        <SshSettings />
-        <AiSettings />
-        <RpcEndpointSettings />
+      {hiddenCount > 0 ? (
+        <div className="halo halo--info" style={{ alignSelf: "flex-start", whiteSpace: "normal" }}>
+          <span className="dot" /> {hiddenCount} foundation-only operations are hidden — no
+          foundation signer is stored on this install (ordinary operators never need them).
+        </div>
+      ) : null}
+
+      <div className="ops-grid">
+        {visibleCatalog.map((v) => (
+          <OpCard key={v.kind} v={v} onRun={runOp} />
+        ))}
       </div>
 
       {recentReceipts.length > 0 ? (
@@ -166,53 +198,23 @@ export function Operations() {
         </section>
       ) : null}
 
-      {hiddenCount > 0 ? (
-        <div className="halo halo--info" style={{ alignSelf: "flex-start", whiteSpace: "normal" }}>
-          <span className="dot" /> {hiddenCount} foundation-only operations are hidden — no
-          foundation signer is stored on this install (ordinary operators never need them).
+      <section className="ops-settings">
+        <div className="ops-settings__head">
+          <div className="cap">console &amp; connection</div>
+          <h2>Node control &amp; settings</h2>
+          <p>
+            The Talos control plane, your operator key, the SSH development bridge, Ask Monarch, and
+            which node this console reads from. Configuration — kept separate from the action verbs above.
+          </p>
         </div>
-      ) : null}
-      <div className="ops-grid">
-        {visibleCatalog.map((v) => (
-          <button
-            type="button"
-            className="ops-card card"
-            key={v.kind}
-            onClick={() =>
-              ops.requestOp({
-                kind: v.kind,
-                title: v.title,
-                sub: v.sub,
-                intro: v.intro,
-                fields: v.fields,
-                effects: v.effects,
-                diff: v.diff,
-                icon: v.icon,
-                risk: v.risk,
-                destructive: v.destructive,
-                needsPasskey: v.needsPasskey,
-                confirmLabel: v.confirmLabel,
-              })
-            }
-          >
-            <span className="ops-card__icon">{v.icon ?? "OP"}</span>
-            <span className="ops-card__body">
-              <span className="ops-card__meta">
-                <span className="cap">{v.category}</span>
-                <span className={`risk risk--${v.risk ?? (v.destructive ? "high" : "low")}`}>
-                  {v.risk ?? (v.destructive ? "high" : "low")} risk
-                </span>
-              </span>
-              <b>{v.title}</b>
-              <small>{v.sub}</small>
-              <span className="ops-card__auth">
-                {v.needsPasskey ? "keychain required" : "local confirmation"} · {v.fields.length} fields
-              </span>
-            </span>
-            <span className="ops-card__arrow" aria-hidden>→</span>
-          </button>
-        ))}
-      </div>
+        <div className="ops-settings__grid">
+          <OperatorKeySettings />
+          <TalosSettings />
+          <SshSettings />
+          <AiSettings />
+          <RpcEndpointSettings />
+        </div>
+      </section>
     </section>
   );
 }

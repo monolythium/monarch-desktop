@@ -39,6 +39,9 @@ const TALOS_CA_FINGERPRINT_ACCOUNT: &str = "talos:ca-fingerprint";
 const TALOS_TIMEOUT: Duration = Duration::from_secs(12);
 const TALOS_BACKUP_TIMEOUT: Duration = Duration::from_secs(300);
 const PROTOCORE_RPC_TIMEOUT: Duration = Duration::from_secs(4);
+// The general in-app RPC read transport (rpc_proxy) carries every dashboard
+// read, so it gets a more forgiving budget than the 4s health bridges.
+const RPC_PROXY_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SERVICE_ID: &str = "ext-protocore";
 const PROTOCORE_DATA_DIR: &str = "/var/lib/protocore";
 const PROTOCORE_OPERATOR_SEAL_EK_PATH: &str =
@@ -1978,6 +1981,57 @@ pub async fn rpc_call_json(
         .build()
         .map_err(|err| format!("failed to build RPC client: {err}"))?;
     rpc_call_with_params(&client, &rpc_endpoint, method, params).await
+}
+
+/// General JSON-RPC read proxy for the in-app SDK transport.
+///
+/// The Tauri webview runs on a secure origin (`tauri://localhost`), so a
+/// direct `fetch()` from the SDK's `RpcClient` to a node's plain-http
+/// `:8545` is blocked as mixed content ("Load failed"). Routing the raw
+/// JSON-RPC POST through the native HTTP stack avoids that entirely — and
+/// since the node's RPC is read-only (writes require signed transactions
+/// over other paths), proxying the operator's own endpoint is safe.
+///
+/// Returns `(http_status, body)`: the HTTP status so the SDK can report the
+/// node's *real* status (a 404/502 from a wrong path or a downed reverse
+/// proxy must not masquerade as 200), and the body verbatim (JSON-RPC
+/// envelope intact, including any `error` member) so the SDK's own error
+/// handling stays authoritative.
+///
+/// Trust boundary: this command deliberately bypasses the webview
+/// CSP/mixed-content guard, so the endpoint it reaches is whatever the
+/// operator configured (`monarch.rpcEndpoint`). That is intended — operators
+/// legitimately point at arbitrary nodes — but it means any caller inside the
+/// webview can reach an arbitrary http(s) host. Scheme is validated; no host
+/// allowlist (would break legitimate node choice).
+#[tauri::command]
+pub async fn rpc_proxy(rpc_endpoint: String, body: String) -> Result<(u16, String), String> {
+    let parsed =
+        reqwest::Url::parse(&rpc_endpoint).map_err(|err| format!("invalid RPC endpoint: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("RPC endpoint must use http:// or https://".to_string());
+    }
+    // The general read transport carries every dashboard read (including
+    // heavier ranged queries to a possibly-distant node), so it gets a more
+    // forgiving timeout than the narrow 4s health bridges. reqwest's
+    // `.timeout` bounds the whole request, so no extra `tokio::timeout` wrap.
+    let client = reqwest::Client::builder()
+        .timeout(RPC_PROXY_TIMEOUT)
+        .build()
+        .map_err(|err| format!("failed to build RPC client: {err}"))?;
+    let response = client
+        .post(rpc_endpoint)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| format!("RPC transport failed: {err}"))?;
+    let status = response.status().as_u16();
+    let text = response
+        .text()
+        .await
+        .map_err(|err| format!("RPC returned an unreadable body: {err}"))?;
+    Ok((status, text))
 }
 
 async fn build_status(state: &TalosState) -> Result<TalosStatus, TalosError> {

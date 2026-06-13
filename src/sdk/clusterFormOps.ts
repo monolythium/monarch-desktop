@@ -24,9 +24,9 @@ import {
   NODE_REGISTRY_CLUSTER_CHARTER_SHARE_DENOM_BPS,
   NODE_REGISTRY_SELECTORS,
   nodeRegistryAddressHex,
-  RpcClient,
   type ClusterCharterArgs,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
@@ -496,7 +496,7 @@ export async function submitFormCluster(
   }
 
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const preview = await previewFormCluster(rpc, {
     from: senderAddress,

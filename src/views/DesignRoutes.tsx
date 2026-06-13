@@ -855,6 +855,14 @@ export function Audit() {
 export function Governance() {
   const chain = useChainStatus();
   const indexer = useIndexerStatus();
+  // A disabled indexer still returns a body ({enabled:false,status:"disabled"});
+  // the narrow SDK type omits those runtime fields, so read them via a cast and
+  // render "disabled" (warn) instead of a green "height 0".
+  const indexerRuntime = indexer.data as
+    | { enabled?: boolean; status?: string; disabledReason?: string }
+    | null;
+  const indexerDisabled =
+    !!indexerRuntime && (indexerRuntime.enabled === false || indexerRuntime.status === "disabled");
   const capabilities = useOperatorCapabilities();
   const surfaces = Object.entries(capabilities.data?.surfaces ?? {})
     .filter(([name]) => /gov|proposal|memo|signal/i.test(name))
@@ -871,9 +879,9 @@ export function Governance() {
         <StatCard label="chain" value={String(chain.data?.chainId ?? "-")} sub={`height ${formatCount(chain.data?.blockHeight)}`} tone={chain.error ? "warn" : "ok"} />
         <StatCard
           label="indexer"
-          value={indexer.data ? `height ${formatCount(indexer.data.currentHeight)}` : indexer.notExposed ? "not exposed" : "unknown"}
-          sub={indexer.data ? `schema ${indexer.data.schemaVersion}` : indexer.error ?? "lyth_indexerStatus"}
-          tone={indexer.notExposed ? "warn" : indexer.data ? "ok" : "info"}
+          value={indexerDisabled ? "disabled" : indexer.data ? `height ${formatCount(indexer.data.currentHeight)}` : indexer.notExposed ? "not exposed" : "unknown"}
+          sub={indexerDisabled ? (indexerRuntime?.disabledReason && indexerRuntime.disabledReason !== "indexer_disabled" ? indexerRuntime.disabledReason.replace(/_/g, " ") : "indexer disabled") : indexer.data ? `schema ${indexer.data.schemaVersion}` : indexer.error ?? "lyth_indexerStatus"}
+          tone={indexerDisabled || indexer.notExposed ? "warn" : indexer.data ? "ok" : "info"}
         />
         <StatCard label="capabilities" value={capabilities.notExposed ? "not exposed" : String(Object.keys(capabilities.data?.surfaces ?? {}).length)} sub="operator capability registry" tone={capabilities.notExposed ? "warn" : "ok"} />
         <StatCard label="binding txs" value="blocked" sub="no governance submit helper" tone="warn" />

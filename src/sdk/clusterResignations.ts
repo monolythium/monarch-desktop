@@ -1,4 +1,5 @@
-import { RpcClient, type ClusterResignationRow } from "@monolythium/core-sdk";
+import { type ClusterResignationRow } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   ML_DSA_65_PUBLIC_KEY_LEN,
   ML_DSA_65_SIGNATURE_LEN,
@@ -208,7 +209,7 @@ export function encodeClusterResignationTx(args: {
 export async function submitClusterResignation(
   args: SubmitClusterResignationArgs,
 ): Promise<ClusterResignationSubmitResult> {
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const nonce = parseUint64(args.nonce, "nonce");
   const flags = args.expedite ? FLAG_EXPEDITE_REQUESTED : 0;
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);

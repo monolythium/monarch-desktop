@@ -1,10 +1,10 @@
 import {
   normalizeAddressHex,
-  RpcClient,
   type ClusterStatusResponse,
   type OperatorInfoResponse,
   type RuntimeProvenanceResponse,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import type { OperationReceipt } from "../ops/receipts";
 import { createOperationReceipt, readOperationReceipts } from "../ops/receipts";
 import {
@@ -141,7 +141,7 @@ async function readRuntimeProvenance(endpoint: string): Promise<RuntimeProvenanc
   try {
     const client = trimEndpoint(endpoint) === trimEndpoint(rpcEndpoint)
       ? rpc
-      : new RpcClient(endpoint);
+      : makeRpcClient(endpoint);
     return await client.lythRuntimeProvenance();
   } catch {
     return null;
@@ -458,7 +458,7 @@ function trimEndpoint(value: string): string {
 function rpcForEndpoint(endpoint: string): typeof rpc {
   return trimEndpoint(endpoint) === trimEndpoint(rpcEndpoint)
     ? rpc
-    : new RpcClient(endpoint) as unknown as typeof rpc;
+    : makeRpcClient(endpoint) as unknown as typeof rpc;
 }
 
 function normalizeChatAddress(address: string): string | null {

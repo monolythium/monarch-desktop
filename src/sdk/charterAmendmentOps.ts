@@ -38,12 +38,12 @@ import {
   decodePendingCharter,
   encodeUpdateCharterCalldata,
   nodeRegistryAddressHex,
-  RpcClient,
   updateCharterMessageHex,
   NODE_REGISTRY_CHARTER_COOLDOWN_EPOCHS,
   NODE_REGISTRY_UPDATE_CHARTER_THRESHOLD,
   type PendingCharterView,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   pqm1MnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
@@ -338,7 +338,7 @@ export async function submitUpdateCharter(
     );
   }
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([
     rpc.ethChainId(),

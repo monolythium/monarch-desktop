@@ -4,7 +4,7 @@
 // (or `TAURI_RPC_ENDPOINT`) at build time, or via the local app setting
 // at runtime. Default is the local node RPC on 8545.
 
-import { RpcClient } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 
 export const FALLBACK_ENDPOINT = "http://127.0.0.1:8545";
 export const RPC_ENDPOINT_STORAGE_KEY = "monarch.rpcEndpoint";
@@ -51,5 +51,5 @@ function resolveEndpoint(): string {
   return getStoredRpcEndpoint() ?? envEndpoint() ?? FALLBACK_ENDPOINT;
 }
 
-export const rpc = new RpcClient(resolveEndpoint());
+export const rpc = makeRpcClient(resolveEndpoint());
 export const rpcEndpoint = rpc.endpoint;

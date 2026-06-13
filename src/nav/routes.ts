@@ -124,7 +124,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Node service",
     icon: "SV",
     keywords: ["services", "roles", "router", "prover", "oracle", "bridge"],
-    preview: true,
   },
   {
     path: "/metrics",
@@ -162,7 +161,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Chain",
     icon: "AL",
     keywords: ["alerts", "rules", "notifications", "incident"],
-    preview: true,
   },
   {
     path: "/setup",

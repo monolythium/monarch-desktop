@@ -18,9 +18,9 @@ import {
   encodeVoteClusterAdmitCalldata as encodeSdkVoteClusterAdmitCalldata,
   NODE_REGISTRY_SELECTORS,
   REGISTRY_DEFAULT_EXECUTION_UNIT_LIMIT,
-  RpcClient,
   type ClusterJoinRequestView as SdkClusterJoinRequestView,
 } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import {
   MempoolClass,
   pqm1MnemonicToMlDsa65Backend,
@@ -406,7 +406,7 @@ export function buildVoteClusterAdmitTxFields(args: {
 export async function submitRequestClusterJoin(
   args: SubmitRequestClusterJoinArgs,
 ): Promise<ClusterJoinSubmitResult> {
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = deriveClusterJoinOperatorIdHex(args.operatorPubkeyHex);
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
@@ -459,7 +459,7 @@ export async function submitRequestClusterJoin(
 export async function submitVoteClusterAdmit(
   args: SubmitVoteClusterAdmitArgs,
 ): Promise<ClusterJoinSubmitResult> {
-  const rpc = new RpcClient(args.rpcUrl);
+  const rpc = makeRpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = bytesToHex(hexToBytes(args.operatorIdHex, "operatorId", 32));
   const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);

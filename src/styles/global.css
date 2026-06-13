@@ -2027,8 +2027,14 @@ kbd {
 
 .ops-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .ops-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ops-receipts {
@@ -2193,6 +2199,38 @@ kbd {
 .risk--high {
   color: var(--err);
   border-color: oklch(0.70 0.22 22 / 0.28);
+}
+
+/* Console + connection settings — visually divided from the action
+   verbs so configuration never sits mixed in with operations. */
+.ops-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+  padding-top: 24px;
+  border-top: 1px solid var(--glass-stroke);
+}
+
+.ops-settings__head h2 {
+  margin: 6px 0 6px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--fg-100);
+}
+
+.ops-settings__head p {
+  margin: 0;
+  max-width: 720px;
+  color: var(--fg-300);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.ops-settings__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
 }
 
 /* ============ LOG STREAM ============ */

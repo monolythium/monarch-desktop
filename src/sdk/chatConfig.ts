@@ -1,4 +1,5 @@
-import { RpcClient, type OperatorNetworkMetadataView } from "@monolythium/core-sdk";
+import { type OperatorNetworkMetadataView } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 import { rpc, rpcEndpoint } from "./client";
 
 export const CHAT_BOOTSTRAP_PEERS_STORAGE_KEY = "monarch.chatBootstrapPeers";
@@ -181,7 +182,7 @@ export async function resolveChatBootstrapPeersForCluster(
 function clientForEndpoint(endpoint?: string): ChatPeerDiscoveryClient {
   return sameEndpoint(endpoint ?? rpcEndpoint, rpcEndpoint)
     ? rpc
-    : new RpcClient(endpoint ?? rpcEndpoint);
+    : makeRpcClient(endpoint ?? rpcEndpoint);
 }
 
 function sameEndpoint(a: string, b: string): boolean {

@@ -14,6 +14,7 @@
 // malformed input so the field can show why.
 
 import { RpcClient } from "@monolythium/core-sdk";
+import { makeRpcClient } from "./rpcTransport";
 
 /** Default operator RPC port — matches the chain's `8545`. */
 export const DEFAULT_RPC_PORT = 8545;
@@ -128,7 +129,7 @@ export async function probeNodeEndpoint(
 
   let probe: RpcClient;
   try {
-    probe = new RpcClient(endpoint);
+    probe = makeRpcClient(endpoint);
   } catch (err) {
     return { ...base, error: (err as Error)?.message ?? String(err) };
   }

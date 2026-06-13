@@ -455,7 +455,7 @@ export function Operator() {
         ) : (
           <div className="empty-state">
             {signing.notExposed
-              ? "Your node does not expose signing history for this operator yet — update protocore to enable this view."
+              ? "Signing history isn't available for this operator yet — the node couldn't resolve its authority index (it may still be catching up, or the operator's consensus key isn't published on this node)."
               : signing.error ?? "Signing activity is loading from the connected endpoint."}
           </div>
         )}
