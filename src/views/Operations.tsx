@@ -1,84 +1,17 @@
 // Operations — the home of the canonical operator verbs. Cards are
 // sourced from `ops/catalog.ts` so the ⌘K palette and this page stay in
 // sync. Every card kicks off the shared Operations drawer state machine;
-// nothing executes inline. Verbs are grouped by category
-// (system / keys / cluster / treasury / emergency) — matching
-// designs/operations.jsx — so the page reads as distinct operation
-// groups, not one undifferentiated wall of cards.
+// nothing executes inline.
 //
 // Node control + connection settings (Talos mTLS, operator key, SSH dev
-// bridge, Ask Monarch, RPC endpoint) live in their own clearly-separated
-// "Console & connection" block at the bottom so configuration never sits
-// mixed in with the action cards.
+// bridge, Ask Monarch, RPC endpoint) and software updates live on the
+// dedicated Settings page (`/settings`), not here — Operations is purely
+// the action verbs + the local receipt trail.
 
-import { useState } from "react";
-import { AiSettings } from "../components/AiSettings";
-import { OperatorKeySettings } from "../components/OperatorKeySettings";
-import { SshSettings } from "../components/SshSettings";
-import { TalosSettings } from "../components/TalosSettings";
 import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { OP_CATALOG, useOps } from "../ops";
 import type { OpCatalogEntry } from "../ops/catalog";
 import { FOUNDATION_OP_KINDS } from "../ops/errors";
-import { getStoredRpcEndpoint, rpcEndpoint, setStoredRpcEndpoint } from "../sdk";
-
-/** RPC endpoint override — the one place to point Monarch at a node. */
-function RpcEndpointSettings() {
-  const [draft, setDraft] = useState(() => getStoredRpcEndpoint() ?? "");
-  const [note, setNote] = useState<string | null>(null);
-
-  const apply = () => {
-    try {
-      setStoredRpcEndpoint(draft.trim() || null);
-      setNote("Saved — reloading to reconnect…");
-      window.setTimeout(() => window.location.reload(), 400);
-    } catch (err) {
-      setNote((err as Error)?.message ?? String(err));
-    }
-  };
-
-  return (
-    <div className="card card--padded">
-      <div className="card__head">
-        <div>
-          <h3>RPC endpoint</h3>
-          <div className="sub">which node Monarch reads from and submits to</div>
-        </div>
-        <span className="halo halo--info"><span className="dot" /> active: {rpcEndpoint}</span>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-        <input
-          type="url"
-          className="mono"
-          placeholder="http://127.0.0.1:8545 (leave empty for the default)"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          spellCheck={false}
-          autoComplete="off"
-          style={{
-            padding: "10px 12px",
-            background: "rgba(255, 255, 255, 0.03)",
-            border: "1px solid var(--glass-stroke)",
-            borderRadius: 8,
-            color: "var(--fg-100)",
-            fontSize: 13,
-            outline: "none",
-          }}
-        />
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button type="button" className="btn btn--sm" onClick={apply}>
-            Save & reconnect
-          </button>
-          {note ? <span style={{ fontSize: 11, color: "var(--fg-400)" }}>{note}</span> : null}
-        </div>
-        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          http:// or https:// only. Saving reloads the console so every view reconnects to the
-          new endpoint.
-        </span>
-      </div>
-    </div>
-  );
-}
 
 function formatReceiptTime(value: string): string {
   const date = new Date(value);
@@ -197,24 +130,6 @@ export function Operations() {
           </div>
         </section>
       ) : null}
-
-      <section className="ops-settings">
-        <div className="ops-settings__head">
-          <div className="cap">console &amp; connection</div>
-          <h2>Node control &amp; settings</h2>
-          <p>
-            The Talos control plane, your operator key, the SSH development bridge, Ask Monarch, and
-            which node this console reads from. Configuration — kept separate from the action verbs above.
-          </p>
-        </div>
-        <div className="ops-settings__grid">
-          <OperatorKeySettings />
-          <TalosSettings />
-          <SshSettings />
-          <AiSettings />
-          <RpcEndpointSettings />
-        </div>
-      </section>
     </section>
   );
 }

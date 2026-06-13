@@ -19,6 +19,7 @@ import {
   sshStatus,
   talosStatus,
 } from "./bridge";
+import { toMono1 } from "./address";
 import { extractChatBootstrapPeersFromOperatorMetadata } from "./chatConfig";
 import { encodeGetOperatorSealKeyCalldata } from "./operatorSealKeyOps";
 import { deriveOperatorConsensusPubkeyHex } from "./register";
@@ -238,7 +239,7 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
       title: "Fund the 5,000 LYTH bond",
       detail: !keyDone
         ? "Needs your operator key first - the funding address is derived from it."
-        : `Send LYTH to ${compactAddress(p.walletAddress)} · ${balanceLabel}.`,
+        : `Send LYTH to ${compactAddress(toMono1(p.walletAddress))} · ${balanceLabel}.`,
       status: fundBond,
       fixRoute: "/wallets",
     },

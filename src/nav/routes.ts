@@ -190,6 +190,15 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     keywords: ["install", "wizard", "setup", "onboard", "ssh"],
   },
   {
+    path: "/settings",
+    label: "Settings",
+    chord: ",",
+    hint: "g ,",
+    group: "Setup",
+    icon: "ST",
+    keywords: ["settings", "update", "check for updates", "rpc", "endpoint", "node", "connection", "preferences", "config", "key", "talos"],
+  },
+  {
     path: "/setup-operator",
     label: "Set up operator",
     chord: "u",

@@ -38,6 +38,7 @@ import { Metrics } from "./views/Metrics";
 import { Logs } from "./views/Logs";
 import { Welcome } from "./views/Welcome";
 import { Setup } from "./views/Setup";
+import { Settings } from "./views/Settings";
 import { quickConfiguredProbe } from "./sdk/onboarding";
 
 // Code-split the heavier, less-trafficked surfaces: the eleven design
@@ -300,6 +301,7 @@ function ShellInner() {
                     }
                   />
                   <Route path="/setup" element={<Setup />} />
+                  <Route path="/settings" element={<Settings />} />
                   <Route path="/welcome" element={<Welcome />} />
                   <Route path="/install" element={<Install />} />
                   <Route path="/marketplace" element={<Marketplace />} />

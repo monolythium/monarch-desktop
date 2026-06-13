@@ -91,7 +91,25 @@ export function TopBar({
         className={roundFlash ? "monarch-topbar__round lv-round-flash" : "monarch-topbar__round"}
         aria-live="polite"
       >
-        {reachable ? (
+        {!reachable ? (
+          <>
+            <span
+              className="dot"
+              style={{ background: "var(--err)", boxShadow: "0 0 6px var(--err)" }}
+            />
+            <span>node unreachable</span>
+          </>
+        ) : block !== null && block === 0 ? (
+          // Reachable but at genesis: the node is still catching up to the
+          // committee, so showing "round 0 · block 0" reads as broken. Say so.
+          <>
+            <span
+              className="dot"
+              style={{ background: "var(--warn)", boxShadow: "0 0 6px var(--warn)" }}
+            />
+            <span>node syncing…</span>
+          </>
+        ) : (
           <>
             <span className="dot" />
             <span>round</span>
@@ -99,14 +117,6 @@ export function TopBar({
             <span style={{ color: "var(--fg-500)" }}>·</span>
             <span>block</span>
             <b>{block?.toLocaleString() ?? "—"}</b>
-          </>
-        ) : (
-          <>
-            <span
-              className="dot"
-              style={{ background: "var(--err)", boxShadow: "0 0 6px var(--err)" }}
-            />
-            <span>node unreachable</span>
           </>
         )}
       </div>

@@ -458,8 +458,8 @@ export const DESIGN_SOURCE_AUDIT = [
     file: "install.jsx",
     domain: "setup",
     status: "partial",
-    desktopSurface: "/setup, /install and /welcome",
-    routes: ["/setup", "/install", "/welcome"],
+    desktopSurface: "/setup, /install, /welcome and /settings",
+    routes: ["/setup", "/install", "/welcome", "/settings"],
     evidence:
       "/setup is the first-run wizard the design's install/setup-operator steppers imply: node-connect first (live RPC probe), then create/import operator key, fund the bond, check config, sync, register & connect. /install keeps the Talos pairing checks, and /welcome retains the auto-detected 10-step operator checklist (now reachable as the secondary 'Setup status' view) gating LastViewRedirect.",
     decision: "Desktop pairs with and connects to an existing node; OS flashing/provisioning remains outside Desktop.",
