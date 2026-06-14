@@ -450,6 +450,32 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "operator-bootstrap",
+    category: "emergency",
+    icon: "BS",
+    risk: "low",
+    title: "Bootstrap node (etcd)",
+    sub: "Talos bootstrap · finish boot",
+    intro:
+      "One-time etcd bootstrap for a node stuck at \"booting\" on its console. A single-node Monarch OS controlplane needs its etcd bootstrapped once before it reports \"ready\" — most often after a wipe (which clears etcd). The chain (ext-protocore) serves RPC regardless, so this is non-destructive: it only finishes the machine's controlplane bring-up.",
+    technical:
+      "Calls the Talos Bootstrap RPC against the trusted node context (the in-app equivalent of `talosctl bootstrap`). Retries through a reboot until the secured API answers, then bootstraps etcd. Idempotent — a no-op if the node is already bootstrapped. Does not touch chain data.",
+    destructive: false,
+    needsPasskey: false,
+    confirmLabel: "Bootstrap node",
+    keywords: ["bootstrap", "etcd", "booting", "ready", "talos", "stuck", "controlplane"],
+    effects: [
+      "Submits the Talos etcd bootstrap to the connected node (idempotent).",
+      "Leaves chain data untouched — ext-protocore keeps serving RPC throughout.",
+      "The node should leave \"booting\" and report ready shortly after.",
+    ],
+    diff: [
+      { key: "etcd", label: "etcd", value: "bootstrapped (once)" },
+      { key: "chain", label: "Chain data", value: "untouched" },
+    ],
+    fields: [{ key: "transport", label: "Transport", value: "Talos Bootstrap RPC" }],
+  },
+  {
     kind: "cluster-form",
     category: "cluster",
     icon: "FC",

@@ -59,6 +59,9 @@ export function commandFor(op: OpRequest): string | null {
     // (`OpsContext.runReprovisionFlow`); never shell-fallback a destructive
     // partition wipe.
     case "operator-reprovision":
+    // Bootstrap is a dedicated Talos etcd-bootstrap path
+    // (`OpsContext.runBootstrapFlow`).
+    case "operator-bootstrap":
       return null;
     default: {
       // Exhaustiveness guard. If a new OpKind is added we want this to

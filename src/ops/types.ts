@@ -26,6 +26,7 @@ export const OP_KINDS = [
   "ota-apply",
   "ota-rollback",
   "operator-reprovision",
+  "operator-bootstrap",
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];

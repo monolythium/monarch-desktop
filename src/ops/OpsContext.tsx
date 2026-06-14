@@ -21,9 +21,11 @@ import {
   KEYCHAIN_ACCOUNTS,
   rpcEndpoint,
   sshExec,
+  talosBootstrap,
   talosExportProtocoreBackup,
   talosRollback,
   talosServiceAction,
+  talosStatus,
   talosUpgrade,
   talosWipeProtocore,
 } from "../sdk";
@@ -1171,13 +1173,32 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     async (req: OpRequest) => {
       try {
         const result = await talosWipeProtocore();
+        // The Reset wipes EPHEMERAL — which holds the single-node controlplane's
+        // etcd data — so after the reboot the machine sits at "booting" until
+        // etcd is re-bootstrapped, even though ext-protocore (the chain) serves
+        // independently. Follow the reset with an etcd bootstrap so the node
+        // returns to "ready", not just chain-serving. Best-effort: the wipe
+        // already succeeded; talos_bootstrap retries through the reboot and is
+        // idempotent (a no-op if already bootstrapped).
+        let bootstrapNote = "";
+        try {
+          const status = await talosStatus();
+          const host = result.nodeAddress || result.endpoint || status.nodeAddress;
+          if (host && status.configPath) {
+            const boot = await talosBootstrap(host, status.configPath);
+            bootstrapNote = ` etcd: ${boot}.`;
+          }
+        } catch {
+          bootstrapNote =
+            " (note: the node may need a one-time etcd bootstrap to leave \"booting\" — re-run once it is back, or use Bootstrap node).";
+        }
         settleOperation(
           req,
           {
             ok: true,
             message: summarize(
               result.output,
-              `${req.title} submitted via Talos Reset (EPHEMERAL). The node wipes its chain data and reboots; it re-resolves cold-start seeds and fast-syncs from a fresh DB.`,
+              `${req.title} submitted via Talos Reset (EPHEMERAL). The node wipes its chain data and reboots; it re-resolves cold-start seeds and fast-syncs from a fresh DB.${bootstrapNote}`,
             ),
           },
           {
@@ -1200,7 +1221,54 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runBootstrapFlow = useCallback(
+    async (req: OpRequest) => {
+      try {
+        const status = await talosStatus();
+        const host = status.nodeAddress || status.endpoint;
+        if (!host || !status.configPath) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "Connect to your Monarch OS node first (a trusted talosconfig is required to bootstrap it).",
+            },
+            { transport: "talos", action: "bootstrap" },
+          );
+          return;
+        }
+        const boot = await talosBootstrap(host, status.configPath);
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Talos etcd bootstrap: ${boot}. The node should leave "booting" and report ready shortly; ext-protocore keeps serving chain RPC throughout.`,
+          },
+          {
+            transport: "talos",
+            action: "bootstrap",
+            endpoint: status.endpoint ?? undefined,
+            nodeAddress: status.nodeAddress ?? undefined,
+          },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "talos", action: "bootstrap" });
+      }
+    },
+    [settleOperation],
+  );
+
   const runTalosFlow = useCallback(async (req: OpRequest) => {
+    if (req.kind === "operator-bootstrap") {
+      if (inTauri()) {
+        await runBootstrapFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "operator-restore") {
       if (inTauri()) {
         await runRestoreFlow(req);
@@ -1428,6 +1496,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runOperatorDisplayFlow,
     runOperatorSealKeyFlow,
     runPendingChangeFlow,
+    runBootstrapFlow,
     runRedelegateFlow,
     runRegisterFlow,
     runReprovisionFlow,
