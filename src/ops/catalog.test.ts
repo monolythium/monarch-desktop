@@ -46,12 +46,12 @@ describe("operation catalog", () => {
 
     expect(request).toMatchObject({
       title: "Request cluster join",
-      confirmLabel: "Sign join request",
+      confirmLabel: "Approve join request",
       category: "cluster",
     });
     expect(prose(request)).toContain("requestClusterJoin(uint32,bytes)");
     expect(request?.effects).toContain(
-      "Fails before signing if the operator's public LythiumSeal EK has not been published.",
+      "Checks that your public seal key is published before signing.",
     );
 
     expect(vote).toMatchObject({
@@ -59,7 +59,7 @@ describe("operation catalog", () => {
       confirmLabel: "Sign admit vote",
       category: "cluster",
     });
-    expect(prose(vote)).toContain("voteClusterAdmit(uint32,bytes32,bytes)");
+    expect(prose(vote)).toContain("pending admission request");
     expect(vote?.effects).toContain(
       "Fails before signing if the candidate request is missing, closed, or already admitted.",
     );
@@ -96,11 +96,11 @@ describe("operation catalog", () => {
 
     expect(display).toMatchObject({
       title: "Set operator name",
-      confirmLabel: "Sign display metadata tx",
+      confirmLabel: "Approve name update",
     });
-    expect(prose(display)).toContain("setOperatorDisplay(bytes32,string,string)");
+    expect(prose(display)).toContain("public name and short alias");
     expect(display?.effects).toContain(
-      "Builds setOperatorDisplay(peerId, moniker, alias) calldata against node-registry 0x1005.",
+      "Updates the public name and alias shown in Monoscan and Monarch Desktop.",
     );
   });
 
@@ -109,11 +109,11 @@ describe("operation catalog", () => {
 
     expect(sealKey).toMatchObject({
       title: "Publish seal key",
-      confirmLabel: "Sign seal key tx",
+      confirmLabel: "Approve seal key",
     });
-    expect(prose(sealKey)).toContain("publishOperatorSealKey(bytes32,bytes)");
+    expect(prose(sealKey)).toContain("private key never leaves the node");
     expect(sealKey?.effects).toContain(
-      "Builds publishOperatorSealKey(peerId, sealEk) calldata against node-registry 0x1005.",
+      "Makes your public seal key available for cluster admission and sealed-mempool duty.",
     );
   });
 

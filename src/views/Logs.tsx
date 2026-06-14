@@ -27,13 +27,13 @@ function streamHalo(status: StreamStatus): { cls: string; text: string; title: s
     case "local":
       return {
         cls: "halo halo--warn",
-        text: "stream · none",
+        text: "No log stream",
         title: "no log stream selected",
       };
     case "connecting":
       return {
         cls: "halo halo--info",
-        text: `stream · connecting ${status.target.id}`,
+        text: "Connecting to node",
         title:
           status.target.transport === "talos"
             ? "fetching ext-protocore logs through Talos API"
@@ -42,25 +42,25 @@ function streamHalo(status: StreamStatus): { cls: string; text: string; title: s
     case "talos-streaming":
       return {
         cls: "halo halo--ok",
-        text: "stream · Monarch OS · Talos",
+        text: "Live logs",
         title: `ext-protocore logs streaming through Talos API session ${status.sessionId}`,
       };
     case "streaming":
       return {
         cls: "halo halo--ok",
-        text: `stream · ${status.target.id} · live`,
+        text: "Live logs",
         title: `remote log session ${status.sessionId}`,
       };
     case "ended":
       return {
         cls: "halo halo--warn",
-        text: `stream · ${status.target.id} · closed`,
+        text: "Log stream closed",
         title: "journalctl exited or channel closed by remote",
       };
     case "error":
       return {
         cls: "halo halo--err",
-        text: `stream · ${status.target.id} · ${status.error.slice(0, 28)}`,
+        text: "Log stream error",
         title: status.error,
       };
   }
@@ -125,14 +125,14 @@ export function Logs() {
   // SDK types: currentHeight = bigint, latestHeight = bigint | undefined.
   const indexerHalo = (() => {
     if (indexer.loading)
-      return { cls: "halo halo--info", text: "indexer · loading" };
+      return { cls: "halo halo--info", text: "Search loading" };
     if (indexer.error)
       return {
         cls: "halo halo--err",
-        text: `indexer · ${indexer.error.slice(0, 32)}`,
+        text: "Search unavailable",
       };
     if (indexer.data === null)
-      return { cls: "halo halo--warn", text: "indexer · disabled" };
+      return { cls: "halo halo--warn", text: "Search history off" };
     // A disabled indexer still returns a body ({enabled:false,
     // status:"disabled", disabledReason}) — the narrow SDK type omits these
     // runtime fields, so read them via a cast. Without this guard a disabled
@@ -143,14 +143,7 @@ export function Logs() {
       disabledReason?: string;
     };
     if (runtime.enabled === false || runtime.status === "disabled") {
-      // disabledReason is a snake_case machine code (e.g. "indexer_disabled");
-      // the "indexer ·" prefix already names the subsystem, so show a clean
-      // "disabled" unless the node gives a more specific reason.
-      const reason =
-        runtime.disabledReason && runtime.disabledReason !== "indexer_disabled"
-          ? runtime.disabledReason.replace(/_/g, " ")
-          : "disabled";
-      return { cls: "halo halo--warn", text: `indexer · ${reason}` };
+      return { cls: "halo halo--warn", text: "Search history off" };
     }
     const { currentHeight, latestHeight } = indexer.data;
     const current = Number(currentHeight);
@@ -159,13 +152,13 @@ export function Logs() {
       if (current < latest - 5) {
         return {
           cls: "halo halo--warn",
-          text: `indexer · ${current.toLocaleString()} / ${latest.toLocaleString()}`,
+          text: "Search syncing",
         };
       }
     }
     return {
       cls: "halo halo--ok",
-      text: `indexer · ${current.toLocaleString()} caught up`,
+      text: "Search ready",
     };
   })();
 
@@ -216,9 +209,7 @@ export function Logs() {
     >
       <header>
         <h1 className="view__title">Logs</h1>
-        <p className="view__subtitle">
-          Live node logs with filters and pinned lines.
-        </p>
+        <p className="view__subtitle">Live node logs.</p>
       </header>
 
       <div
@@ -246,7 +237,7 @@ export function Logs() {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="regex filter · try: slashing|double-sign|error"
+          placeholder="Filter logs"
           style={{
             flex: 1,
             minWidth: 240,
@@ -296,7 +287,6 @@ export function Logs() {
             textTransform: "uppercase",
           }}
         >
-          <span aria-hidden>host</span>
           <select
             aria-label="log target"
             value={target.id}
@@ -331,12 +321,6 @@ export function Logs() {
         </span>
         <span className={indexerHalo.cls} title={indexer.error ?? indexerHalo.text}>
           <span className="dot" /> {indexerHalo.text}
-        </span>
-        <span
-          className="mono"
-          style={{ fontSize: 10.5, color: "var(--fg-400)", letterSpacing: "0.06em" }}
-        >
-          j/k navigate · / search · p pin
         </span>
       </div>
 
@@ -406,7 +390,7 @@ export function Logs() {
                   aria-label={isPinned ? "Unpin line" : "Pin line"}
                   title={isPinned ? "Unpin line" : "Pin line"}
                 >
-                  P
+                  *
                 </button>
                 <span style={{ color: "var(--fg-400)", fontSize: 11 }}>{l.ts}</span>
                 <span
@@ -433,12 +417,14 @@ export function Logs() {
               }}
             >
               {status.kind === "connecting"
-                ? "Opening log stream…"
+                ? "Connecting to the node..."
                 : status.kind === "error"
-                  ? "Stream error — see halo for detail."
+                  ? "Log stream failed. Check the Monarch OS connection in Settings."
                   : status.kind === "local"
                     ? "No log stream selected."
-                  : "No lines match your filter."}
+                    : query.trim()
+                      ? "No log lines match this filter."
+                      : "Connected. Waiting for logs from the node."}
             </div>
           ) : null}
         </div>

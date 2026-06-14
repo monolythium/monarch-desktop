@@ -75,7 +75,7 @@ const RULES: ReadonlyArray<ErrorRule> = [
   {
     test: /insufficient (funds|balance)|balance too low|not enough (funds|balance|lyth)/i,
     friendly:
-      "Your wallet balance cannot cover this transaction. Fund the derived operator address, then retry.",
+      "Your operator wallet balance cannot cover this transaction. Fund your operator wallet address, then retry.",
     nextStepRoute: "/wallets",
     nextStepLabel: "Open Treasury",
   },
@@ -94,7 +94,7 @@ const RULES: ReadonlyArray<ErrorRule> = [
   {
     test: /seal\s*(ek|key).*(not|missing|unpublished)|publish.*seal.*(first|before)|missing seal/i,
     friendly:
-      "Your seal key is not published yet. Publish the operator seal key (LythiumSeal EK), then retry the join.",
+      "Your public seal key is not published yet. Publish it from the Operator page, then retry the join.",
     nextStepRoute: "/operator",
     nextStepLabel: "Publish seal key",
   },

@@ -134,13 +134,13 @@ export function Metrics() {
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Metrics</h1>
-        <p className="view__subtitle">Live node status and retained telemetry.</p>
+        <p className="view__subtitle">Node health, activity, and recent trends.</p>
       </header>
 
       <div className="metrics-toolbar card card--padded">
         <div>
           <div className="cap">observability</div>
-          <h2>Current node metrics</h2>
+          <h2>Node status</h2>
           <div className="sub">{metricsSource}</div>
         </div>
         <div className="metrics-toolbar__controls">
@@ -181,12 +181,11 @@ export function Metrics() {
             <div className="card__head">
               <div>
                 <h3>{s.label}</h3>
-                <div className="sub">{s.source}</div>
               </div>
             </div>
             <div className={TONE_TO_HALO[s.tone] ?? "metric-value"}>
               <span>{s.value}</span>
-              <small>{s.unit}</small>
+              {s.unit && s.value !== "—" ? <small>{s.unit}</small> : null}
             </div>
           </div>
         ))}
@@ -195,12 +194,8 @@ export function Metrics() {
       <div className="metrics-section-head">
         <div>
           <div className="cap">telemetry history</div>
-          <h2>Retained telemetry series</h2>
-          <p>
-            {metricsRange.data?.tracking
-              ? `tracking ${metricsRange.data.tracking}`
-              : "node-local metric retention"}
-          </p>
+          <h2>Recent activity</h2>
+          <p>Latest retained metrics from this node.</p>
         </div>
         <span className={metricsRangeHalo(metricsRange, retainedSeries)}>
           <span className="dot" />{" "}
@@ -209,10 +204,10 @@ export function Metrics() {
             : metricsRange.error
               ? "error"
               : retainedSeries > 0
-                ? `${retainedSeries}/${metricSeries.length} retained`
+                ? `${retainedSeries} active`
                 : metricsRange.loading
                   ? "loading"
-                  : "no retained samples"}
+                  : "waiting for data"}
         </span>
       </div>
 
@@ -228,7 +223,7 @@ export function Metrics() {
         </div>
       ) : metricSeries.length === 0 && !metricsRange.loading ? (
         <div className="status-bar status-bar--warn">
-          <span className="dot" /> The endpoint returned no retained samples for the canonical Monarch metric selectors.
+          <span className="dot" /> No recent activity data is available from this node yet.
         </div>
       ) : (
         <div className="grid-2x3">
@@ -259,30 +254,43 @@ function MetricSeriesCard({
       <div className="card__head">
         <div>
           <h3>{series.label}</h3>
-          <div className="sub">{series.selector}</div>
         </div>
         <span className={`halo halo--${series.tone}`}>
-          <span className="dot" /> {series.status}
+          <span className="dot" /> {metricSeriesStatus(series)}
         </span>
       </div>
-      <div className="metric-series__value">{series.latestValue}</div>
-      <div className="metric-series__chart">
-        <Sparkline data={series.sparkline} height={44} />
-      </div>
-      {stats ? (
+      {series.sampleCount > 0 ? (
+        <>
+          <div className="metric-series__value">{series.latestValue}</div>
+          <div className="metric-series__chart">
+            <Sparkline data={series.sparkline} height={44} />
+          </div>
+        </>
+      ) : (
+        <div className="metric-series__empty">Waiting for data</div>
+      )}
+      {stats && series.sampleCount > 0 ? (
         <div className="metric-series__meta">
           <span>min {stats.min}</span>
           <span>avg {stats.avg}</span>
           <span>max {stats.max}</span>
         </div>
       ) : null}
-      <div className="metric-series__meta">
-        <span>{series.sampleCount.toLocaleString()} samples</span>
-        <span>block {series.latestBlock?.toLocaleString() ?? "-"}</span>
-        <span>delta {series.delta}</span>
-      </div>
+      {series.sampleCount > 1 && series.delta !== "-" ? (
+        <div className="metric-series__meta metric-series__meta--quiet">
+          <span>trend {series.delta}</span>
+          <span>{series.sampleCount.toLocaleString()} points</span>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function metricSeriesStatus(series: MetricSeriesSummary): string {
+  if (series.sampleCount > 0) return "live";
+  if (series.status === "not_retained") return "not recorded";
+  if (series.status === "available") return "waiting";
+  return "unavailable";
 }
 
 function liveSignals({
@@ -295,13 +303,13 @@ function liveSignals({
   operatorCapabilities: ReturnType<typeof useOperatorCapabilities>;
 }): MetricSignal[] {
   const chainSource = chain.data
-    ? "chain status"
+    ? "configured node"
     : chain.loading
-      ? "loading chain status"
-      : "chain status unavailable";
+      ? "checking node"
+      : "node unavailable";
   const chainTone = chain.error ? "err" : nodeReachable || chain.data?.reachable ? "ok" : "warn";
   const capsSource = operatorCapabilities.data
-    ? "capability readiness"
+    ? "configured node"
     : operatorCapabilities.loading
       ? "checking readiness"
       : "readiness unavailable";
@@ -357,9 +365,9 @@ function liveSignals({
 
 function metricsSourceLabel(slice: RpcSlice<MetricsRangeResponse>): string {
   if (slice.notExposed) return "retained telemetry unavailable";
-  if (slice.error) return `telemetry read failed: ${slice.error}`;
-  if (slice.data) return "retained telemetry";
-  return "waiting for telemetry";
+  if (slice.error) return `telemetry unavailable: ${slice.error}`;
+  if (slice.data) return "Live from your configured node";
+  return "Waiting for node data";
 }
 
 function metricsRangeHalo(

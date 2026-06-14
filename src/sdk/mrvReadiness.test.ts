@@ -25,15 +25,15 @@ function category(
 }
 
 describe("MRV readiness signals", () => {
-  it("replaces the legacy fee metric with MRV / no-EVM readiness text", () => {
+  it("replaces the legacy fee metric with operator-facing readiness text", () => {
     const signal = mrvReadinessSignal();
     const visibleText = `${signal.id} ${signal.label} ${signal.value} ${signal.unit}`;
 
     expect(visibleText).not.toMatch(/\bgas\b/iu);
     expect(signal).toMatchObject({
       id: "mrv-no-evm-readiness",
-      label: "MRV / no-EVM readiness",
-      value: "ready",
+      label: "Runtime readiness",
+      value: "Ready",
       tone: "ok",
     });
   });
@@ -58,7 +58,7 @@ describe("MRV readiness signals", () => {
     });
 
     expect(mrvReadinessSignal({ operatorCapabilities: capabilities })).toMatchObject({
-      value: "blocked",
+      value: "Blocked",
       tone: "err",
     });
   });

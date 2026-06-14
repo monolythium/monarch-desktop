@@ -2,11 +2,11 @@
 
 > Operator console for [Monolythium](https://monolythium.com) — Tauri 2 + React 19 + a native Talos API mTLS client. Built for operators who log into a server at 3 am to find out why a node is unhealthy.
 
-**License:** Apache-2.0 · **Status:** testnet (current release `v0.0.27`) · **Stack:** Tauri 2 · Rust · React 19 · TypeScript · Vite
+**License:** Apache-2.0 · **Status:** testnet (current release `v0.0.28`) · **Stack:** Tauri 2 · Rust · React 19 · TypeScript · Vite
 
 ## Download
 
-**[GitHub Releases →](https://github.com/monolythium/monarch-desktop/releases)** (operator console; macOS · Windows · Linux). Install the latest tagged build — `v0.0.27` is the current release. Updates ship through the in-app updater. Or build from source (below).
+**[GitHub Releases →](https://github.com/monolythium/monarch-desktop/releases)** (operator console; macOS · Windows · Linux). Install the latest tagged build — `v0.0.28` is the current release. Updates ship through the in-app updater. Or build from source (below).
 
 ---
 
@@ -191,9 +191,9 @@ Ask Monarch does not ship canned operational answers. Outside Tauri, without a c
 
 ### Tag convention
 
-A signed, notarized production release is cut by pushing a **non-preview** semver tag — `v<version>` with no suffix, e.g. `v0.0.27` (the tag version must equal `tauri.conf.json > version`). That tag runs the full four-platform signed matrix and publishes a `Latest`, non-prerelease GitHub Release.
+A signed, notarized production release is cut by pushing a **non-preview** semver tag — `v<version>` with no suffix, e.g. `v0.0.28` (the tag version must equal `tauri.conf.json > version`). That tag runs the full four-platform signed matrix and publishes a `Latest`, non-prerelease GitHub Release.
 
-`*-preview` tags (e.g. `v0.0.27-preview`) are **excluded from the auto-publish trigger** and never publish a "Latest" release — only plain `v*` tags (like the current `v0.0.27`) reach the release channel operators install from. For a preview or dry-run build, use the manual `workflow_dispatch` instead: leave the `tag` input empty for a build-only dry run, or set it to a preview tag to attach preview artifacts deliberately.
+`*-preview` tags (e.g. `v0.0.28-preview`) are **excluded from the auto-publish trigger** and never publish a "Latest" release — only plain `v*` tags (like the current `v0.0.28`) reach the release channel operators install from. For a preview or dry-run build, use the manual `workflow_dispatch` instead: leave the `tag` input empty for a build-only dry run, or set it to a preview tag to attach preview artifacts deliberately.
 
 The release-readiness test subset now requires Talos identity pinning, healthy
 Protocore RPC readiness, release-digest attestation, Talos operation receipts,

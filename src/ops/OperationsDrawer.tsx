@@ -2,7 +2,7 @@
 // Preconditions, live diffs, typed confirmations, and error translation are
 // handled here so every action follows the same review-before-run path.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useOps } from "./OpsContext";
 import {
@@ -256,14 +256,25 @@ function QuorumImpact({ kind }: { kind: OpKind }) {
 export function OperationsDrawer() {
   const { open, stage, request, result, advance, cancel } = useOps();
   const navigate = useNavigate();
+  const self = useSelfOperator();
   const preflight = usePreflight(request, open, stage);
   const [confirmText, setConfirmText] = useState("");
+  const [copiedFundingAddress, setCopiedFundingAddress] = useState(false);
+  const fundingCopyTimer = useRef<number | null>(null);
 
   // Reset typed confirmation whenever the verb or stage changes.
   const requestKind = request?.kind ?? null;
   useEffect(() => {
     setConfirmText("");
+    setCopiedFundingAddress(false);
   }, [requestKind, stage, open]);
+
+  useEffect(
+    () => () => {
+      if (fundingCopyTimer.current !== null) window.clearTimeout(fundingCopyTimer.current);
+    },
+    [],
+  );
 
   const typedWord = requestKind ? TYPED_CONFIRMATION[requestKind] : undefined;
   const typedBlocked =
@@ -354,11 +365,11 @@ export function OperationsDrawer() {
     : redelegateNeedsInput
       ? "Fill every redelegate input first"
       : chatBootstrapPeersNeedsInput
-        ? "Enter the operator peer id and chat peers first"
+        ? "Enter the operator ID and chat peers first"
         : operatorDisplayNeedsInput
-          ? "Enter the operator peer id and valid display fields first"
+          ? "Enter the operator ID and valid profile fields first"
           : operatorSealKeyNeedsInput
-            ? "Enter the operator peer id and seal EK first"
+            ? "Enter the operator ID and public seal key first"
             : clusterNameNeedsInput
               ? "Enter a cluster id and valid cluster name first"
               : restoreNeedsInput
@@ -366,15 +377,15 @@ export function OperationsDrawer() {
                 : pendingChangeNeedsInput
                   ? "Fill every pending-change input first"
                   : clusterJoinRequestNeedsInput
-                    ? "Fill every CJ-1 join request input first"
+                    ? "Fill the join request details first"
                     : clusterVoteAdmitNeedsInput
-                      ? "Fill every CJ-1 admit vote input first"
+                      ? "Fill the admission vote details first"
                       : clusterResignationNeedsInput
                         ? "Enter a valid resignation nonce first"
                         : clusterFormNeedsInput
                           ? "Fill the 7 active + 3 standby roster and consent signatures first"
                           : dkgReshareNeedsInput
-                            ? "Fill every DKG attestation input first"
+                            ? "Fill the key ceremony output first"
                             : freezeAdmissionNeedsInput
                               ? "Enter the incident reason hash first"
                               : emergencyKeyRotationNeedsInput
@@ -406,6 +417,10 @@ export function OperationsDrawer() {
   const translatedError =
     result && !result.ok
       ? translateOpError(result.message, request?.kind ?? "operator-restart")
+      : null;
+  const fundingAddress =
+    translatedError?.nextStepRoute === "/wallets" && self.status === "ready"
+      ? self.address
       : null;
 
   return (
@@ -480,6 +495,34 @@ export function OperationsDrawer() {
               </div>
               {translatedError ? (
                 <>
+                  {fundingAddress ? (
+                    <div className="drawer__funding-address">
+                      <div>
+                        <div className="cap">operator wallet address</div>
+                        <div className="mono">{fundingAddress}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={
+                          copiedFundingAddress ? "copy-btn copy-btn--copied" : "copy-btn"
+                        }
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(fundingAddress);
+                          setCopiedFundingAddress(true);
+                          if (fundingCopyTimer.current !== null) {
+                            window.clearTimeout(fundingCopyTimer.current);
+                          }
+                          fundingCopyTimer.current = window.setTimeout(
+                            () => setCopiedFundingAddress(false),
+                            1200,
+                          );
+                        }}
+                        aria-label="Copy operator wallet address"
+                      >
+                        {copiedFundingAddress ? "✓" : "CP"}
+                      </button>
+                    </div>
+                  ) : null}
                   {translatedError.nextStepRoute ? (
                     <button
                       type="button"
@@ -495,7 +538,7 @@ export function OperationsDrawer() {
                   ) : null}
                   {translatedError.raw !== translatedError.friendly ? (
                     <details style={{ fontSize: 11, color: "var(--fg-400)" }}>
-                      <summary style={{ cursor: "pointer" }}>technical error details</summary>
+                      <summary style={{ cursor: "pointer" }}>host message</summary>
                       <code style={{ overflowWrap: "anywhere", display: "block", marginTop: 6 }}>
                         {translatedError.raw}
                       </code>
@@ -515,13 +558,7 @@ export function OperationsDrawer() {
         </div>
 
         <footer className="drawer__foot">
-          <span
-            className="mono"
-            aria-hidden
-            style={{ fontSize: 10, color: "var(--fg-500)", marginRight: "auto", alignSelf: "center" }}
-          >
-            ⌘⇧↵ confirm · esc cancel
-          </span>
+          <span style={{ marginRight: "auto" }} />
           <button type="button" className="btn btn--ghost btn--sm" onClick={cancel}>
             {stage === "done" || stage === "error" ? "Close" : "Cancel"}
           </button>
@@ -722,7 +759,7 @@ function DrawerBody({
     return (
       <p style={{ fontSize: 12.5, color: "var(--fg-200)" }}>
         The operation did not complete. The summary below explains what happened and what to do
-        next; the verbatim host message is in the technical details.
+        next. The original host message is available below if needed.
       </p>
     );
   }

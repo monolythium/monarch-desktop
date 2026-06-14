@@ -22,12 +22,21 @@ function displayStatus(
   value: string | undefined,
   maxBytes: number,
   label: string,
-): { ok: boolean; bytes: number; message: string } {
+): { ok: boolean; message: string } {
   try {
     const bytes = normalizeOperatorDisplayField(value ?? "", maxBytes, label);
-    return { ok: true, bytes: bytes.length, message: `${bytes.length}/${maxBytes} UTF-8 bytes` };
+    return {
+      ok: true,
+      message: bytes.length === 0 ? "Leave empty to clear this field." : "Looks good.",
+    };
   } catch (err) {
-    return { ok: false, bytes: 0, message: (err as Error).message };
+    const message = (err as Error).message;
+    return {
+      ok: false,
+      message: /control characters/iu.test(message)
+        ? `${label} contains unsupported characters.`
+        : `${label} is too long.`,
+    };
   }
 }
 
@@ -66,10 +75,10 @@ export function OperatorDisplayForm() {
 
   return (
     <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
-      <div className="cap" style={{ marginBottom: 8 }}>operator display metadata</div>
+      <div className="cap" style={{ marginBottom: 8 }}>operator public profile</div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-        <span className="kv__k">Operator peer id</span>
+        <span className="kv__k">Operator ID</span>
         <input
           type="text"
           inputMode="text"
@@ -83,7 +92,7 @@ export function OperatorDisplayForm() {
           style={inputStyle(validity.peerIdOk, true)}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          Must match the operator-owned node-registry row.
+          Filled from your operator key when available.
         </span>
       </label>
 
@@ -91,10 +100,10 @@ export function OperatorDisplayForm() {
         className="kv"
         style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
       >
-        <span className="kv__k">Moniker</span>
+        <span className="kv__k">Public name</span>
         <input
           type="text"
-          placeholder="Monolythium Foundation 01"
+          placeholder="Monolythium Operator 01"
           value={current.moniker}
           onChange={(e) => setOperatorDisplayInput({ moniker: e.target.value })}
           spellCheck={false}
@@ -115,7 +124,7 @@ export function OperatorDisplayForm() {
         <span className="kv__k">Alias</span>
         <input
           type="text"
-          placeholder="foundation-01"
+          placeholder="operator-01"
           value={current.alias}
           onChange={(e) => setOperatorDisplayInput({ alias: e.target.value })}
           spellCheck={false}

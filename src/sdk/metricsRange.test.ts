@@ -10,8 +10,8 @@ import {
 
 describe("metricsRange view helpers", () => {
   it("formats canonical metric labels and units", () => {
-    expect(metricLabel("committed_round")).toBe("Committed round");
-    expect(metricLabel("p2p_bandwidth_in")).toBe("P2P ingress");
+    expect(metricLabel("committed_round")).toBe("Latest committed round");
+    expect(metricLabel("p2p_bandwidth_in")).toBe("Network in");
     expect(metricLabel("custom_selector")).toBe("custom selector");
     expect(metricUnitLabel("basis_points")).toBe("%");
     expect(metricUnitLabel("bytes_per_second")).toBe("B/s");
@@ -52,7 +52,7 @@ describe("metricsRange view helpers", () => {
     const summaries = summarizeMetricsRange(response);
     expect(summaries).toHaveLength(2);
     expect(summaries[0]).toMatchObject({
-      label: "Attestation rate",
+      label: "Attestations",
       latestValue: "99.3%",
       latestRawValue: 9_930,
       latestBlock: 102,

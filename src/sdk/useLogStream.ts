@@ -164,10 +164,8 @@ type JournaldEntry = {
   _COMM?: string;
 };
 
-/// Parse one stream line into a `LogEntry`. journald's `-o json`
-/// emits one JSON object per line (no array, no commas). Bad lines
-/// degrade gracefully — we still surface them as a raw INFO entry so
-/// the operator can see *something*.
+/// Parse one stream line into a `LogEntry`. Empty journald payloads are
+/// ignored so the UI does not fill with placeholder rows.
 export function parseJournaldLine(raw: string): LogEntry | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -185,16 +183,17 @@ export function parseJournaldLine(raw: string): LogEntry | null {
   const message = Array.isArray(entry.MESSAGE)
     ? entry.MESSAGE.join("\n")
     : (entry.MESSAGE ?? "");
+  if (!message.trim()) return null;
   const src =
     entry.SYSLOG_IDENTIFIER ??
     entry._SYSTEMD_UNIT?.replace(/\.service$/, "") ??
     entry._COMM ??
-    "monod";
+    "node";
   return {
     ts: formatTimestamp(entry.__REALTIME_TIMESTAMP),
     lvl: priorityToLevel(entry.PRIORITY),
     src,
-    msg: message,
+    msg: message.trim(),
   };
 }
 

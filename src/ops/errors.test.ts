@@ -40,7 +40,8 @@ describe("translateOpError", () => {
 
   it("translates insufficient balance with a Treasury fix-it", () => {
     const out = translateOpError(new Error("insufficient funds for transfer"), "operator-register");
-    expect(out.friendly).toMatch(/balance/i);
+    expect(out.friendly).toContain("operator wallet address");
+    expect(out.friendly).not.toContain("derived operator address");
     expect(out.nextStepRoute).toBe("/wallets");
   });
 

@@ -30,7 +30,7 @@ const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
 
 export function Operator() {
   const status = useNodeStatus();
-  // YOUR identity, derived from the stored key — never member[0].
+  // Resolve the local operator from the stored key before showing live registry data.
   const self = useSelfOperator();
   const cluster = useClusterStatus(self.clusterId ?? ACTIVE_CLUSTER_ID);
   const clusterData = cluster.data;
@@ -79,7 +79,13 @@ export function Operator() {
 
   const v = operator.data;
   const setSize = clusterData?.members.length ?? null;
-  const moniker = v?.moniker ?? (operatorId ? shortId(operatorId) : "no operator key");
+  const publicOperatorName = displayMonikerInput(v?.moniker);
+  const moniker = publicOperatorName || "Operator profile";
+  const operatorHeroHint = publicOperatorName
+    ? "Public name shown in Monarch and Monoscan"
+    : operatorId
+      ? "No public name set yet. Your wallet address and operator ID are below."
+      : "Operator key required";
   const activeClusterLabel = clusterLabel(clusterData?.id ?? ACTIVE_CLUSTER_ID);
   const activeClusterId = String(clusterData?.id ?? ACTIVE_CLUSTER_ID);
   const jailed = v?.jailed ?? false;
@@ -89,10 +95,10 @@ export function Operator() {
   const dutyAttestation = duties.data?.duties.attestation;
   const dutyKeyRotation = duties.data?.duties.keyRotation;
   const keyRows = [
-    { label: "Operator account", algo: "node-registry", value: v?.address ?? "—" },
-    { label: "Operator id", algo: "cluster member", value: operatorId ?? "—" },
+    { label: "Operator wallet address", algo: "send LYTH here", value: self.address ?? v?.address ?? "—" },
+    { label: "Operator ID", algo: "cluster member id", value: operatorId ?? "—" },
     { label: "Consensus key fingerprint", algo: "registry", value: v?.pubkey ?? "—" },
-    { label: "Cluster anchor", algo: "derived", value: clusterData?.anchorAddress ?? "—" },
+    { label: "Cluster anchor", algo: "cluster account", value: clusterData?.anchorAddress ?? "—" },
   ];
 
   // The order-routing fee is keyed by the operator's bech32m wallet address,
@@ -147,8 +153,9 @@ export function Operator() {
       {self.status !== "no-key" ? (
       <div className="card card--padded operator-hero">
         <div>
-          <div className="cap">operator identity</div>
+          <div className="cap">your operator</div>
           <div className="operator-hero__moniker">{moniker}</div>
+          {operatorHeroHint ? <div className="operator-hero__hint">{operatorHeroHint}</div> : null}
           <div className="operator-pills">
             {self.status === "ready" ? (
               <span className="halo halo--gold" title="Derived from your stored operator key — this is you">
@@ -169,23 +176,23 @@ export function Operator() {
               ops.requestOp({
                 kind: "operator-display",
                 title: "Set operator name",
-                sub: "Submit public operator metadata",
+                sub: "Update your public operator profile",
                 intro:
-                  "Posts setOperatorDisplay(bytes32,string,string) from the operator's PQM-1 mnemonic. Monoscan and Desktop read the resulting public moniker and alias through lyth_operatorInfo.",
+                  "Publishes the public name other operators and explorers see for your node. Empty fields clear the stored values.",
                 fields: [
-                  { key: "operator", label: "Operator", value: moniker },
-                  { key: "peer-id", label: "Peer id", value: operatorId ?? "enter peer id" },
-                  { key: "source", label: "Source", value: "lyth_operatorInfo" },
+                  { key: "operator", label: "Operator", value: publicOperatorName || self.address || operatorId || "Your operator" },
+                  { key: "peer-id", label: "Operator ID", value: operatorId ?? "enter operator id" },
+                  { key: "visible", label: "Visible in", value: "Monoscan and Monarch Desktop" },
                 ],
                 operatorDisplayInput: {
                   peerIdHex: operatorId ?? "",
-                  moniker: displayMonikerInput(v?.moniker, operatorId),
+                  moniker: displayMonikerInput(v?.moniker),
                   alias: "",
                 },
                 icon: "ID",
                 risk: "medium",
                 needsPasskey: true,
-                confirmLabel: "Sign display metadata tx",
+                confirmLabel: "Approve name update",
               })
             }
           >
@@ -198,13 +205,13 @@ export function Operator() {
               ops.requestOp({
                 kind: "operator-seal-key",
                 title: "Publish seal key",
-                sub: "Submit LythiumSeal EK",
+                sub: "Publish your public seal key",
                 intro:
-                  "Posts publishOperatorSealKey(bytes32,bytes) from the operator's PQM-1 mnemonic. Desktop can load the public ML-KEM-768 EK from the connected Monarch OS node before signing.",
+                  "Publishes your public seal key so a cluster can include you in sealed-mempool duty. It is safe to publish - only your node holds the private half.",
                 fields: [
-                  { key: "operator", label: "Operator", value: moniker },
-                  { key: "peer-id", label: "Peer id", value: operatorId ?? "derived from keychain" },
-                  { key: "executor", label: "Executor", value: "publishOperatorSealKey(bytes32,bytes)" },
+                  { key: "operator", label: "Operator", value: publicOperatorName || self.address || operatorId || "Your operator" },
+                  { key: "peer-id", label: "Operator ID", value: operatorId ?? "from your operator key" },
+                  { key: "private-key", label: "Private key", value: "stays on your node" },
                 ],
                 operatorSealKeyInput: operatorId
                   ? { peerIdHex: operatorId, sealEkHex: "" }
@@ -212,7 +219,7 @@ export function Operator() {
                 icon: "SK",
                 risk: "medium",
                 needsPasskey: true,
-                confirmLabel: "Sign seal key tx",
+                confirmLabel: "Approve seal key",
               })
             }
           >
@@ -225,15 +232,15 @@ export function Operator() {
               ops.requestOp({
                 kind: "cluster-request-join",
                 title: `Request join for ${activeClusterLabel}`,
-                sub: "Prepare CJ-1 join request",
+                sub: "Ask this cluster for a seat",
                 intro:
-                  "Prepares requestClusterJoin(uint32,bytes) for this cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits after the operator seal key is published.",
+                  "Asks the selected cluster to admit your operator. Publish your seal key first so the cluster can include you safely.",
                 fields: [
                   { key: "cluster", label: "Cluster", value: activeClusterLabel },
                   {
                     key: "flow",
                     label: "Flow",
-                    value: "cluster vote admission; runtime preflight gated",
+                    value: "current members vote on the request",
                   },
                   {
                     key: "seal-key",
@@ -250,7 +257,7 @@ export function Operator() {
                 risk: "high",
                 destructive: true,
                 needsPasskey: true,
-                confirmLabel: "Prepare join request",
+                confirmLabel: "Approve join request",
               })
             }
           >
@@ -263,9 +270,9 @@ export function Operator() {
               ops.requestOp({
                 kind: "rotate-keys",
                 title: "Rotate signing share",
-                sub: "Submit DKG re-share attestation",
+                sub: "Record a completed key ceremony",
                 intro:
-                  "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
+                  "Records the result of a completed key-share ceremony so the new signing shares can take effect. Run this only after the ceremony has finished and every participant has signed the final output.",
                 fields: [
                   { key: "cluster", label: "Cluster", value: activeClusterLabel },
                   { key: "operators", label: "Operators", value: clusterData ? `${clusterData.threshold}-of-${clusterData.size} quorum` : "cluster unavailable" },
@@ -274,7 +281,7 @@ export function Operator() {
                 risk: "high",
                 destructive: true,
                 needsPasskey: true,
-                confirmLabel: "Sign DKG attestation",
+                confirmLabel: "Approve key rotation",
               })
             }
           >
@@ -289,7 +296,7 @@ export function Operator() {
           <div className="card__head">
             <div>
               <h3>Keys</h3>
-              <div className="sub">live registry fields · copyable when available</div>
+              <div className="sub">Wallet, operator ID, and registry keys</div>
             </div>
           </div>
           <div className="key-grid">
@@ -379,7 +386,7 @@ export function Operator() {
                       "Brings a removed operator back into rotation after an incident. Run this only when you have been asked to perform recovery.",
                     fields: [
                       { key: "operator", label: "Operator", value: moniker },
-                      { key: "peer-id", label: "Peer id", value: operatorId ?? "enter peer id" },
+                      { key: "peer-id", label: "Operator ID", value: operatorId ?? "enter operator id" },
                     ],
                     restoreInput: operatorId ? { peerIdHex: operatorId } : undefined,
                     icon: "UJ",
@@ -399,15 +406,15 @@ export function Operator() {
                 ops.requestOp({
                   kind: "rotate-keys",
                   title: "Rotate signing share",
-                  sub: "Submit DKG re-share attestation",
+                  sub: "Record a completed key ceremony",
                   intro:
-                    "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
+                    "Records the result of a completed key-share ceremony so the new signing shares can take effect. Run this only after the ceremony has finished and every participant has signed the final output.",
                   fields: [{ key: "cluster", label: "Cluster", value: clusterData ? activeClusterLabel : "cluster unavailable" }],
                   icon: "KY",
                   risk: "high",
                   destructive: true,
                   needsPasskey: true,
-                  confirmLabel: "Sign DKG attestation",
+                  confirmLabel: "Approve key rotation",
                 })
               }
             >
@@ -624,18 +631,18 @@ export function Operator() {
   );
 }
 
-function shortId(value: string): string {
-  return value.length <= 18 ? value : `${value.slice(0, 10)}…${value.slice(-6)}`;
+function displayMonikerInput(value: string | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed || looksLikeMachineIdentifier(trimmed)) return "";
+  return trimmed;
 }
 
-function displayMonikerInput(value: string | undefined, operatorId: string | null): string {
-  if (!value || !operatorId) return "";
-  const sdkFallback =
-    operatorId.length <= 16 ? operatorId : `${operatorId.slice(0, 8)}…${operatorId.slice(-6)}`;
-  if (value === operatorId || value === sdkFallback || value === shortId(operatorId)) {
-    return "";
-  }
-  return value;
+function looksLikeMachineIdentifier(value: string): boolean {
+  const normalized = value.replace(/\s/g, "");
+  if (/^mono1[a-z0-9]{20,}$/i.test(normalized)) return true;
+  if (/^0x[0-9a-f]{10,}$/i.test(normalized)) return true;
+  if (/^0x[0-9a-f]{6,}(…|\.{3})[0-9a-f]{4,}$/i.test(normalized)) return true;
+  return /^[0-9a-f]{16,}$/i.test(normalized);
 }
 
 function compact(value: string): string {

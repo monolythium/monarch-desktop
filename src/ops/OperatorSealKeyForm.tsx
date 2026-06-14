@@ -3,15 +3,12 @@ import {
   deriveOperatorConsensusPubkeyHex,
   KEYCHAIN_ACCOUNTS,
   keychainGet,
-  OPERATOR_SEAL_EK_BYTES,
   operatorPubkeyHash,
   operatorSealEkHexToBytes,
   talosOperatorSealEk,
 } from "../sdk";
 import { useOps } from "./OpsContext";
 import type { OperatorSealKeyInput } from "./types";
-
-const SEAL_EK_HEX_CHARS = OPERATOR_SEAL_EK_BYTES * 2;
 
 type LocalPeerIdState = {
   status: "checking" | "ready" | "missing" | "error";
@@ -52,10 +49,11 @@ function isPeerIdHex(value: string | undefined): boolean {
 
 function sealEkStatus(value: string | undefined): { ok: boolean; message: string } {
   try {
-    const bytes = operatorSealEkHexToBytes(value ?? "");
-    return { ok: true, message: `${bytes.length}/${OPERATOR_SEAL_EK_BYTES} bytes` };
+    operatorSealEkHexToBytes(value ?? "");
+    return { ok: true, message: "Public seal key loaded." };
   } catch (err) {
-    return { ok: false, message: (err as Error).message };
+    void err;
+    return { ok: false, message: "Load the public seal key from Monarch OS, or paste it here." };
   }
 }
 
@@ -77,7 +75,7 @@ function useStoredOperatorPeerIdHex(): LocalPeerIdState {
   const [state, setState] = useState<LocalPeerIdState>({
     status: "checking",
     peerIdHex: "",
-    message: "Checking the stored operator mnemonic.",
+    message: "Checking your stored operator key.",
   });
 
   useEffect(() => {
@@ -91,7 +89,7 @@ function useStoredOperatorPeerIdHex(): LocalPeerIdState {
           setState({
             status: "missing",
             peerIdHex: "",
-            message: "No stored operator mnemonic found.",
+            message: "No operator key is stored yet.",
           });
           return;
         }
@@ -101,14 +99,14 @@ function useStoredOperatorPeerIdHex(): LocalPeerIdState {
         setState({
           status: "ready",
           peerIdHex,
-          message: "Peer id derived from the stored operator mnemonic.",
+          message: "Filled from your stored operator key.",
         });
       } catch (err) {
         if (cancelled) return;
         setState({
           status: "error",
           peerIdHex: "",
-          message: `Could not derive peer id: ${err instanceof Error ? err.message : String(err)}`,
+          message: `Could not read your operator ID: ${err instanceof Error ? err.message : String(err)}`,
         });
       }
     }
@@ -182,7 +180,7 @@ export function OperatorSealKeyForm() {
       <div className="cap" style={{ marginBottom: 8 }}>operator seal key</div>
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
-        <span className="kv__k">Operator peer id</span>
+        <span className="kv__k">Operator ID</span>
         <input
           type="text"
           inputMode="text"
@@ -204,7 +202,7 @@ export function OperatorSealKeyForm() {
         className="kv"
         style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}
       >
-        <span className="kv__k">LythiumSeal EK</span>
+        <span className="kv__k">Seal key</span>
         <textarea
           placeholder={`0x${"00".repeat(16)}...`}
           value={current.sealEkHex}
@@ -217,9 +215,7 @@ export function OperatorSealKeyForm() {
           style={{ ...inputStyle(validity.sealEk.ok), resize: "vertical" }}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          {validity.sealEk.ok
-            ? validity.sealEk.message
-            : `Must be ${OPERATOR_SEAL_EK_BYTES} bytes (${SEAL_EK_HEX_CHARS} hex chars).`}
+          {validity.sealEk.message}
         </span>
       </label>
 

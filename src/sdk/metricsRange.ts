@@ -32,14 +32,14 @@ export type MetricSeriesSummary = {
 };
 
 const METRIC_LABELS: Record<MonarchMetricSelector, string> = {
-  committed_round: "Committed round",
-  mempool_depth: "Mempool depth",
-  execution_units_used_per_block: "Execution units",
-  proposer_latency: "Proposer latency",
-  attestation_rate: "Attestation rate",
-  p2p_bandwidth_in: "P2P ingress",
-  p2p_bandwidth_out: "P2P egress",
-  finality_lag: "Finality lag",
+  committed_round: "Latest committed round",
+  mempool_depth: "Pending transactions",
+  execution_units_used_per_block: "Execution work",
+  proposer_latency: "Proposal timing",
+  attestation_rate: "Attestations",
+  p2p_bandwidth_in: "Network in",
+  p2p_bandwidth_out: "Network out",
+  finality_lag: "Finality delay",
 };
 
 export function metricLabel(selector: string): string {

@@ -67,9 +67,9 @@ export function mrvReadinessSignal(input: MrvReadinessInput = {}): ReadinessSign
   const tone = aggregateTone(categories);
   return {
     id: "mrv-no-evm-readiness",
-    label: "MRV / no-EVM readiness",
+    label: "Runtime readiness",
     value: aggregateValue(tone),
-    unit: `fmt v${MRV_FORMAT_VERSION}`,
+    unit: "",
     tone,
   };
 }
@@ -167,13 +167,13 @@ function aggregateTone(categories: MrvReadinessCategory[]): ReadinessTone {
 function aggregateValue(tone: ReadinessTone): string {
   switch (tone) {
     case "ok":
-      return "ready";
+      return "Ready";
     case "warn":
-      return "partial";
+      return "Partial";
     case "err":
-      return "blocked";
+      return "Blocked";
     case "info":
-      return "unknown";
+      return "Unknown";
   }
 }
 

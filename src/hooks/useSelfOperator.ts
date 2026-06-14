@@ -1,13 +1,8 @@
-// Resolve the operator's OWN identity from the stored PQM-1 mnemonic.
+// Resolve the local operator identity from the stored PQM-1 mnemonic.
+// Views use this hook instead of assuming a fixed cluster member index.
 //
-// Kills the "cluster-0 member[0] is you" assumption: views ask this
-// hook who the local operator actually is (derived operator id + wallet
-// address) and which cluster seat - if any - that identity holds.
-//
-// Security discipline: the mnemonic is read from the OS keychain,
-// the ids are derived in a local scope, and the cleartext is dropped
-// immediately. It is never logged, never put in React state, and never
-// leaves this module.
+// The mnemonic is read from the OS keychain, derived in a local scope, and
+// dropped immediately. Cleartext is never logged or stored in React state.
 
 import { useEffect, useState } from "react";
 import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
