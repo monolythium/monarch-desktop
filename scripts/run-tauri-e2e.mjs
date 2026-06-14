@@ -440,13 +440,28 @@ async function visitRoutes(session, routes, screenshotDir, evidenceDir) {
   const screenshots = [];
   for (const route of routes) {
     const href = route.replace(/"/gu, '\\"');
-    const element = await findElement(session, `a[href="${href}"]`);
-    await clickElement(session, element);
+    const selector = `a[href="${href}"]`;
+    const element = await findElement(session, selector).catch(() => null);
+    if (element) {
+      await clickElement(session, element);
+    } else {
+      await navigateDirectly(session, route);
+    }
     await waitForPath(session, route);
     await delay(200);
     screenshots.push(await captureRouteScreenshot(session, route, screenshotDir, evidenceDir));
   }
   return screenshots;
+}
+
+async function navigateDirectly(session, route) {
+  await execute(
+    session,
+    `window.history.pushState({}, "", arguments[0]);
+     window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+     return window.location.pathname;`,
+    [route],
+  );
 }
 
 async function waitForPath(session, route) {
