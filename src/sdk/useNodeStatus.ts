@@ -44,33 +44,45 @@ type NodeStatusFetch = {
 // the fallback path doesn't re-ask every poll.
 let cachedChainId: number | null = null;
 
+type NativeSyncStatus = { localRound?: number; peerMaxRound?: number; lag?: number };
+
 async function fetchNodeStatus(): Promise<NodeStatusFetch> {
-  const [native, round] = await Promise.all([
+  // `lyth_currentRound`'s `height` is the EXECUTION (block) height — NOT the DAG
+  // round. The DAG round comes from `lyth_syncStatus.localRound`; the two are
+  // decoupled (multiple heights commit per round), so they must NOT be conflated
+  // — showing the block height under a "round" label is the bug this fixes.
+  const [native, height, sync] = await Promise.all([
     rpc.call<NativeChainStatus>("lyth_chainStatus", []).catch(() => null),
     rpc.lythCurrentRound().catch(() => null),
+    rpc.call<NativeSyncStatus>("lyth_syncStatus", []).catch(() => null),
   ]);
+  const blockHeight = height !== null ? Number(height.height) : null;
+  const dagRound = sync && typeof sync.localRound === "number" ? sync.localRound : null;
+
   if (native !== null) {
     if (typeof native.chainId === "number") cachedChainId = native.chainId;
     return {
       chainId: cachedChainId,
-      blockNumber:
-        native.blockHeight ??
-        native.finalizedHeight ??
-        (round !== null ? Number(round.height) : null),
-      currentRound: round !== null ? Number(round.height) : native.finalizedHeight ?? null,
+      blockNumber: native.blockHeight ?? blockHeight ?? native.finalizedHeight ?? null,
+      currentRound: dagRound ?? native.finalizedHeight ?? null,
       reachable: native.reachable ?? true,
     };
   }
 
+  // `lyth_chainStatus` can be disabled on a node; fall back to the block height
+  // from `lyth_currentRound` (reliable) before eth-compat, so "block" is never
+  // blank just because chainStatus/eth_blockNumber are off.
   const [block, chainId] = await Promise.all([
-    rpc.ethBlockNumber(),
-    cachedChainId === null ? rpc.ethChainId() : Promise.resolve<bigint | null>(null),
+    rpc.ethBlockNumber().catch(() => null),
+    cachedChainId === null
+      ? rpc.ethChainId().catch(() => null)
+      : Promise.resolve<bigint | null>(null),
   ]);
   if (chainId !== null) cachedChainId = Number(chainId);
   return {
     chainId: cachedChainId,
-    blockNumber: Number(block),
-    currentRound: round !== null ? Number(round.height) : null,
+    blockNumber: blockHeight ?? (block !== null ? Number(block) : null),
+    currentRound: dagRound,
     reachable: true,
   };
 }

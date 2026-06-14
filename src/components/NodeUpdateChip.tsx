@@ -283,9 +283,11 @@ export function NodeUpdateChip() {
             width: 380,
             maxHeight: "70vh",
             overflowY: "auto",
-            zIndex: 60,
-            background: "var(--glass-fill-strong)",
-            backdropFilter: "blur(var(--glass-blur))",
+            zIndex: 500,
+            // Opaque fill (no backdrop blur) — a translucent update dropdown over
+            // the dashboard reads as visual noise. Solid panel, content behind it
+            // fully occluded.
+            background: "var(--ink-200)",
             border: "1px solid var(--glass-stroke-hi)",
             borderRadius: "var(--r-md)",
             boxShadow: "var(--shadow-3)",

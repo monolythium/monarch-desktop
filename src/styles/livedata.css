@@ -158,12 +158,13 @@
   position: absolute;
   right: 12px;
   top: calc(100% - 6px);
-  z-index: 30;
+  /* High z-index so the detail card sits above neighbouring cards/rows instead
+     of rendering behind them. Opaque fill (no backdrop blur) so the content
+     underneath never bleeds through and makes it hard to read. */
+  z-index: 500;
   width: min(440px, calc(100% - 24px));
-  background: rgba(16, 14, 30, 0.92);
-  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
-  border: 1px solid var(--glass-stroke);
+  background: var(--ink-200);
+  border: 1px solid var(--glass-stroke-hi, var(--glass-stroke));
   border-radius: 14px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
   padding: 16px;
