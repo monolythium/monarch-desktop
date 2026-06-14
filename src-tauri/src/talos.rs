@@ -1824,8 +1824,24 @@ fn classify_protocore_readiness(
 
     if rpc_serving {
         if let Some(service) = service.as_mut() {
-            let health_unknown = service.health_unknown == Some(true);
-            if health_unknown
+            // The Talos health flag is advisory for ext-protocore: a confirmed
+            // RPC (chain_id + block_number present, not syncing) is authoritative
+            // proof the node is up and serving. Recover the display whether the
+            // health check is still pending (health_unknown) OR has completed with
+            // healthy=false, since a stale/failed Talos health probe must not paint
+            // a serving node "degraded". We deliberately do NOT touch a genuinely
+            // down service: a raw state of failed/stopped/down still wins, because
+            // those mean the process is not running (so the RPC, if it answered,
+            // is some other endpoint and the readiness arms below will treat it as
+            // such).
+            let raw_lower = service.state.to_ascii_lowercase();
+            let genuinely_down = raw_lower.contains("fail")
+                || raw_lower.contains("stop")
+                || raw_lower.contains("down");
+            let health_pending = service.health_unknown == Some(true);
+            let health_failed = service.healthy == Some(false);
+            if !genuinely_down
+                && (health_pending || health_failed)
                 && matches!(
                     service.display_state.as_str(),
                     "degraded" | "waiting-for-config"
@@ -1833,10 +1849,17 @@ fn classify_protocore_readiness(
             {
                 service.display_state = "running".to_string();
                 service.severity = "ok".to_string();
-                service.summary = format!(
-                    "{} is running; Talos health is pending, RPC is serving chain data",
-                    service.id
-                );
+                service.summary = if health_pending {
+                    format!(
+                        "{} is running; Talos health is pending, RPC is serving chain data",
+                        service.id
+                    )
+                } else {
+                    format!(
+                        "{} is running; Talos health reports unhealthy but RPC is serving chain data (treating RPC as authoritative)",
+                        service.id
+                    )
+                };
             }
         }
     }
@@ -3104,6 +3127,98 @@ mod tests {
                 .map(|service| service.severity.as_str()),
             Some("ok")
         );
+    }
+
+    #[test]
+    fn protocore_readiness_overrides_unhealthy_flag_when_rpc_serves() {
+        // Regression for monarch-desktop #3: Talos health check has COMPLETED
+        // (health_unknown=false) and reports healthy=false, so summarize_service_state
+        // painted the service "degraded"/"err". But the RPC is confirmably serving
+        // chain data, which is authoritative -> the readiness must read "serving-rpc"
+        // (ok), not "degraded".
+        let mut service = service("degraded", "err");
+        service.state = "Running".to_string();
+        service.healthy = Some(false);
+        service.health_unknown = Some(false);
+        service.summary = "ext-protocore degraded (raw state: Running)".to_string();
+
+        let readiness = classify_protocore_readiness(
+            Some(service),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                chain_id: Some(69420),
+                block_number: Some(42),
+                client_version: Some("protocore/test".to_string()),
+                listening: Some(true),
+                syncing: Some(false),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(readiness.display_state, "serving-rpc");
+        assert_eq!(readiness.severity, "ok");
+        assert_eq!(
+            readiness
+                .service
+                .as_ref()
+                .map(|service| service.severity.as_str()),
+            Some("ok")
+        );
+        assert_eq!(
+            readiness
+                .service
+                .as_ref()
+                .map(|service| service.display_state.as_str()),
+            Some("running")
+        );
+    }
+
+    #[test]
+    fn protocore_readiness_keeps_degraded_when_unhealthy_and_rpc_down() {
+        // Guard: an unhealthy Talos report with NO serving RPC must still surface as
+        // degraded/err -- we only treat RPC as authoritative when it actually serves.
+        let mut service = service("degraded", "err");
+        service.state = "Running".to_string();
+        service.healthy = Some(false);
+        service.health_unknown = Some(false);
+        service.summary = "ext-protocore degraded (raw state: Running)".to_string();
+
+        let readiness = classify_protocore_readiness(
+            Some(service),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                chain_id_error: Some("eth_chainId transport failed".to_string()),
+                block_number_error: Some("eth_blockNumber transport failed".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(readiness.display_state, "degraded");
+        assert_eq!(readiness.severity, "err");
+    }
+
+    #[test]
+    fn protocore_readiness_keeps_stopped_service_when_unhealthy() {
+        // A genuinely-stopped service must not be promoted even if some RPC answers:
+        // raw state "stopped" wins, so readiness stays "stopped"/warn.
+        let mut service = service("stopped", "warn");
+        service.state = "Stopped".to_string();
+        service.healthy = Some(false);
+        service.health_unknown = Some(false);
+
+        let readiness = classify_protocore_readiness(
+            Some(service),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                chain_id: Some(69420),
+                block_number: Some(42),
+                syncing: Some(false),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(readiness.display_state, "stopped");
+        assert_eq!(readiness.severity, "warn");
     }
 
     #[test]

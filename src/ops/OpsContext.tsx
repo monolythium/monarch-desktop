@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -161,6 +162,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     receipts: readOperationReceipts(),
   }));
 
+  // Guards against re-submitting an in-flight execution: holds the request
+  // object whose flow has already been dispatched. A second `advance()` (rapid
+  // double-click, the ⌘⇧↵ shortcut racing the button, or a strict-mode double
+  // invocation of the `setState` updater) is a no-op so the same op never
+  // submits twice — which on register would surface as
+  // `duplicate tx already known` / `replace underpriced`.
+  const inFlightRef = useRef<OpRequest | null>(null);
+
   const finishOperation = useCallback(
     (req: OpRequest, result: OpResult, meta: OperationReceiptMeta) => {
       const receipt = createOperationReceipt(req, result, meta);
@@ -191,6 +200,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   );
 
   const requestOp = useCallback((op: OpRequest) => {
+    inFlightRef.current = null;
     setState((prev) => ({
       request: op,
       stage: "preview",
@@ -201,6 +211,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cancel = useCallback(() => {
+    inFlightRef.current = null;
     setState((prev) => ({ ...prev, open: false }));
     // Detach request after the slide-out finishes so the body doesn't flash empty.
     window.setTimeout(
@@ -210,6 +221,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const reset = useCallback(() => {
+    inFlightRef.current = null;
     setState((prev) => ({ ...initialState, receipts: prev.receipts }));
   }, []);
 
@@ -1431,6 +1443,11 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         case "preview":
           return { ...prev, stage: "auth" };
         case "auth": {
+          // Dispatch the flow at most once per request. The ref guard keeps a
+          // second advance (double-click / shortcut race / strict-mode double
+          // updater) from submitting the same tx twice.
+          if (inFlightRef.current === prev.request) return prev;
+          inFlightRef.current = prev.request;
           void runTalosFlow(prev.request);
           return { ...prev, stage: "executing" };
         }

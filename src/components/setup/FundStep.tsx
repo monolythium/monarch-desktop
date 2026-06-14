@@ -6,11 +6,12 @@
 // LYTH testnet minimum). The balance is polled every 8s and the step flips to
 // "funded" the instant it covers the bond.
 //
-// There is no faucet RPC/bridge method in the SDK (verified — nothing in
-// `@monolythium/core-sdk` exposes a faucet, and there is no local faucet
-// command), so rather than fake a "Request from faucet" button this step shows
-// the copy-able address plus instructions to fund it. The testnet faucet
-// (monobot) is operated out-of-band; the honest affordance is the address.
+// On testnet the bond is NOT funded by a self-service faucet — by design. The
+// operator copies the funding address below, joins the testnet Discord, and
+// requests the 5,000 LYTH operator bond from the team/foundation in the testnet
+// channels. That manual gate is deliberate: it keeps the operator set serious by
+// filtering out throwaway/fake registrations. So the honest affordance here is
+// the copy-able address plus a direct, clickable path to the Discord request.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatLyth } from "@monolythium/core-sdk";
@@ -21,6 +22,10 @@ import { CopyButton } from "./CopyButton";
 import { StepShell } from "./StepShell";
 
 const POLL_MS = 8_000;
+
+// Testnet bond requests go through the Foundation in the testnet Discord — a
+// deliberate manual gate (no self-service faucet) to keep the operator set serious.
+const DISCORD_INVITE_URL = "https://discord.gg/monolythium";
 
 export function FundStep({
   n,
@@ -136,11 +141,38 @@ export function FundStep({
             </p>
           ) : null}
 
-          <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: "12px 0 0", lineHeight: 1.5 }}>
-            On testnet, request LYTH from the faucet (the monobot faucet, operated out-of-band) or
-            from another funded account. This view polls the live balance and continues automatically
-            once it covers the bond.
-          </p>
+          <div
+            className="halo halo--info"
+            style={{
+              alignItems: "flex-start",
+              gap: 12,
+              margin: "14px 0 0",
+              padding: "12px 14px",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg-100)" }}>
+                How to get your {MIN_REGISTER_BOND_LYTH.toLocaleString()} LYTH testnet bond
+              </div>
+              <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: "6px 0 0", lineHeight: 1.5 }}>
+                Copy the funding address above, join the testnet Discord, open the testnet channels,
+                and request the {MIN_REGISTER_BOND_LYTH.toLocaleString()} LYTH operator bond from the
+                team/foundation. This is a deliberate manual gate — not an automated faucet — which
+                keeps the operator set serious. This view polls the live balance and continues
+                automatically once it covers the bond.
+              </p>
+            </div>
+            <a
+              className="btn btn--primary btn--sm"
+              href={DISCORD_INVITE_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              style={{ flex: "0 0 auto", alignSelf: "center" }}
+            >
+              Join testnet Discord ↗
+            </a>
+          </div>
         </>
       )}
     </StepShell>

@@ -9,6 +9,7 @@
 // reimplement signing. If already registered (or once the drawer reports the
 // row), the primary action becomes "Enter console" and routes to /home.
 
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { formatLyth } from "@monolythium/core-sdk";
 import { OP_CATALOG, useOps, type OpRequest } from "../../ops";
@@ -63,6 +64,27 @@ export function RegisterStep({
 
   const registered = self.registered === true;
   const knowsKey = self.status === "ready";
+
+  // The register tx is signed and submitted inside the shared Operations
+  // drawer (`launchRegister` → `ops.requestOp`), so this step never sees the
+  // submit return value directly. Watch the drawer lifecycle instead: once the
+  // operator-register op settles in the `done` stage with a successful result,
+  // notify the wizard so it advances past this step — otherwise a successful
+  // register silently strands the user here and setup appears to start over.
+  // Guarded with a ref so it fires exactly once per completed op.
+  const registerDoneNotified = useRef(false);
+  useEffect(() => {
+    if (ops.request?.kind !== "operator-register") {
+      // A different op (or none) is in the drawer — reset so the next
+      // register completion can notify again.
+      registerDoneNotified.current = false;
+      return;
+    }
+    if (ops.stage === "done" && ops.result?.ok && !registerDoneNotified.current) {
+      registerDoneNotified.current = true;
+      onDone?.();
+    }
+  }, [ops.request?.kind, ops.stage, ops.result?.ok, onDone]);
 
   const launchRegister = () => {
     const req = buildRegisterRequest(endpoint);
