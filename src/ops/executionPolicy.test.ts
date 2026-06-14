@@ -18,7 +18,7 @@ describe("operation execution policy", () => {
     const outcome = browserExecutionBlocked(request);
 
     expect(outcome.result.ok).toBe(false);
-    expect(outcome.result.message).toContain("was not executed");
+    expect(outcome.result.message).toContain("needs Monarch Desktop");
     expect(outcome.result.message).not.toMatch(/completed/i);
     expect(outcome.meta.transport).toBe("blocked");
   });
@@ -27,7 +27,7 @@ describe("operation execution policy", () => {
     const outcome = unsignedExecutionBlocked(request);
 
     expect(outcome.result.ok).toBe(false);
-    expect(outcome.result.message).toContain("signed production path");
+    expect(outcome.result.message).toContain("not available in this version");
     expect(outcome.meta.transport).toBe("blocked");
   });
 

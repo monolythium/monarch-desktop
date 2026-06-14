@@ -199,7 +199,7 @@ describe("CJ-1 submit helpers", () => {
       clusterId: 7,
       operatorPubkeyHex,
       bondLythoshi: "9000",
-    })).rejects.toThrow(/request preview is not exposed/u);
+    })).rejects.toThrow(/Join-request preview is unavailable/u);
 
     expect(submitWithPrivacy).not.toHaveBeenCalled();
     expect(transactionCountReads).toBe(0);

@@ -76,7 +76,7 @@ describe("serviceRewardEarningsView", () => {
     const view = serviceRewardEarningsView(inputs({ diversity: null }));
     const diversity = view.families.find((f) => f.key === "diversity");
     expect(diversity?.status).toBe("unknown");
-    expect(diversity?.detail).toContain("not exposed");
+    expect(diversity?.detail).toContain("unavailable");
   });
 
   it("reflects the live prover-market signal on the prover family", () => {

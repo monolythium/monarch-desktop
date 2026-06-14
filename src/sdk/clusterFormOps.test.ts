@@ -303,7 +303,7 @@ describe("formCluster submit helpers", () => {
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
       ...validInput(),
-    })).rejects.toThrow(/formCluster preview is not exposed/u);
+    })).rejects.toThrow(/Cluster-form preview is unavailable/u);
 
     expect(state.transactionCountReads).toBe(0);
     expect(state.submitWithPrivacy).not.toHaveBeenCalled();

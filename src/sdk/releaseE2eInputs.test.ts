@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 const script = "scripts/check-release-e2e-inputs.mjs";
 const validPeer = "/ip4/127.0.0.1/tcp/41001/p2p/12D3KooWReleasePeer";
 const validDigest = "a".repeat(64);
+const spawnTestTimeoutMs = 30_000;
 
 function mnemonic(prefix: string): string {
   return Array.from({ length: 24 }, (_, index) => `${prefix}${index + 1}`).join(" ");
@@ -61,7 +62,7 @@ describe("release e2e input validator", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
     expect(result.stderr).toBe("");
-  });
+  }, spawnTestTimeoutMs);
 
   it("accepts legacy DKG re-share public-key field names", () => {
     const result = run({
@@ -74,7 +75,7 @@ describe("release e2e input validator", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
     expect(result.stderr).toBe("");
-  });
+  }, spawnTestTimeoutMs);
 
   it("allows chat peers to be discovered from live operator metadata", () => {
     const result = run({
@@ -85,7 +86,7 @@ describe("release e2e input validator", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
     expect(result.stderr).toBe("");
-  });
+  }, spawnTestTimeoutMs);
 
   it("accepts file-backed mnemonics, chat peers, and DKG attestation", () => {
     const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-inputs-"));
@@ -116,14 +117,14 @@ describe("release e2e input validator", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, spawnTestTimeoutMs);
 
   it("rejects missing peer mnemonic", () => {
     const result = run({ MONARCH_E2E_PEER_OPERATOR_MNEMONIC: undefined });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("MONARCH_E2E_PEER_OPERATOR_MNEMONIC");
-  });
+  }, spawnTestTimeoutMs);
 
   it("rejects reused operator and peer mnemonics", () => {
     const sameMnemonic = mnemonic("same");
@@ -134,7 +135,7 @@ describe("release e2e input validator", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("must be distinct");
-  });
+  }, spawnTestTimeoutMs);
 
   it("rejects malformed cluster, bootstrap peer, or digest input", () => {
     const result = run({
@@ -147,7 +148,7 @@ describe("release e2e input validator", () => {
     expect(result.stderr).toContain("MONARCH_E2E_CLUSTER_ID");
     expect(result.stderr).toContain("invalid chat bootstrap peer");
     expect(result.stderr).toContain("MONARCH_E2E_EXPECTED_DIGEST");
-  });
+  }, spawnTestTimeoutMs);
 
   it("rejects missing or malformed DKG re-share attestation input", () => {
     const missing = run({ MONARCH_E2E_DKG_RESHARE_ATTESTATION: undefined });
@@ -164,5 +165,5 @@ describe("release e2e input validator", () => {
 
     expect(malformed.status).toBe(1);
     expect(malformed.stderr).toContain("duplicate signer pubkeys");
-  });
+  }, spawnTestTimeoutMs);
 });

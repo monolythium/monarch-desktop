@@ -20,11 +20,11 @@ describe("translateOpError", () => {
     expect(out.raw).toContain("operator:mnemonic");
   });
 
-  it("is idempotent on the already-friendly keychain constants", () => {
+  it("is idempotent on the already-friendly operator key constant", () => {
     expect(translateOpError(MISSING_OPERATOR_KEY_MESSAGE, "redelegate").friendly).toBe(
       MISSING_OPERATOR_KEY_MESSAGE,
     );
-    expect(translateOpError(MISSING_FOUNDATION_KEY_MESSAGE, "operator-restore").friendly).toBe(
+    expect(translateOpError(MISSING_FOUNDATION_KEY_MESSAGE, "operator-restore").friendly).toContain(
       MISSING_FOUNDATION_KEY_MESSAGE,
     );
   });

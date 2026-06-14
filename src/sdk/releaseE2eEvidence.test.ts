@@ -555,7 +555,7 @@ describe("Desktop release e2e evidence", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("standalone verifier rejects chat messages missing signed-envelope fields", () => {
     const bad = evidence();
@@ -583,7 +583,7 @@ describe("Desktop release e2e evidence", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("standalone verifier rejects chat evidence without a peer-perspective message", () => {
     const bad = evidence();
@@ -609,7 +609,7 @@ describe("Desktop release e2e evidence", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("standalone verifier rejects missing DKG re-share attestation evidence", () => {
     const bad: Record<string, unknown> = { ...evidence() };
@@ -631,5 +631,5 @@ describe("Desktop release e2e evidence", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });

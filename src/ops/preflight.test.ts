@@ -146,7 +146,7 @@ describe("buildPreflightRows", () => {
     );
     const foundation = rows.find((row) => row.id === "foundation-key");
     expect(foundation?.status).toBe("fail");
-    expect(foundation?.detail).toMatch(/foundation-only/i);
+    expect(foundation?.detail).toMatch(/recovery action/i);
   });
 
   it("blocks export-backup while the service is running", () => {

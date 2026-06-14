@@ -135,7 +135,7 @@ describe("operation catalog", () => {
     const swap = OP_CATALOG.find((entry) => entry.kind === "cluster-swap");
 
     expect(swap).toMatchObject({
-      title: "Cluster slot (foundation-coordinated)",
+      title: "Cluster slot change",
       confirmLabel: "Sign Rotate pending-change",
     });
     expect(prose(swap)).toContain("submitPendingChange(Rotate)");
