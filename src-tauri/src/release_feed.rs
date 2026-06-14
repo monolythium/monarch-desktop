@@ -23,6 +23,11 @@ const RELEASES_URL: &str = "https://api.github.com/repos/monolythium/protocore/r
 const INSTALLER_IMAGE_REPO: &str = "ghcr.io/monolythium/monarch-os-installer";
 const DEFAULT_CHANNEL: &str = "testnet";
 const FEED_TIMEOUT: Duration = Duration::from_secs(8);
+/// Hard ceiling on how many recent releases the list command will return,
+/// regardless of the caller's request — the dropdown shows a handful, not a
+/// scroll of history.
+const RECENT_MAX: usize = 10;
+const RECENT_DEFAULT: usize = 5;
 
 /// The latest signed protocore release for a channel, with the
 /// cross-release identity needed to compare against the running node.
@@ -89,6 +94,36 @@ fn select_latest(releases: &[Value], channel: &str) -> Option<Value> {
         .cloned()
 }
 
+/// Select up to `limit` non-draft releases for `channel`, newest first. Same
+/// channel/draft filter as `select_latest`, just keeping the whole ordered
+/// run instead of only the head. Pure, for inline-fixture unit tests.
+fn select_recent(releases: &[Value], channel: &str, limit: usize) -> Vec<Value> {
+    let suffix = format!("-{channel}");
+    let mut matches: Vec<&Value> = releases
+        .iter()
+        .filter(|release| {
+            if release.get("draft").and_then(Value::as_bool).unwrap_or(false) {
+                return false;
+            }
+            release
+                .get("tag_name")
+                .and_then(Value::as_str)
+                .map(|tag| tag.ends_with(&suffix))
+                .unwrap_or(false)
+        })
+        .collect();
+    // Newest first; break exact-timestamp ties on the tag so order is
+    // deterministic regardless of the array's incoming order.
+    matches.sort_by(|a, b| {
+        let pa = a.get("published_at").and_then(Value::as_str).unwrap_or("");
+        let pb = b.get("published_at").and_then(Value::as_str).unwrap_or("");
+        let ta = a.get("tag_name").and_then(Value::as_str).unwrap_or("");
+        let tb = b.get("tag_name").and_then(Value::as_str).unwrap_or("");
+        pb.cmp(pa).then_with(|| tb.cmp(ta))
+    });
+    matches.into_iter().take(limit).cloned().collect()
+}
+
 fn asset_names(release: &Value) -> Vec<String> {
     release
         .get("assets")
@@ -144,18 +179,10 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-/// GitHub Releases API → newest signed release for `channel` (default
-/// "testnet"). Unauthenticated; ~8s timeout. The manifest read degrades to
-/// `None` identity if the asset is absent or unfetchable, never failing the
-/// whole call.
-#[tauri::command]
-pub async fn latest_protocore_release(
-    channel: Option<String>,
-) -> Result<LatestProtocoreRelease, String> {
-    let channel = channel.unwrap_or_else(|| DEFAULT_CHANNEL.to_string());
-    let client = http_client()?;
-
-    let releases: Vec<Value> = client
+/// Fetch the channel's published releases from the GitHub Releases API.
+/// Unauthenticated; ~8s timeout.
+async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Value>, String> {
+    client
         .get(RELEASES_URL)
         .header("User-Agent", "monarch-desktop")
         .header("Accept", "application/vnd.github+json")
@@ -164,11 +191,14 @@ pub async fn latest_protocore_release(
         .map_err(|e| e.to_string())?
         .json()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
 
-    let release = select_latest(&releases, &channel)
-        .ok_or_else(|| format!("no published release for channel '{channel}'"))?;
-
+/// Assemble a `LatestProtocoreRelease` from a single GitHub release `Value`,
+/// reading the manifest asset for the cross-release identity. The manifest
+/// read is best-effort: any failure (asset absent, network, parse) degrades
+/// the identity to `None` without failing the whole build.
+async fn build_release(client: &reqwest::Client, release: &Value) -> LatestProtocoreRelease {
     let tag = release
         .get("tag_name")
         .and_then(Value::as_str)
@@ -196,15 +226,13 @@ pub async fn latest_protocore_release(
         .unwrap_or_default()
         .to_string();
 
-    let names = asset_names(&release);
+    let names = asset_names(release);
     let has_sig = names.iter().any(|n| n.ends_with(".sig"));
     let has_pem = names.iter().any(|n| n.ends_with(".pem"));
     let signed = has_sig && has_pem;
     let sbom = names.iter().any(|n| n.ends_with(".spdx.json"));
 
-    // Best-effort manifest read for the cross-release identity. Any failure
-    // (asset absent, network, parse) degrades to None without failing.
-    let (mono_core_commit, tarball_sha256) = match manifest_url(&release) {
+    let (mono_core_commit, tarball_sha256) = match manifest_url(release) {
         Some(url) => match client
             .get(&url)
             .header("User-Agent", "monarch-desktop")
@@ -221,7 +249,7 @@ pub async fn latest_protocore_release(
         None => (None, None),
     };
 
-    Ok(LatestProtocoreRelease {
+    LatestProtocoreRelease {
         installer_image: derive_installer_image(&tag),
         tag,
         name,
@@ -232,7 +260,53 @@ pub async fn latest_protocore_release(
         tarball_sha256,
         signed,
         sbom,
-    })
+    }
+}
+
+/// GitHub Releases API → newest signed release for `channel` (default
+/// "testnet"). Unauthenticated; ~8s timeout. The manifest read degrades to
+/// `None` identity if the asset is absent or unfetchable, never failing the
+/// whole call.
+#[tauri::command]
+pub async fn latest_protocore_release(
+    channel: Option<String>,
+) -> Result<LatestProtocoreRelease, String> {
+    let channel = channel.unwrap_or_else(|| DEFAULT_CHANNEL.to_string());
+    let client = http_client()?;
+
+    let releases = fetch_releases(&client).await?;
+    let release = select_latest(&releases, &channel)
+        .ok_or_else(|| format!("no published release for channel '{channel}'"))?;
+
+    Ok(build_release(&client, &release).await)
+}
+
+/// GitHub Releases API → the most recent published releases for `channel`,
+/// newest first. `limit` is clamped to `RECENT_MAX`; a missing/zero limit
+/// falls back to `RECENT_DEFAULT`. Powers the topbar update dropdown. Returns
+/// an empty list (not an error) when the channel has no published releases,
+/// so the dropdown degrades quietly. Each release's manifest is read
+/// best-effort, exactly as the single-latest command does.
+#[tauri::command]
+pub async fn recent_protocore_releases(
+    channel: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<LatestProtocoreRelease>, String> {
+    let channel = channel.unwrap_or_else(|| DEFAULT_CHANNEL.to_string());
+    let limit = match limit {
+        Some(0) | None => RECENT_DEFAULT,
+        Some(n) => n.min(RECENT_MAX),
+    };
+    let client = http_client()?;
+
+    let releases = fetch_releases(&client).await?;
+    let chosen = select_recent(&releases, &channel, limit);
+
+    let mut out = Vec::with_capacity(chosen.len());
+    for release in &chosen {
+        out.push(build_release(&client, release).await);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -361,5 +435,49 @@ mod tests {
             derive_installer_image("v0.1.52-testnet"),
             "ghcr.io/monolythium/monarch-os-installer:v0.1.52-testnet"
         );
+    }
+
+    #[test]
+    fn select_recent_returns_channel_releases_newest_first() {
+        let releases = releases_fixture();
+        let recent = select_recent(&releases, "testnet", 5);
+        // Only the two published testnet tags survive the filter (the draft,
+        // mainnet, and bare tags are excluded), newest first.
+        let tags: Vec<&str> = recent
+            .iter()
+            .map(|r| r["tag_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(tags, vec!["v0.1.52-testnet", "v0.1.50-testnet"]);
+    }
+
+    #[test]
+    fn select_recent_excludes_drafts_other_channels_and_bare_tags() {
+        let recent = select_recent(&releases_fixture(), "testnet", 10);
+        for release in &recent {
+            let tag = release["tag_name"].as_str().unwrap();
+            assert!(tag.ends_with("-testnet"), "leaked non-testnet tag: {tag}");
+            assert_ne!(tag, "v0.1.53-testnet", "leaked a draft");
+        }
+    }
+
+    #[test]
+    fn select_recent_honours_the_limit() {
+        let recent = select_recent(&releases_fixture(), "testnet", 1);
+        assert_eq!(recent.len(), 1);
+        // The single kept release must be the newest one.
+        assert_eq!(recent[0]["tag_name"], "v0.1.52-testnet");
+    }
+
+    #[test]
+    fn select_recent_head_matches_select_latest() {
+        let releases = releases_fixture();
+        let recent = select_recent(&releases, "testnet", 5);
+        let latest = select_latest(&releases, "testnet").unwrap();
+        assert_eq!(recent.first().unwrap()["tag_name"], latest["tag_name"]);
+    }
+
+    #[test]
+    fn select_recent_empty_for_unknown_channel() {
+        assert!(select_recent(&releases_fixture(), "devnet", 5).is_empty());
     }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import {
+  protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
   type LatestProtocoreRelease,
 } from "./protocoreRelease";
@@ -96,5 +97,77 @@ describe("protocore update status", () => {
     expect(
       protocoreUpdateStatus({ release: release(), provenance: provenance(null) }),
     ).toMatchObject({ state: "unknown", className: "halo halo--info" });
+  });
+});
+
+describe("protocore node release summary", () => {
+  // Newest-first list: v0.1.52 (newest) → v0.1.51 → v0.1.50 (oldest).
+  const NEWEST = "aaaaaaaaaaaa0000";
+  const MIDDLE = "bbbbbbbbbbbb0000";
+  const OLDEST = "cccccccccccc0000";
+
+  function list(): LatestProtocoreRelease[] {
+    return [
+      release({ tag: "v0.1.52-testnet", monoCoreCommit: NEWEST }),
+      release({ tag: "v0.1.51-testnet", monoCoreCommit: MIDDLE }),
+      release({ tag: "v0.1.50-testnet", monoCoreCommit: OLDEST }),
+    ];
+  }
+
+  it("labels the running release and reports no update when node is on the newest", () => {
+    // Node commit shares the first 12 chars of the newest release.
+    const summary = protocoreNodeReleaseSummary(list(), provenance("aaaaaaaaaaaa9999"));
+    expect(summary.label).toBe("v0.1.52-testnet");
+    expect(summary.current?.tag).toBe("v0.1.52-testnet");
+    expect(summary.updateAvailable).toBe(false);
+    expect(summary.latest?.tag).toBe("v0.1.52-testnet");
+  });
+
+  it("flags update available when the node is on an older listed release", () => {
+    const summary = protocoreNodeReleaseSummary(list(), provenance(OLDEST));
+    expect(summary.label).toBe("v0.1.50-testnet");
+    expect(summary.current?.tag).toBe("v0.1.50-testnet");
+    expect(summary.updateAvailable).toBe(true);
+  });
+
+  it("middle release sees a newer one but is not the latest", () => {
+    const summary = protocoreNodeReleaseSummary(list(), provenance(MIDDLE));
+    expect(summary.label).toBe("v0.1.51-testnet");
+    expect(summary.updateAvailable).toBe(true);
+  });
+
+  it("unknown build (still offers a move) when no listed release matches", () => {
+    const summary = protocoreNodeReleaseSummary(list(), provenance("ffffffffffff0000"));
+    expect(summary.current).toBeNull();
+    expect(summary.label).toBe("unknown build");
+    // A newer signed build exists to move to, since the list is non-empty.
+    expect(summary.updateAvailable).toBe(true);
+    expect(summary.latest?.tag).toBe("v0.1.52-testnet");
+  });
+
+  it("never claims an update when provenance is missing", () => {
+    const summary = protocoreNodeReleaseSummary(list(), null);
+    expect(summary.current).toBeNull();
+    expect(summary.label).toBe("unknown build");
+    expect(summary.updateAvailable).toBe(false);
+  });
+
+  it("never claims an update when the node reports no git commit", () => {
+    const summary = protocoreNodeReleaseSummary(list(), provenance(null));
+    expect(summary.label).toBe("unknown build");
+    expect(summary.updateAvailable).toBe(false);
+  });
+
+  it("empty release list yields unknown with no update and no latest", () => {
+    const summary = protocoreNodeReleaseSummary([], provenance(NEWEST));
+    expect(summary.current).toBeNull();
+    expect(summary.label).toBe("unknown build");
+    expect(summary.updateAvailable).toBe(false);
+    expect(summary.latest).toBeNull();
+  });
+
+  it("HONEST: never describes the node as outdated", () => {
+    const summary = protocoreNodeReleaseSummary(list(), provenance(OLDEST));
+    expect(JSON.stringify(summary).toLowerCase()).not.toContain("outdated");
   });
 });

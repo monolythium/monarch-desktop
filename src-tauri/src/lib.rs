@@ -106,6 +106,7 @@ pub fn run() {
             talos_maintenance::talos_maintenance_apply,
             provision::talos_generate_full_node_config,
             release_feed::latest_protocore_release,
+            release_feed::recent_protocore_releases,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

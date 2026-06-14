@@ -377,15 +377,20 @@ export type {
 } from "./releaseAttestation";
 export {
   fetchLatestProtocoreRelease,
+  fetchRecentProtocoreReleases,
+  protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
   useLatestProtocoreRelease,
+  useRecentProtocoreReleases,
 } from "./protocoreRelease";
 export type {
   LatestProtocoreRelease,
   LatestProtocoreReleaseHook,
+  NodeReleaseSummary,
   ProtocoreUpdateState,
   ProtocoreUpdateStatus,
   ProtocoreUpdateStatusInput,
+  RecentProtocoreReleasesHook,
 } from "./protocoreRelease";
 export { desktopReleaseReadiness } from "./releaseReadiness";
 export type {
