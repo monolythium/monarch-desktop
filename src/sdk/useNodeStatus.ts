@@ -19,12 +19,22 @@ export type NodeStatus = {
   chainId: number | null;
   blockNumber: number | null;
   currentRound: number | null;
+  /** How far the local DAG round trails the highest round a peer advertises. */
+  lag: number | null;
+  /** Highest round any peer has advertised (the committee tip). */
+  peerMaxRound: number | null;
+  /** Raw `lyth_syncStatus.state` (e.g. "synced" / "catching"). */
+  syncState: string | null;
   reachable: boolean;
   lastError: string | null;
   lastUpdatedAt: number | null;
 };
 
 const POLL_MS = 4000;
+// Within a few rounds of the committee head counts as caught up — the chain
+// advances every few seconds, so the local round trails the freshest advertised
+// round by a small margin even on a healthy node.
+const SYNCED_LAG = 5;
 
 type NativeChainStatus = {
   chainId?: number;
@@ -37,6 +47,9 @@ type NodeStatusFetch = {
   chainId: number | null;
   blockNumber: number | null;
   currentRound: number | null;
+  lag: number | null;
+  peerMaxRound: number | null;
+  syncState: string | null;
   reachable: boolean;
 };
 
@@ -44,7 +57,12 @@ type NodeStatusFetch = {
 // the fallback path doesn't re-ask every poll.
 let cachedChainId: number | null = null;
 
-type NativeSyncStatus = { localRound?: number; peerMaxRound?: number; lag?: number };
+type NativeSyncStatus = {
+  localRound?: number;
+  peerMaxRound?: number;
+  lag?: number;
+  state?: string;
+};
 
 async function fetchNodeStatus(): Promise<NodeStatusFetch> {
   // `lyth_currentRound`'s `height` is the EXECUTION (block) height — NOT the DAG
@@ -58,6 +76,14 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
   ]);
   const blockHeight = height !== null ? Number(height.height) : null;
   const dagRound = sync && typeof sync.localRound === "number" ? sync.localRound : null;
+  const peerMaxRound = sync && typeof sync.peerMaxRound === "number" ? sync.peerMaxRound : null;
+  const lag =
+    sync && typeof sync.lag === "number"
+      ? sync.lag
+      : dagRound !== null && peerMaxRound !== null
+        ? Math.max(0, peerMaxRound - dagRound)
+        : null;
+  const syncState = sync && typeof sync.state === "string" ? sync.state : null;
 
   if (native !== null) {
     if (typeof native.chainId === "number") cachedChainId = native.chainId;
@@ -65,6 +91,9 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
       chainId: cachedChainId,
       blockNumber: native.blockHeight ?? blockHeight ?? native.finalizedHeight ?? null,
       currentRound: dagRound ?? native.finalizedHeight ?? null,
+      lag,
+      peerMaxRound,
+      syncState,
       reachable: native.reachable ?? true,
     };
   }
@@ -83,8 +112,37 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
     chainId: cachedChainId,
     blockNumber: blockHeight ?? (block !== null ? Number(block) : null),
     currentRound: dagRound,
+    lag,
+    peerMaxRound,
+    syncState,
     reachable: true,
   };
+}
+
+/** Coarse, at-a-glance node readiness derived from a {@link NodeStatus}. */
+export type NodeReadiness = {
+  state: "unreachable" | "syncing" | "ready";
+  label: string;
+  tone: "ok" | "warn" | "err";
+};
+
+export function nodeReadiness(status: NodeStatus): NodeReadiness {
+  if (!status.reachable) {
+    return { state: "unreachable", label: "Unreachable", tone: "err" };
+  }
+  // Behind the committee: a far-ahead peer + a small/zero local round, or a
+  // raw "catching" state, or a lag past the synced threshold. `lag === null`
+  // (no syncStatus) falls through to "ready" since the RPC is answering.
+  const behind =
+    (status.lag !== null && status.lag > SYNCED_LAG) ||
+    (status.peerMaxRound !== null &&
+      status.peerMaxRound > 0 &&
+      (status.currentRound ?? 0) === 0) ||
+    (status.syncState !== null && status.syncState.toLowerCase().includes("catch"));
+  if (behind) {
+    return { state: "syncing", label: "Syncing", tone: "warn" };
+  }
+  return { state: "ready", label: "Ready", tone: "ok" };
 }
 
 export function useNodeStatus(): NodeStatus {
@@ -101,6 +159,9 @@ export function useNodeStatus(): NodeStatus {
       chainId: polled.data?.chainId ?? cachedChainId,
       blockNumber: polled.data?.blockNumber ?? null,
       currentRound: polled.data?.currentRound ?? null,
+      lag: polled.data?.lag ?? null,
+      peerMaxRound: polled.data?.peerMaxRound ?? null,
+      syncState: polled.data?.syncState ?? null,
       reachable: polled.data?.reachable ?? false,
       lastError: polled.error,
       lastUpdatedAt: polled.lastUpdatedAt,

@@ -24,8 +24,8 @@ export type {
   NetworkDiagnosticKind,
   NetworkDiagnosticResult,
 } from "./networkDiagnostics";
-export { useNodeStatus } from "./useNodeStatus";
-export type { NodeStatus } from "./useNodeStatus";
+export { useNodeStatus, nodeReadiness } from "./useNodeStatus";
+export type { NodeStatus, NodeReadiness } from "./useNodeStatus";
 export {
   DEFAULT_RPC_PORT,
   normalizeNodeEndpoint,

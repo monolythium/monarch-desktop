@@ -11,6 +11,7 @@ import {
   bpsToPercent,
   clusterLabel,
   evaluateClusterModel,
+  nodeReadiness,
   operatorRiskView,
   signingActivityView,
   useChainStatus,
@@ -43,7 +44,6 @@ export function Home() {
   const risk = useOperatorRisk(authorityIndex, 200);
   const signing = useOperatorSigningActivity(authorityIndex, 200);
   const duties = useUpcomingDuties(authorityIndex, 500);
-  const reachable = status.reachable && (chain.data?.reachable ?? true);
   const blockHeight =
     chain.data?.blockHeight || status.blockNumber || chain.data?.finalizedHeight || 0;
   const operatorCount = chain.data?.operatorCount ?? (clusterData ? members.length : null);
@@ -57,11 +57,67 @@ export function Home() {
   const attestation = duties.data?.duties.attestation;
   const keyRotation = duties.data?.duties.keyRotation;
 
+  // Clear, at-a-glance node readiness — the single answer to "is my node up and
+  // caught up?". Distinguishes Unreachable / Syncing / Ready instead of the old
+  // "synced whenever reachable" badge.
+  const readiness = nodeReadiness(status);
+  const nodeStatusDetail =
+    readiness.state === "unreachable"
+      ? `No response from ${status.endpoint}. Check the node is booted and the RPC is reachable.`
+      : readiness.state === "syncing"
+        ? status.peerMaxRound && status.peerMaxRound > 0
+          ? `Catching up to the committee — round ${(status.currentRound ?? 0).toLocaleString()} of ${status.peerMaxRound.toLocaleString()}${status.lag ? ` (${status.lag.toLocaleString()} behind)` : ""}.`
+          : "Catching up to the committee."
+        : "Booted and caught up — serving RPC and following the committee at the chain head.";
+
   return (
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Home</h1>
       </header>
+
+      <div className="card card--padded" style={{ marginBottom: 14 }} aria-label="Node status">
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <span className="cap">node status</span>
+          <span
+            className={`halo halo--${readiness.tone}`}
+            style={{ fontSize: 13, padding: "5px 12px" }}
+          >
+            <span className={readiness.state === "ready" ? "dot" : "dot dot--pulse"} /> {readiness.label}
+          </span>
+          <span style={{ color: "var(--fg-300)", fontSize: 12.5, flex: 1, minWidth: 200 }}>
+            {nodeStatusDetail}
+          </span>
+          <UpdatedAgo at={status.lastUpdatedAt ?? chain.lastUpdatedAt} />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 22,
+            marginTop: 12,
+            flexWrap: "wrap",
+            fontFamily: "var(--f-mono)",
+            fontSize: 12.5,
+          }}
+        >
+          <span>
+            <span className="cap" style={{ marginRight: 6 }}>chain</span>
+            {status.chainId ?? "—"}
+          </span>
+          <span>
+            <span className="cap" style={{ marginRight: 6 }}>round</span>
+            {status.currentRound !== null ? status.currentRound.toLocaleString() : "—"}
+          </span>
+          <span>
+            <span className="cap" style={{ marginRight: 6 }}>block</span>
+            {status.blockNumber !== null ? status.blockNumber.toLocaleString() : "—"}
+          </span>
+          <span style={{ color: "var(--fg-400)" }}>
+            <span className="cap" style={{ marginRight: 6 }}>rpc</span>
+            {status.endpoint}
+          </span>
+        </div>
+      </div>
 
       {chain.notExposed || cluster.notExposed ? (
         <div
@@ -83,9 +139,9 @@ export function Home() {
               </div>
             </div>
             <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-              <span className={reachable ? "halo halo--ok" : "halo halo--err"}>
+              <span className={`halo halo--${readiness.tone}`}>
                 <span className="dot dot--pulse" />
-                {reachable ? "synced" : "unreachable"}
+                {readiness.state === "ready" ? "synced" : readiness.label.toLowerCase()}
               </span>
               <UpdatedAgo at={status.lastUpdatedAt ?? chain.lastUpdatedAt} />
             </span>
