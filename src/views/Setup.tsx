@@ -201,7 +201,14 @@ export function Setup() {
 
   const railNode = useMemo(
     () => (
-      <div className="card setup__rail">
+      <div className="setup__rail" aria-label="Setup progress">
+        <div className="setup__rail-meta">
+          <span className="mono">
+            Step {Math.max(1, activeIdx + 1)} of {visibleSteps.length}
+          </span>
+          <b>{STEP_LABELS[active]}</b>
+        </div>
+        <div className="setup__rail-track">
         {visibleSteps.map((id, i) => {
           const can = reachable(id);
           const cls = [
@@ -221,13 +228,14 @@ export function Setup() {
               title={can ? undefined : "Finish the earlier steps first"}
             >
               <span className="setup__rail-num">{done[id] ? "✓" : i + 1}</span>
-              {STEP_LABELS[id]}
+              <span className="setup__rail-label">{STEP_LABELS[id]}</span>
             </button>
           );
         })}
+        </div>
       </div>
     ),
-    [visibleSteps, active, done, reachable],
+    [visibleSteps, active, activeIdx, done, reachable],
   );
 
   // The 1-based display number for the active step within the visible list.
@@ -256,15 +264,14 @@ export function Setup() {
   return (
     <section className="view fade-in">
       <div className="setup">
-        <div className="card setup__hero">
+        <div className="setup__hero">
           <div className="cap">monolythium operator console</div>
           <h1>
-            set up your <b>node</b>
+            Connect your <b>node</b>
           </h1>
           <p>
-            Point Monarch at the node you run — provision a fresh one if you need to — then choose
-            whether you're running a relay or becoming an operator. Everything else builds on a live
-            connection.
+            Start with the node URL. If it is a fresh Monarch OS install, Monarch will detect it
+            and offer provisioning before asking for operator keys or registration.
           </p>
         </div>
 
@@ -335,16 +342,16 @@ export function Setup() {
         active !== "provision" &&
         active !== "role" &&
         active !== "register" ? (
-          <div className="card" style={{ padding: "14px 20px" }}>
-            <div className="setup__foot" style={{ marginTop: 0, paddingTop: 0, borderTop: "none" }}>
+          <div className="setup__footer-actions">
+            <div className="setup__foot">
               {linearFoot(true)}
             </div>
           </div>
         ) : null}
 
         {active === "connect" && done.connect ? (
-          <div className="card" style={{ padding: "14px 20px" }}>
-            <div className="setup__foot" style={{ marginTop: 0, paddingTop: 0, borderTop: "none" }}>
+          <div className="setup__footer-actions">
+            <div className="setup__foot">
               <span className="setup__foot-spacer" />
               <button type="button" className="btn btn--primary" onClick={goNext}>
                 Continue →

@@ -416,7 +416,7 @@ export async function signUpdateCharterConsent(args: {
 }): Promise<UpdateCharterConsentSignResult> {
   if (!inTauriWebview()) {
     throw new CharterSignTransportUnavailableError(
-      "Charter signing requires the desktop app — running in browser preview.",
+      "Charter signing requires Monarch Desktop.",
     );
   }
   try {

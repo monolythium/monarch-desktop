@@ -1,14 +1,10 @@
 // Operator signing-key settings — imports PQM-1 mnemonics used by the
 // Operations drawer and stores them in the OS keychain via `keychain_set`.
-// Operator register/redelegate/chat use `operator:mnemonic`; foundation-only
-// recovery and roster lifecycle txs use `foundation:recovery-mnemonic` when
-// present.
+// Operator register/redelegate/chat use `operator:mnemonic`.
 //
-// Mirrors `AiSettings`: a single password-typed credential field, the
-// cleartext is dropped from React state the moment it is written to the
-// keychain, and the Rust side never holds it — the Operations drawer
-// reads it back from the keychain just long enough to construct the
-// register tx (see `OpsContext.runRegisterFlow` → `submitRegister`).
+// After successful storage, cleartext words are dropped from React state. The
+// Operations drawer reads the key back only long enough to build the signed
+// operator transaction.
 //
 // The input is validated against the PQM-1 spec before it is stored: a
 // 24-word BIP-39 mnemonic whose decoded 32-byte payload carries algo
@@ -43,6 +39,12 @@ type GenerationState = {
   confirmInputs: Record<number, string>;
 };
 
+const MNEMONIC_WORD_COUNT = 24;
+
+function emptyMnemonicWords(): string[] {
+  return Array.from({ length: MNEMONIC_WORD_COUNT }, () => "");
+}
+
 function pickConfirmIndices(total: number, count = 3): number[] {
   const picked = new Set<number>();
   while (picked.size < count) {
@@ -54,10 +56,9 @@ function pickConfirmIndices(total: number, count = 3): number[] {
 }
 
 export function OperatorKeySettings() {
-  const [mnemonicDraft, setMnemonicDraft] = useState("");
-  const [foundationDraft, setFoundationDraft] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [importWords, setImportWords] = useState<string[]>(emptyMnemonicWords);
   const [hasKey, setHasKey] = useState(false);
-  const [hasFoundationKey, setHasFoundationKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [generation, setGeneration] = useState<GenerationState | null>(null);
   const [message, setMessage] = useState<{
@@ -67,12 +68,8 @@ export function OperatorKeySettings() {
 
   const refresh = useCallback(async () => {
     try {
-      const [stored, foundationStored] = await Promise.all([
-        keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic),
-        keychainGet(KEYCHAIN_ACCOUNTS.foundationRecoveryMnemonic),
-      ]);
+      const stored = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
       setHasKey(stored !== null && stored.length > 0);
-      setHasFoundationKey(foundationStored !== null && foundationStored.length > 0);
     } catch (err) {
       setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
     }
@@ -82,77 +79,71 @@ export function OperatorKeySettings() {
     void refresh();
   }, [refresh]);
 
-  // Live validation hint for a non-empty draft. Empty draft = no hint
-  // (and the button switches to "Clear key").
-  const draftTrimmed = mnemonicDraft.trim();
-  const liveCheck: ValidationResult | null = draftTrimmed
-    ? validateOperatorMnemonic(draftTrimmed)
-    : null;
-  const foundationDraftTrimmed = foundationDraft.trim();
-  const foundationLiveCheck: ValidationResult | null = foundationDraftTrimmed
-    ? validateOperatorMnemonic(foundationDraftTrimmed)
+  const importStarted = importWords.some((word) => word.trim().length > 0);
+  const importComplete = importWords.every((word) => word.trim().length > 0);
+  const importMnemonic = importWords.map((word) => word.trim()).filter(Boolean).join(" ");
+  const liveCheck: ValidationResult | null = importStarted
+    ? validateOperatorMnemonic(importMnemonic)
     : null;
 
-  const persistMnemonic = async () => {
+  const updateImportWord = (index: number, value: string) => {
+    const pastedWords = value.trim().split(/\s+/u).filter(Boolean);
+    setImportWords((prev) => {
+      const next = [...prev];
+      if (pastedWords.length > 1) {
+        pastedWords.slice(0, MNEMONIC_WORD_COUNT - index).forEach((word, offset) => {
+          next[index + offset] = word;
+        });
+      } else {
+        next[index] = value.trim();
+      }
+      return next;
+    });
+  };
+
+  const clearMnemonic = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      if (!draftTrimmed) {
-        await keychainDelete(KEYCHAIN_ACCOUNTS.operatorMnemonic);
-        setHasKey(false);
-        setMessage({ tone: "info", text: "Operator mnemonic cleared." });
+      await keychainDelete(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+      setHasKey(false);
+      setMessage({ tone: "info", text: "Operator mnemonic cleared." });
+    } catch (err) {
+      setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const persistImportedMnemonic = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (!importComplete) {
+        setMessage({
+          tone: "warn",
+          text: "Enter all 24 words before saving the operator key.",
+        });
         return;
       }
-      const check = validateOperatorMnemonic(draftTrimmed);
+      const check = validateOperatorMnemonic(importMnemonic);
       if (!check.ok) {
         // Refuse to store anything that the signing path would reject.
         setMessage({ tone: check.tone, text: check.text });
         return;
       }
-      const normalized = draftTrimmed.replace(/\s+/g, " ");
+      const normalized = importMnemonic.replace(/\s+/g, " ");
       await keychainSet(KEYCHAIN_ACCOUNTS.operatorMnemonic, normalized);
       setHasKey(true);
       setMessage({
         tone: "ok",
         text: "Operator mnemonic stored in keychain.",
       });
+      setImportWords(emptyMnemonicWords());
+      setImportOpen(false);
     } catch (err) {
       setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
     } finally {
-      // Drop the cleartext from React state regardless of outcome — the
-      // Operations drawer reads it from the keychain on demand. The
-      // mounted input re-renders blank.
-      setMnemonicDraft("");
-      setBusy(false);
-    }
-  };
-
-  const persistFoundationMnemonic = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      if (!foundationDraftTrimmed) {
-        await keychainDelete(KEYCHAIN_ACCOUNTS.foundationRecoveryMnemonic);
-        setHasFoundationKey(false);
-        setMessage({ tone: "info", text: "Foundation operations mnemonic cleared." });
-        return;
-      }
-      const check = validateOperatorMnemonic(foundationDraftTrimmed);
-      if (!check.ok) {
-        setMessage({ tone: check.tone, text: check.text });
-        return;
-      }
-      const normalized = foundationDraftTrimmed.replace(/\s+/g, " ");
-      await keychainSet(KEYCHAIN_ACCOUNTS.foundationRecoveryMnemonic, normalized);
-      setHasFoundationKey(true);
-      setMessage({
-        tone: "ok",
-        text: "Foundation operations mnemonic stored in keychain.",
-      });
-    } catch (err) {
-      setMessage({ tone: "err", text: (err as Error)?.message ?? String(err) });
-    } finally {
-      setFoundationDraft("");
       setBusy(false);
     }
   };
@@ -213,7 +204,6 @@ export function OperatorKeySettings() {
   const tauri = inTauri();
 
   return (
-    <>
     <div className="card card--padded" style={{ maxWidth: 720 }}>
       <div className="card__head">
         <div>
@@ -232,67 +222,40 @@ export function OperatorKeySettings() {
         >
           <span className="dot" />
           {!tauri
-            ? "browser preview"
+            ? "Desktop app required"
             : hasKey
               ? "key stored"
               : "no key"}
         </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span className="cap">Operator mnemonic (24-word PQM-1)</span>
-          <input
-            type="password"
-            value={mnemonicDraft}
-            placeholder={
-              hasKey
-                ? "•••• stored in keychain · type to replace"
-                : "word1 word2 … word24"
-            }
-            onChange={(e) => setMnemonicDraft(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            className="mono"
-            style={{
-              padding: "10px 12px",
-              background: "rgba(255, 255, 255, 0.03)",
-              border:
-                liveCheck && !liveCheck.ok
-                  ? "1px solid var(--err-500, #c53030)"
-                  : "1px solid var(--glass-stroke)",
-              borderRadius: 8,
-              color: "var(--fg-100)",
-              fontSize: 13,
-              outline: "none",
-            }}
-          />
-        </label>
-        {liveCheck && !liveCheck.ok ? (
-          <div
-            className={`halo halo--${liveCheck.tone === "warn" ? "warn" : "err"}`}
-            style={{ alignSelf: "flex-start" }}
-          >
-            <span className="dot" /> {liveCheck.text}
+      <div className="operator-key-panel">
+        <div className="operator-key-status">
+          <div>
+            <div className="cap">operator key</div>
+            <strong>{hasKey ? "Stored in OS keychain" : "No key stored"}</strong>
           </div>
-        ) : null}
-        <div style={{ display: "flex", gap: 8 }}>
+          <span>{hasKey ? "Used when you register or sign operator actions." : "Import an existing key or create a new one."}</span>
+        </div>
+
+        <div className="operator-key-actions">
           <button
             type="button"
-            className="btn btn--sm"
-            onClick={persistMnemonic}
-            disabled={busy || !tauri || (!!draftTrimmed && !!liveCheck && !liveCheck.ok)}
+            className={!hasKey ? "btn btn--primary btn--sm" : "btn btn--sm"}
+            onClick={() => {
+              setImportOpen((open) => !open);
+              setMessage(null);
+            }}
+            disabled={busy || !!generation}
           >
-            {draftTrimmed ? "Save key" : "Clear key"}
+            {importOpen ? "Hide import" : "Import existing key"}
           </button>
           {!generation ? (
             <button
               type="button"
-              className="btn btn--primary btn--sm"
+              className={hasKey ? "btn btn--sm" : "btn btn--primary btn--sm"}
               onClick={startGeneration}
-              disabled={busy || !tauri}
+              disabled={busy}
               title={
                 hasKey
                   ? "Generates a brand-new key; storing it REPLACES the current one"
@@ -302,7 +265,80 @@ export function OperatorKeySettings() {
               Generate new key
             </button>
           ) : null}
+          {hasKey ? (
+            <button
+              type="button"
+              className="btn btn--danger btn--sm"
+              onClick={() => void clearMnemonic()}
+              disabled={busy || !tauri}
+            >
+              Clear stored key
+            </button>
+          ) : null}
         </div>
+
+        {importOpen ? (
+          <div className="settings-mnemonic-panel">
+            <div className="settings-mnemonic-panel__head">
+              <div>
+                <div className="cap">Import 24-word PQM-1 mnemonic</div>
+                <p>
+                  Paste the full mnemonic into any box or enter each word in order.
+                </p>
+              </div>
+              <span className="settings-mnemonic-count">
+                {importWords.filter((word) => word.trim()).length}/{MNEMONIC_WORD_COUNT}
+              </span>
+            </div>
+            <div className="settings-mnemonic-grid">
+              {importWords.map((word, index) => (
+                <label className="settings-word-field" key={index}>
+                  <span>{index + 1}</span>
+                  <input
+                    type="text"
+                    value={word}
+                    onChange={(event) => updateImportWord(index, event.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    className="mono"
+                    aria-label={`Mnemonic word ${index + 1}`}
+                  />
+                </label>
+              ))}
+            </div>
+            {liveCheck && !liveCheck.ok ? (
+              <div
+                className={`halo halo--${liveCheck.tone === "warn" ? "warn" : "err"}`}
+                style={{ alignSelf: "flex-start" }}
+              >
+                <span className="dot" /> {liveCheck.text}
+              </div>
+            ) : null}
+            <div className="operator-key-actions">
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={() => void persistImportedMnemonic()}
+                disabled={busy || !tauri || !importComplete || (!!liveCheck && !liveCheck.ok)}
+              >
+                Save imported key
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => {
+                  setImportWords(emptyMnemonicWords());
+                  setImportOpen(false);
+                }}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {generation ? (
@@ -409,7 +445,7 @@ export function OperatorKeySettings() {
                   type="button"
                   className="btn btn--primary btn--sm"
                   onClick={() => void confirmGeneration()}
-                  disabled={busy || generation.confirmIndices.some((index) => !(generation.confirmInputs[index] ?? "").trim())}
+                  disabled={busy || !tauri || generation.confirmIndices.some((index) => !(generation.confirmInputs[index] ?? "").trim())}
                 >
                   {hasKey ? "Confirm & replace stored key" : "Confirm & store key"}
                 </button>
@@ -427,7 +463,7 @@ export function OperatorKeySettings() {
 
       {!tauri ? (
         <div className="halo halo--warn" style={{ marginTop: 14, alignSelf: "flex-start" }}>
-          <span className="dot" /> running in browser preview — keychain writes are no-ops
+          <span className="dot" /> Open Monarch Desktop to save keys in the OS keychain.
         </div>
       ) : null}
 
@@ -448,99 +484,5 @@ export function OperatorKeySettings() {
         </div>
       ) : null}
     </div>
-    <div className="card card--padded" style={{ maxWidth: 720 }}>
-      <div className="card__head">
-        <div>
-          <h3>Foundation operations signer</h3>
-          <div className="sub">
-            PQM-1 mnemonic for foundation-authorized recoverOperatorNode and
-            submitPendingChange transactions. Leave absent on ordinary operator
-            installs; recovery and roster lifecycle actions then fail closed.
-          </div>
-        </div>
-        <span
-          className={
-            !tauri
-              ? "halo halo--warn"
-              : hasFoundationKey
-                ? "halo halo--ok"
-                : "halo halo--warn"
-          }
-        >
-          <span className="dot" />
-          {!tauri
-            ? "browser preview"
-            : hasFoundationKey
-              ? "key stored"
-              : "no key"}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <span className="cap">Foundation mnemonic (24-word PQM-1)</span>
-          <input
-            type="password"
-            value={foundationDraft}
-            placeholder={
-              hasFoundationKey
-                ? "•••• stored in keychain · type to replace"
-                : "word1 word2 … word24"
-            }
-            onChange={(e) => setFoundationDraft(e.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            className="mono"
-            style={{
-              padding: "10px 12px",
-              background: "rgba(255, 255, 255, 0.03)",
-              border:
-                foundationLiveCheck && !foundationLiveCheck.ok
-                  ? "1px solid var(--err-500, #c53030)"
-                  : "1px solid var(--glass-stroke)",
-              borderRadius: 8,
-              color: "var(--fg-100)",
-              fontSize: 13,
-              outline: "none",
-            }}
-          />
-        </label>
-        {foundationLiveCheck && !foundationLiveCheck.ok ? (
-          <div
-            className={`halo halo--${
-              foundationLiveCheck.tone === "warn" ? "warn" : "err"
-            }`}
-            style={{ alignSelf: "flex-start" }}
-          >
-            <span className="dot" /> {foundationLiveCheck.text}
-          </div>
-        ) : null}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={persistFoundationMnemonic}
-            disabled={
-              busy ||
-              !tauri ||
-              (!!foundationDraftTrimmed &&
-                !!foundationLiveCheck &&
-                !foundationLiveCheck.ok)
-            }
-          >
-            {foundationDraftTrimmed ? "Save key" : "Clear key"}
-          </button>
-        </div>
-      </div>
-
-      {!tauri ? (
-        <div className="halo halo--warn" style={{ marginTop: 14, alignSelf: "flex-start" }}>
-          <span className="dot" /> running in browser preview — keychain writes are no-ops
-        </div>
-      ) : null}
-    </div>
-    </>
   );
 }

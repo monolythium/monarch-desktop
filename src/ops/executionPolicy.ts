@@ -10,7 +10,7 @@ export function browserExecutionBlocked(req: OpRequest): BlockedOperationOutcome
   return {
     result: {
       ok: false,
-      message: `${req.title} was not executed. Browser preview has no Talos, SSH, keychain, or signing control channel.`,
+      message: `${req.title} needs Monarch Desktop with a connected node control channel.`,
     },
     meta: { transport: "blocked" },
   };
@@ -20,7 +20,7 @@ export function unsignedExecutionBlocked(req: OpRequest): BlockedOperationOutcom
   return {
     result: {
       ok: false,
-      message: `${req.title} is not wired to a signed production path yet.`,
+      message: `${req.title} is not available in this version of Monarch Desktop.`,
     },
     meta: { transport: "blocked" },
   };

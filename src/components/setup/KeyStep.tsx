@@ -8,8 +8,8 @@
 // the SDK (`pqm1MnemonicToAddress`). The mnemonic is shown ONCE behind a
 // "written it down" confirm, then dropped from React state.
 //
-// Outside Tauri (the `pnpm dev` browser preview) keychain writes are no-ops;
-// the step says so plainly rather than faking a stored key.
+// Outside the desktop app, the UI still renders for local review, but key
+// storage requires the OS keychain.
 
 import { useEffect, useState } from "react";
 import { generatePqm1Mnemonic, pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
@@ -122,8 +122,7 @@ export function KeyStep({
     >
       {!tauri ? (
         <div className="halo halo--warn" style={{ alignSelf: "flex-start", marginBottom: 12 }}>
-          <span className="dot" /> running in browser preview — keychain writes are no-ops here; key
-          creation works in the desktop app.
+          <span className="dot" /> Open Monarch Desktop to save this key in the OS keychain.
         </div>
       ) : null}
 

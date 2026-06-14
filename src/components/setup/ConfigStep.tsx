@@ -101,7 +101,7 @@ export function ConfigStep({
         <div style={{ display: "grid", gap: 10 }}>
           <p style={{ fontSize: 12.5, color: "var(--fg-300)", margin: 0, lineHeight: 1.5 }}>
             {state.kind === "browser"
-              ? "No Talos control channel in the browser preview — Monarch reads this node over plain RPC."
+              ? "Open Monarch Desktop to inspect Monarch OS directly. For now, Monarch can still read this node over RPC."
               : "No Monarch OS (Talos) control channel detected — Monarch is talking to this node over plain RPC. That's fine for a node you run yourself."}
           </p>
           <div className="kv"><span className="kv__k">rpc endpoint</span><span className="kv__v mono">{endpoint}</span></div>

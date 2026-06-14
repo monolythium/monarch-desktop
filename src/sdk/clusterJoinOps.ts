@@ -321,7 +321,7 @@ export async function previewRequestClusterJoin(
     }]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`CJ-1 request preview is not exposed or failed on the connected chain: ${message}`);
+    throw new Error(`Join-request preview is unavailable from the connected node: ${message}`);
   }
 }
 
@@ -345,7 +345,7 @@ export async function previewVoteClusterAdmit(
     }]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`CJ-1 admit-vote preview is not exposed or failed on the connected chain: ${message}`);
+    throw new Error(`Admission-vote preview is unavailable from the connected node: ${message}`);
   }
 }
 

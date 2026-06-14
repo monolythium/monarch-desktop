@@ -1,6 +1,6 @@
-// `useLogStream(filter, target?)` — bridges the Logs view to either
-// the native Talos API path for Monarch OS or the russh development
-// bridge for plain Linux hosts.
+// `useLogStream(filter, target?)` bridges the Logs view to the native Talos API
+// path for Monarch OS. Remote host streaming remains supported for internal
+// diagnostics, but it is not part of the standard operator setup flow.
 //
 //   * `target` of `LOCAL_TARGET` is an explicit no-stream state. It
 //     renders no fake log lines.
@@ -9,18 +9,9 @@
 //     bridge (`talos_log_stream`) using the operator's stored
 //     `talosconfig`.
 //
-//   * Any `ssh` target triggers a Tauri-side `ssh_exec_stream`
-//     for `journalctl -fu monod --output=json`. We listen for
-//     `monarch://ssh-log/<sessionId>` events, parse each journald
-//     entry, and push it into a FIFO buffer of size `BUFFER_LIMIT`.
-//     The Logs view applies its own regex / vim-key UX over the
-//     returned `lines` array.
-//
-// `monod` is the systemd unit name on the development operator hosts
-// (see `the internal testnet-infra runbook`).
-//
-// Tear-down on target switch / view unmount calls `ssh_exec_cancel`
-// so the Rust task drops the channel and stops emitting.
+// The Logs view applies its own filter and keyboard navigation over the
+// returned `lines` array. Tear-down on target switch/view unmount cancels the
+// active native stream so it stops emitting.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -46,26 +37,23 @@ export type LogEntry = {
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";
 
-/// SSH target descriptor. `id` is the dropdown key + Rust session
-/// label; `(local)` is the sentinel that disables streaming.
-export type SshTarget = {
+/// Log target descriptor. `(local)` is the sentinel that disables streaming.
+export type LogTarget = {
   id: string;
   transport: "local" | "talos" | "ssh";
   /// Display label shown in the dropdown.
   label: string;
   /// Hostname / IPv4. Empty for the local sentinel.
   host: string;
-  /// SSH user. Defaults to `root` on Hetzner testnet.
+  /// Remote user, used only for optional host targets.
   user: string;
-  /// Path to the private key file. The Rust side resolves it via
-  /// `russh_keys::load_secret_key` — passphrases come from the
-  /// keychain account `ssh:passphrase` if needed.
+  /// Path to the private key file for optional host targets.
   keyPath: string;
 };
 
 /// Sentinel for "do not stream". Lifted into a constant so component
 /// code can compare without re-deriving the id.
-export const LOCAL_TARGET: SshTarget = {
+export const LOCAL_TARGET: LogTarget = {
   id: "(local)",
   transport: "local",
   label: "(no stream)",
@@ -74,7 +62,7 @@ export const LOCAL_TARGET: SshTarget = {
   keyPath: "",
 };
 
-export const MONARCH_OS_TARGET: SshTarget = {
+export const MONARCH_OS_TARGET: LogTarget = {
   id: "monarch-os",
   transport: "talos",
   label: "Monarch OS · Talos",
@@ -83,21 +71,10 @@ export const MONARCH_OS_TARGET: SshTarget = {
   keyPath: "",
 };
 
-/// SSH operator targets. Empty in the published source — operators
-/// populate this from a local config file that is NOT committed.
-///
-/// To configure local targets, copy `examples/operators.json.example` to
-/// `examples/operators.json` (gitignored) and edit. An in-app loader that
-/// reads from `app_local_data_dir/operators.json` will replace this
-/// constant in a later milestone (see
-/// [`docs/final-product-readiness.md`](../../docs/final-product-readiness.md)).
-///
-/// Until then, `TESTNET_TARGETS` resolves to `[]` and the Logs dropdown
-/// shows only the Monarch OS Talos target plus the explicit no-stream
-/// option.
-export const TESTNET_TARGETS: SshTarget[] = [];
+/// Optional remote host targets. Empty for standard operator installs.
+export const TESTNET_TARGETS: LogTarget[] = [];
 
-export const ALL_TARGETS: SshTarget[] = [
+export const ALL_TARGETS: LogTarget[] = [
   MONARCH_OS_TARGET,
   ...TESTNET_TARGETS,
   LOCAL_TARGET,
@@ -110,11 +87,11 @@ const BUFFER_LIMIT = 1024;
 /// looking at a live tail.
 export type StreamStatus =
   | { kind: "local" }
-  | { kind: "talos-streaming"; target: SshTarget; sessionId: number }
-  | { kind: "connecting"; target: SshTarget }
-  | { kind: "streaming"; target: SshTarget; sessionId: number }
-  | { kind: "error"; target: SshTarget; error: string }
-  | { kind: "ended"; target: SshTarget };
+  | { kind: "talos-streaming"; target: LogTarget; sessionId: number }
+  | { kind: "connecting"; target: LogTarget }
+  | { kind: "streaming"; target: LogTarget; sessionId: number }
+  | { kind: "error"; target: LogTarget; error: string }
+  | { kind: "ended"; target: LogTarget };
 
 /// Module-level cache of the currently-connected target. The Rust side
 /// only holds one session at a time today; we mirror that here so the
@@ -122,7 +99,7 @@ export type StreamStatus =
 /// flips.
 let activeTargetId: string | null = null;
 
-async function ensureConnected(target: SshTarget): Promise<void> {
+async function ensureConnected(target: LogTarget): Promise<void> {
   if (!inTauri()) {
     // Browser preview — pretend we connected so the rest of the hook
     // stays linear.
@@ -234,7 +211,7 @@ export type LogStream = {
  * it so future server-side filtering (e.g. journalctl `--grep=`) can
  * land without changing every call site.
  */
-export function useLogStream(filter: string, target: SshTarget): LogStream {
+export function useLogStream(filter: string, target: LogTarget): LogStream {
   // `filter` is currently view-local; reading it ensures React tracks
   // it for stable hook semantics if we ever push filtering down to
   // journalctl `--grep=`.

@@ -293,7 +293,7 @@ export function Welcome() {
           Resume any time — progress is <b style={{ color: "var(--fg-200)" }}>detected, not remembered</b>.
           Monarch re-checks your keychain, your node, and the chain on every visit, so this list
           is always the truth even on a fresh install. Steps marked UNKNOWN cannot be verified
-          from here (for example in the browser preview); that is not the same as "not done".
+          from the current connection; that is not the same as "not done".
         </div>
       </div>
 

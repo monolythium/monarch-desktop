@@ -9,7 +9,7 @@
 //      streams progress; on completion we `relaunch()` so the freshly
 //      installed binary boots.
 //
-// Errors and the non-Tauri (browser preview) runtime both yield
+// Errors and non-desktop runtimes both yield
 // `available: false` — the banner stays hidden. We don't propagate
 // network errors to the UI: failing to fetch the update manifest is
 // not user-actionable, and a noisy banner would be worse than silence.

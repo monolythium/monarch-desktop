@@ -101,7 +101,7 @@ function isNotFound(err: unknown): boolean {
 /**
  * The local operator's identity + on-chain registration view.
  *
- * - `no-key`: nothing stored in the keychain (or browser preview) -
+ * - `no-key`: nothing stored in the keychain, or the OS keychain is unavailable -
  *   views should render a "set up your operator key" CTA instead of
  *   borrowing some other member's stats.
  * - `ready`: ids derived; `registered`/`clusterId` reflect the live

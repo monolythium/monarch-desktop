@@ -1,19 +1,6 @@
-// Operations drawer — slides in from the right. Stage indicator at top,
-// preview / auth / executing / done bodies, sticky footer with primary
-// "advance" button (gold-discipline) + ghost cancel.
-//
-// Dummy-proofing layers (all fail-closed):
-//   - PreflightChecks: per-verb preconditions (key stored / registered /
-//     balance ≥ bond / seal EK / foundation signer / service stopped)
-//     probed up front and rendered as green/red rows with fix-it links;
-//     verified failures disable "Authorize & run".
-//   - Live diff: the diff preview is computed from the ACTUAL form
-//     values, not the static catalog placeholders.
-//   - Typed confirmation: the 5 irreversible verbs require typing the
-//     verb (RESIGN / STOP / …) at the auth stage; operator-stop also
-//     shows the live quorum impact ("stopping leaves 6 of 7").
-//   - Error translation: failures render plain English + a next-step
-//     link, with the verbatim host message in an expandable details row.
+// Operations drawer — the right-side approval flow for operator actions.
+// Preconditions, live diffs, typed confirmations, and error translation are
+// handled here so every action follows the same review-before-run path.
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -547,7 +534,9 @@ export function OperationsDrawer() {
               title={inputTitle}
             >
               {stage === "preview"
-                ? "Authorize & run"
+                ? request?.kind === "operator-register"
+                  ? "Continue to signing"
+                  : "Authorize & run"
                 : stage === "auth"
                   ? request?.confirmLabel ?? "Sign & emit"
                   : "Working…"}
@@ -661,8 +650,8 @@ function DrawerBody({
       <>
         <p style={{ fontSize: 12.5, color: "var(--fg-300)" }}>
           {request.needsPasskey
-            ? "Confirm to hand off to the OS keychain. Signing key material never leaves the keychain — Monarch does not re-authenticate it."
-            : "Confirm to hand off to the OS keychain for signing."}
+            ? "Please confirm to hand off to the OS keychain. Signing key material never leaves the keychain — Monarch does not re-authenticate it."
+            : "Please confirm to hand off to the OS keychain for signing."}
         </p>
         <QuorumImpact kind={request.kind} />
         {typedWord ? (

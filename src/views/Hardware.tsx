@@ -50,7 +50,7 @@ export function Hardware() {
         telemetry: null,
         loading: false,
         error:
-          "Open the Monarch Desktop app to see hardware telemetry — the browser preview has no Talos control channel to your node.",
+          "Open Monarch Desktop to see hardware telemetry from your node.",
         telemetryError: null,
       });
       return;
@@ -188,7 +188,7 @@ export function Hardware() {
           <KV label="Memory" value={memoryLabel(state.telemetry)} />
           <KV label="Network counters" value={networkLabel(state.telemetry)} />
           <KV label="Disk I/O" value={diskIoLabel(state.telemetry)} />
-          <KV label="NVMe SMART" value="Talos SMART health endpoint not exposed" />
+          <KV label="NVMe SMART" value="SMART health data unavailable" />
           {(state.telemetry?.mounts ?? []).slice(0, 4).map((mount) => (
             <KV
               key={`${mount.filesystem}:${mount.mountedOn}`}

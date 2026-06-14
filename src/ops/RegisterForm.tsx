@@ -24,7 +24,10 @@ import {
   deriveOperatorConsensusPubkeyHex,
   inTauri,
   keychainGet,
+  normalizeNodeEndpoint,
   operatorPubkeyHash,
+  probeNodeEndpoint,
+  type NodeProbeResult,
 } from "../sdk";
 import { rpc } from "../sdk/client";
 import { MIN_REGISTER_BOND_LYTH, MIN_REGISTER_BOND_LYTHOSHI } from "../sdk/onboarding";
@@ -155,6 +158,11 @@ export function RegisterForm() {
   const { request, setRegisterInput } = useOps();
   const input = request?.registerInput;
   const [bondLyth, setBondLyth] = useState("");
+  const [endpointProbe, setEndpointProbe] = useState<{
+    status: "idle" | "testing" | "ok" | "err";
+    message: string;
+    result: NodeProbeResult | null;
+  }>({ status: "idle", message: "", result: null });
   const wallet = useRegisterWalletProbe();
   const validity = useMemo(() => {
     const endpointOk = !!input && input.endpoint.trim().length > 0;
@@ -177,6 +185,39 @@ export function RegisterForm() {
     endpoint: "",
     capabilities: 0,
     bondLythoshi: "0",
+  };
+
+  const testEndpoint = async () => {
+    setEndpointProbe({ status: "testing", message: "Testing endpoint…", result: null });
+    let normalized: string;
+    try {
+      normalized = normalizeNodeEndpoint(current.endpoint);
+      setRegisterInput({ endpoint: normalized });
+    } catch (err) {
+      setEndpointProbe({
+        status: "err",
+        message: (err as Error)?.message ?? String(err),
+        result: null,
+      });
+      return;
+    }
+    const probe = await probeNodeEndpoint(normalized);
+    if (probe.outcome === "ok") {
+      setEndpointProbe({
+        status: "ok",
+        message: `Endpoint reachable${probe.chainId ? ` · chain ${probe.chainId}` : ""}`,
+        result: probe,
+      });
+      return;
+    }
+    setEndpointProbe({
+      status: "err",
+      message:
+        probe.outcome === "wrong-chain"
+          ? `Endpoint responds, but on the wrong chain${probe.chainId ? ` (${probe.chainId})` : ""}.`
+          : probe.error ?? "Endpoint did not respond to the live probe.",
+      result: probe,
+    });
   };
 
   const toggleCap = (mask: number) => {
@@ -278,23 +319,53 @@ export function RegisterForm() {
 
       <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
         <span className="kv__k">Endpoint</span>
-        <input
-          type="url"
-          placeholder="https://node.example"
-          value={current.endpoint}
-          onChange={(e) => setRegisterInput({ endpoint: e.target.value })}
-          style={{
-            background: "rgba(0,0,0,0.3)",
-            border: validity.endpointOk
-              ? "1px solid rgba(255,255,255,0.1)"
-              : "1px solid var(--err-500, #c53030)",
-            color: "var(--fg-200)",
-            padding: "6px 8px",
-            fontSize: 12,
-            borderRadius: 6,
-            fontFamily: "inherit",
-          }}
-        />
+        <div className="register-endpoint-row">
+          <input
+            type="url"
+            placeholder="https://node.example"
+            value={current.endpoint}
+            onChange={(e) => {
+              setRegisterInput({ endpoint: e.target.value });
+              setEndpointProbe({ status: "idle", message: "", result: null });
+            }}
+            style={{
+              background: "rgba(0,0,0,0.3)",
+              border: validity.endpointOk
+                ? "1px solid rgba(255,255,255,0.1)"
+                : "1px solid var(--err-500, #c53030)",
+              color: "var(--fg-200)",
+              padding: "6px 8px",
+              fontSize: 12,
+              borderRadius: 6,
+              fontFamily: "inherit",
+              minWidth: 0,
+              flex: 1,
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => void testEndpoint()}
+            disabled={endpointProbe.status === "testing" || current.endpoint.trim().length === 0}
+          >
+            {endpointProbe.status === "testing" ? "Testing…" : "Test endpoint"}
+          </button>
+        </div>
+        {endpointProbe.status !== "idle" ? (
+          <span
+            className={`halo halo--${
+              endpointProbe.status === "ok"
+                ? "ok"
+                : endpointProbe.status === "testing"
+                  ? "info"
+                  : "err"
+            }`}
+            style={{ alignSelf: "flex-start", whiteSpace: "normal" }}
+          >
+            <span className={endpointProbe.status === "testing" ? "dot dot--pulse" : "dot"} />
+            {endpointProbe.message}
+          </span>
+        ) : null}
       </label>
 
       <div style={{ marginTop: 12 }}>

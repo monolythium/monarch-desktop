@@ -200,7 +200,7 @@ export function ConnectStep({
       </div>
 
       {result ? (
-        <div className={`setup__result ${ok ? "setup__result--ok" : "setup__result--err"}`}>
+        <div className={`setup__result ${ok ? "setup__result--ok" : maint ? "setup__result--warn" : "setup__result--err"}`}>
           {ok ? (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -248,10 +248,14 @@ export function ConnectStep({
                 <b style={{ fontSize: 13, color: "var(--fg-100)" }}>
                   {result.outcome === "wrong-chain"
                     ? "Reachable, but the wrong chain"
-                    : "Could not reach that node"}
+                    : maint
+                      ? "Fresh Monarch OS node detected"
+                      : "RPC endpoint is not reachable"}
                 </b>
                 <p style={{ fontSize: 12, color: "var(--fg-300)", margin: "4px 0 0", lineHeight: 1.5 }}>
-                  {result.error}
+                  {maint
+                    ? "The node answered on the maintenance API, but RPC is not configured yet. Provision it to bring the normal node endpoint online."
+                    : result.error}
                 </p>
                 {maintProbing ? (
                   <p style={{ fontSize: 11.5, color: "var(--fg-400)", margin: "6px 0 0" }}>

@@ -5,8 +5,7 @@
 // 300ms whenever the round advances (reduced-motion users get no flash).
 
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { getVersion } from "@tauri-apps/api/app";
+import { useLocation } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { useChainStatus, useNodeStatus } from "../sdk";
 import { EndpointChip } from "./EndpointChip";
@@ -21,26 +20,9 @@ export function TopBar({
   const status = useNodeStatus();
   const chain = useChainStatus();
   const location = useLocation();
-  const navigate = useNavigate();
   const reachable = status.reachable;
   const round = status.currentRound;
   const block = status.blockNumber;
-
-  // Real app version from the Tauri runtime (package.json / tauri.conf.json).
-  // Resolves to "" outside Tauri (`pnpm dev`) or while the IPC call is in
-  // flight, so the chip simply hides rather than showing a fake build tag.
-  const [version, setVersion] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    void getVersion()
-      .then((v) => {
-        if (!cancelled) setVersion(v);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // 300ms flash keyed by round change — driven by the WS feed, so the
   // chrome visibly ticks the moment a round seals.
@@ -57,7 +39,6 @@ export function TopBar({
   const current =
     NAV_ROUTES.find((r) => location.pathname === r.path)?.label ??
     (location.pathname === "/operator" ? "Operator" : "Home");
-  const operatorCount = chain.data?.operatorCount ?? 0;
   const chainId = chain.data?.chainId ?? status.chainId;
 
   // Render the platform-correct chord hint.
@@ -121,26 +102,9 @@ export function TopBar({
         )}
       </div>
 
-      <div className="monarch-topbar__round">
-        <span>operators</span>
-        <b>{operatorCount || "—"}</b>
-      </div>
-
       <EndpointChip />
 
-      {version ? <div className="monarch-topbar__version">v{version}</div> : null}
-
       <ThemeSwitcher />
-
-      <button
-        type="button"
-        className="monarch-topbar__avatar"
-        aria-label="Operator profile"
-        title="Operator profile"
-        onClick={() => navigate("/operator")}
-      >
-        M
-      </button>
     </header>
   );
 }

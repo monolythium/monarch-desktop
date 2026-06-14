@@ -472,7 +472,7 @@ export function ClusterFormProposalForm() {
           <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
             Paste one consensus pubkey per seat (each member shares theirs — the ceremony room
             automates this). Seats are checked live against the on-chain provider directory
-            {providers.notExposed ? " (directory not exposed on this endpoint)" : ""}.
+            {providers.notExposed ? " when the directory is available" : ""}.
           </span>
           {activeSeats.map((seat, index) => seatRow("active", index, seat))}
           <div style={{ borderTop: "1px solid var(--glass-stroke)", margin: "2px 0" }} />

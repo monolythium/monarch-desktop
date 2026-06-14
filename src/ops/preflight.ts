@@ -7,7 +7,7 @@
 // and an async collector (`collectPreflightProbes`) that runs the
 // existing src/sdk detectors. Probes use `boolean | null`:
 //   true / false -> verified; null -> cannot verify on this runtime
-//   ("not exposed" / browser preview is NOT the same as "not done").
+//   (unavailable data is NOT the same as "not done").
 // Only verified failures block authorization; unknowns never do.
 
 import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
@@ -165,14 +165,14 @@ export function buildPreflightRows(
     const status = triState(probes.hasFoundationKey, true);
     rows.push({
       id: "foundation-key",
-      label: "Foundation signer stored",
+      label: "Recovery authorization",
       status,
       detail:
         status === "ok"
-          ? "Foundation operations mnemonic found in the OS keychain."
+          ? "Recovery authorization is available on this install."
           : status === "unknown"
             ? "Keychain checks need the Monarch Desktop app."
-            : "This is a foundation-only action — ordinary operator installs do not have this signer.",
+            : "This recovery action is not available on this install.",
       fixRoute: status === "fail" ? "/keys" : undefined,
       fixLabel: status === "fail" ? "Open Keys" : undefined,
     });

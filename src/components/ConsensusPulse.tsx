@@ -300,29 +300,31 @@ export function ConsensusPulse() {
   }, [directory.data]);
 
   const thresholdAnnotation = useMemo(() => {
-    if (lanes.length === 0) return "cluster roster unavailable";
+    if (lanes.length === 0) return "roster unavailable";
     const shapes = [...new Set(lanes.map((l) => `${l.threshold}-of-${l.size}`))];
-    return `${shapes.join(" · ")} × ${lanes.length} cluster${lanes.length === 1 ? "" : "s"}`;
+    return `quorum ${shapes.join(" · ")} · ${lanes.length} cluster${lanes.length === 1 ? "" : "s"}`;
   }, [lanes]);
 
   const latestRound = rounds.length > 0 ? rounds[rounds.length - 1]!.round : null;
   const selected = selectedRound !== null ? roundsRef.current.get(selectedRound) ?? null : null;
 
   const feedHalo = feed.live
-    ? { cls: "halo halo--ok", label: "live push" }
+    ? { cls: "halo halo--ok", label: "live" }
     : roundSignal.data
-      ? { cls: "halo halo--warn", label: "polling fallback" }
+      ? { cls: "halo halo--warn", label: "updating" }
       : feed.state === "connecting"
         ? { cls: "halo halo--info", label: "connecting" }
-        : { cls: "halo halo--warn", label: "waiting for rounds" };
+        : { cls: "halo halo--warn", label: "waiting" };
 
   return (
-    <div className="card card--padded pulse" aria-label="Consensus pulse">
+    <div className="card card--padded pulse" aria-label="Consensus activity">
       <div className="pulse__head">
         <div>
-          <h3>Consensus pulse</h3>
+          <h3>Consensus activity</h3>
           <div className="sub">
-            last {rounds.length || "—"} rounds · gold halo = signer in round certificate · box = seat authored
+            {rounds.length > 0
+              ? `${rounds.length} recent rounds observed`
+              : "waiting for recent rounds"}
           </div>
         </div>
         <div className="pulse__head-meta">
@@ -336,8 +338,7 @@ export function ConsensusPulse() {
 
       {rounds.length === 0 ? (
         <div className="pulse__empty">
-          No rounds observed yet — waiting for the node's commit stream
-          {feed.live ? "" : " (WS push unavailable on this endpoint; polling)"}.
+          Waiting for recent rounds from the connected node.
         </div>
       ) : (
         <div className="pulse__strip" ref={stripRef} onScroll={onStripScroll}>
@@ -507,8 +508,7 @@ function RoundPopover({
         <div className="pulse__pop-note">Fetching the round certificate…</div>
       ) : entry.cert.status === "unsupported" ? (
         <div className="pulse__pop-note">
-          lyth_getRoundCertificate is not exposed by this endpoint — signer-set
-          detail is unavailable here.
+          Signer detail is not available from this node yet.
         </div>
       ) : entry.cert.status === "error" ? (
         <div className="pulse__pop-note">Certificate read failed: {entry.cert.message}</div>

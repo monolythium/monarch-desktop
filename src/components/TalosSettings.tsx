@@ -418,7 +418,7 @@ export function TalosSettings() {
           }
           title={status.lastError ?? status.version ?? undefined}
         >
-          <span className="dot" /> {tauri ? statusText(status) : "browser preview"}
+          <span className="dot" /> {tauri ? statusText(status) : "Desktop app required"}
         </span>
       </div>
 
@@ -456,7 +456,7 @@ export function TalosSettings() {
         </div>
         <Field
           label="expected Protocore digest"
-          placeholder="64-character SHA-256 hex, optional for dev"
+          placeholder="64-character SHA-256 hex, optional"
           value={form.releaseDigest}
           onChange={(v) => setForm((s) => ({ ...s, releaseDigest: v }))}
           mono

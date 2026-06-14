@@ -2,8 +2,7 @@
 // fuzzy-searches across:
 //
 //   - every nav route (jumps via react-router)
-//   - every Operations verb (invokes `requestOp` so the keychain-bound
-//     drawer state machine handles it like a manual click)
+//   - available operator actions
 //   - starter Ask Monarch queries (opens the live advisory rail)
 //   - a live "Chain" group: the input is debounced against
 //     lyth_resolveName / lyth_operatorInfo / lyth_search, plus copy
@@ -20,8 +19,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { OP_CATALOG, useOps } from "../ops";
+import { FOUNDATION_OP_KINDS } from "../ops/errors";
 import { rpc, rpcEndpoint } from "../sdk/client";
-import { useSelfOperator } from "../hooks/useSelfOperator";
+import { useKeychainPresence, useSelfOperator } from "../hooks/useSelfOperator";
 import "../styles/livedata.css";
 
 type AskQuery = {
@@ -148,7 +148,7 @@ async function queryChain(input: string): Promise<ChainHit[]> {
         });
       }
     } catch {
-      // Name registry not exposed or name unregistered — skip.
+      // Name registry unavailable or name unregistered — skip.
     }
   }
 
@@ -163,7 +163,7 @@ async function queryChain(input: string): Promise<ChainHit[]> {
       });
     }
   } catch {
-    // lyth_search not exposed on this endpoint — name/operator hits stand alone.
+    // lyth_search unavailable on this endpoint — name/operator hits stand alone.
   }
 
   // De-dupe by id, keep first occurrence.
@@ -177,8 +177,12 @@ async function queryChain(input: string): Promise<ChainHit[]> {
 
 // -------------------------------------------------------------------------
 
-function buildItems(selfAddress: string | null, selfOperatorId: string | null): Item[] {
-  const routes: Item[] = NAV_ROUTES.map((r) => ({
+function buildItems(
+  selfAddress: string | null,
+  selfOperatorId: string | null,
+  hasFoundationKey: boolean,
+): Item[] {
+  const routes: Item[] = NAV_ROUTES.filter((r) => !r.preview).map((r) => ({
     kind: "route",
     id: `route:${r.path}`,
     label: r.label,
@@ -187,20 +191,24 @@ function buildItems(selfAddress: string | null, selfOperatorId: string | null): 
     path: r.path,
     icon: r.icon,
   }));
-  const ops: Item[] = OP_CATALOG.map((o, i) => ({
-    kind: "op",
-    id: `op:${o.kind}`,
-    label: o.title,
-    sub: `${o.category} · ${o.sub}`,
-    keywords: [
-      o.category,
-      o.kind,
-      ...(o.keywords ?? []),
-      o.title.toLowerCase(),
-    ],
-    opIndex: i,
-    icon: o.icon ?? "OP",
-  }));
+  const ops: Item[] = OP_CATALOG.flatMap((o, i) =>
+    !hasFoundationKey && FOUNDATION_OP_KINDS.has(o.kind)
+      ? []
+      : [{
+          kind: "op" as const,
+          id: `op:${o.kind}`,
+          label: o.title,
+          sub: `${o.category} · ${o.sub}`,
+          keywords: [
+            o.category,
+            o.kind,
+            ...(o.keywords ?? []),
+            o.title.toLowerCase(),
+          ],
+          opIndex: i,
+          icon: o.icon ?? "OP",
+        }],
+  );
   const ask: Item[] = ASK_QUERIES.map((s, i) => ({
     kind: "ask",
     id: `ask:${i}`,
@@ -256,13 +264,14 @@ export function CommandPalette({
   const navigate = useNavigate();
   const ops = useOps();
   const self = useSelfOperator();
+  const presence = useKeychainPresence();
   const [search, setSearch] = useState("");
   const [mru, setMru] = useState<MruMap>(() => readPaletteMru());
   const [chainHits, setChainHits] = useState<ChainHit[]>([]);
 
   const items = useMemo(
-    () => buildItems(self.address, self.operatorId),
-    [self.address, self.operatorId],
+    () => buildItems(self.address, self.operatorId, presence.hasFoundationKey),
+    [presence.hasFoundationKey, self.address, self.operatorId],
   );
 
   // Reset search when the palette closes; re-read MRU when it opens so
@@ -433,6 +442,6 @@ export function CommandPalette({
   );
 }
 
-/** Total commands surfaced (used for telemetry / smoke checks). */
+/** Maximum commands surfaced (used for telemetry / smoke checks). */
 export const COMMAND_COUNT =
-  NAV_ROUTES.length + OP_CATALOG.length + ASK_QUERIES.length;
+  NAV_ROUTES.filter((route) => !route.preview).length + OP_CATALOG.length + ASK_QUERIES.length;

@@ -146,7 +146,7 @@ export function serviceRewardEarningsView(
         ? `${bps(diversity.score)} spread · ASN ${bps(diversity.asnVariance)} · geo ${bps(
             diversity.geoVariance,
           )} · hosting ${bps(diversity.hostingSpread)}`
-        : "diversity read not exposed by this endpoint";
+        : "diversity data unavailable";
       return {
         key,
         label: meta.label,

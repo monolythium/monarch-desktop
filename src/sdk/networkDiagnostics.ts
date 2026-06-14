@@ -19,7 +19,7 @@ function notRun(kind: NetworkDiagnosticKind, target: string): NetworkDiagnosticR
     kind,
     target,
     output:
-      "Network diagnostic not run: no active SSH session or Monarch OS telemetry channel is connected.",
+      "Network diagnostic not run: no node control channel is connected.",
     ran: false,
     preview: false,
   };

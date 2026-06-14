@@ -55,9 +55,9 @@ export const KEYCHAIN_ACCOUNTS = {
   /// drawer reads this in-memory just long enough to construct the
   /// register tx; the secret never leaves the Tauri sandbox.
   operatorMnemonic: "operator:mnemonic",
-  /// Foundation-only PQM-1 mnemonic used to submit recoverOperatorNode(bytes32)
-  /// and submitPendingChange(uint8,bytes,uint64,uint64). Ordinary operator
-  /// installs should leave this absent; foundation-gated actions fail closed.
+  /// Recovery-authorized PQM-1 mnemonic used by support builds for guarded
+  /// recovery and roster lifecycle actions. Operator installs leave this
+  /// absent, so those actions fail closed.
   foundationRecoveryMnemonic: "foundation:recovery-mnemonic",
 } as const;
 

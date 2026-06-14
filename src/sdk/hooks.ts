@@ -66,7 +66,7 @@ export function isMethodNotFound(err: unknown): boolean {
   if (e.code === RPC_METHOD_NOT_FOUND) return true;
   const msg = (e.message ?? "").toLowerCase();
   // -32045 is overloaded in mono-core: RpcError::MethodDisabled AND a mempool
-  // spending-policy rejection. Only treat the code as "not exposed" when the
+  // spending-policy rejection. Only treat the code as "unavailable" when the
   // message confirms it's the disabled-method case — never on the bare code,
   // or a real, actionable policy rejection would be silently hidden.
   if (e.code === RPC_METHOD_DISABLED && msg.includes("method disabled")) return true;
@@ -80,8 +80,8 @@ export function isMethodNotFound(err: unknown): boolean {
 // The #53 ML-DSA-vs-BLS authority-key gap surfaces as a -32603 internal
 // error ("provider returned malformed BLS pubkey ... must be 48 bytes,
 // got 1952") when resolving a real operator's authority. The method works;
-// the chain just can't answer yet — so treat it as "authority not exposed
-// on this node yet" instead of a hard error that masks the real cause.
+// the chain just can't answer yet, so surface it as unavailable on this node
+// instead of a hard error that masks the real cause.
 export function isOperatorAuthorityUnavailable(err: unknown): boolean {
   const e = err as { code?: number; message?: string } | null;
   if (!e) return false;

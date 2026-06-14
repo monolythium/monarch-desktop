@@ -1,14 +1,12 @@
 // Settings — the one place to change how Monarch connects and to update the
 // app. Software updates (manual check + one-click install), the node RPC
 // endpoint (with live connection status so a behind/syncing node is obvious),
-// the operator key, and the Talos / SSH / Ask-Monarch console settings all
-// live here — previously these were scattered at the bottom of Operations.
+// the operator key, and the Talos / Ask-Monarch console settings all live here.
 
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { AiSettings } from "../components/AiSettings";
 import { OperatorKeySettings } from "../components/OperatorKeySettings";
-import { SshSettings } from "../components/SshSettings";
 import { TalosSettings } from "../components/TalosSettings";
 import {
   checkForUpdate,
@@ -22,6 +20,34 @@ import {
   useChainStatus,
   useNodeStatus,
 } from "../sdk";
+
+function SettingsSection({
+  title,
+  description,
+  meta,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  description: string;
+  meta?: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details className="settings-section" {...(defaultOpen ? { open: true } : {})}>
+      <summary className="settings-section__summary">
+        <span className="settings-section__copy">
+          <span className="settings-section__title">{title}</span>
+          <span className="settings-section__description">{description}</span>
+        </span>
+        {meta ? <span className="settings-section__meta">{meta}</span> : null}
+        <span className="settings-section__chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div className="settings-section__body">{children}</div>
+    </details>
+  );
+}
 
 /** Software updates — manual check + one-click install & restart. */
 function UpdatesCard() {
@@ -181,16 +207,45 @@ export function Settings() {
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Settings</h1>
-        <p className="view__subtitle">Updates, node connection, your operator key, and console bridges.</p>
+        <p className="view__subtitle">Open a section only when you need to change it.</p>
       </header>
 
-      <div className="ops-settings__grid">
-        <UpdatesCard />
-        <NodeConnectionCard />
-        <OperatorKeySettings />
-        <TalosSettings />
-        <SshSettings />
-        <AiSettings />
+      <div className="ops-settings__grid settings-list">
+        <SettingsSection
+          title="Software updates"
+          description="Check for signed Monarch Desktop releases."
+          meta="desktop"
+        >
+          <UpdatesCard />
+        </SettingsSection>
+        <SettingsSection
+          title="Node connection"
+          description="Choose the Protocore RPC endpoint Monarch reads from."
+          meta="operator"
+        >
+          <NodeConnectionCard />
+        </SettingsSection>
+        <SettingsSection
+          title="Operator signing key"
+          description="Import or generate the 24-word key used for registry actions."
+          meta="operator"
+        >
+          <OperatorKeySettings />
+        </SettingsSection>
+        <SettingsSection
+          title="Monarch OS"
+          description="Talos endpoint, talosconfig, release digest, and runtime checks."
+          meta="advanced"
+        >
+          <TalosSettings />
+        </SettingsSection>
+        <SettingsSection
+          title="Ask Monarch"
+          description="Hosted or local advisory model configuration."
+          meta="optional"
+        >
+          <AiSettings />
+        </SettingsSection>
       </div>
     </section>
   );

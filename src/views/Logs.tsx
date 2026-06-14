@@ -1,6 +1,6 @@
-// Logs — regex filter, level pills, monospace stream. Header hosts the
-// target picker. Monarch OS streams through the Talos API; development
-// SSH targets use `journalctl -fu monod -o json` through the russh bridge.
+// Logs — regex filter, level pills, monospace stream. Monarch OS streams
+// through the Talos API; the explicit no-stream target keeps the view usable
+// when a node control channel has not been configured.
 //
 // The streaming itself lives in `useLogStream(filter, target)` over in
 // `src/sdk/useLogStream.ts` — this view stays presentational. The
@@ -12,7 +12,7 @@ import {
   ALL_TARGETS,
   LOCAL_TARGET,
   MONARCH_OS_TARGET,
-  type SshTarget,
+  type LogTarget,
   type StreamStatus,
   useIndexerStatus,
   useLogStream,
@@ -37,7 +37,7 @@ function streamHalo(status: StreamStatus): { cls: string; text: string; title: s
         title:
           status.target.transport === "talos"
             ? "fetching ext-protocore logs through Talos API"
-            : `opening russh session to ${status.target.host}`,
+            : `opening remote log session to ${status.target.host}`,
       };
     case "talos-streaming":
       return {
@@ -49,7 +49,7 @@ function streamHalo(status: StreamStatus): { cls: string; text: string; title: s
       return {
         cls: "halo halo--ok",
         text: `stream · ${status.target.id} · live`,
-        title: `journalctl -fu monod via russh (session ${status.sessionId})`,
+        title: `remote log session ${status.sessionId}`,
       };
     case "ended":
       return {
@@ -70,7 +70,7 @@ export function Logs() {
   const [query, setQuery] = useState("");
   const [activeLevel, setActiveLevel] = useState<Level>("all");
   const [cursor, setCursor] = useState(0);
-  const [target, setTarget] = useState<SshTarget>(MONARCH_OS_TARGET);
+  const [target, setTarget] = useState<LogTarget>(MONARCH_OS_TARGET);
   const [pinned, setPinned] = useState<string[]>(() => readPins());
   const indexer = useIndexerStatus();
   const { lines, status } = useLogStream(query, target);
@@ -217,7 +217,7 @@ export function Logs() {
       <header>
         <h1 className="view__title">Logs</h1>
         <p className="view__subtitle">
-          native Talos stream · dev SSH tail · regex filters · pinned lines audit-bound
+          Live node logs with filters and pinned lines.
         </p>
       </header>
 

@@ -6,7 +6,7 @@
 // Dummy-proofing: source/destination are picked from the LIVE cluster
 // directory (dropdowns) and the weight is a percentage slider mapped to
 // basis points. Raw numeric inputs remain as the fallback when the
-// cluster directory is not exposed on the connected endpoint.
+// cluster directory is unavailable on the connected endpoint.
 
 import { useMemo, type CSSProperties } from "react";
 import { clusterLabel, useClusterDirectory } from "../sdk";
@@ -146,7 +146,7 @@ export function RedelegateForm() {
         {!hasDirectory ? (
           <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
             {directory.notExposed
-              ? "Cluster directory is not exposed on this endpoint — enter the cluster id manually."
+              ? "Cluster directory is not available from this node yet — enter the cluster id manually."
               : directory.loading
                 ? "Loading the live cluster directory…"
                 : "No clusters listed — enter the cluster id manually."}

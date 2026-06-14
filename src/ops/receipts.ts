@@ -238,7 +238,7 @@ export function appendOperationReceipt(receipt: OperationReceipt): OperationRece
     try {
       store.setItem(STORAGE_KEY, JSON.stringify(next));
     } catch {
-      // Audit storage is best-effort in browser preview and locked-down webviews.
+      // Audit storage is best-effort when local storage is locked down.
     }
   }
   return next;

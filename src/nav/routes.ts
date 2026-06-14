@@ -187,7 +187,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g i",
     group: "Setup",
     icon: "IN",
-    keywords: ["install", "wizard", "setup", "onboard", "ssh"],
+    keywords: ["install", "wizard", "setup", "onboard", "talos", "monarch os"],
   },
   {
     path: "/settings",

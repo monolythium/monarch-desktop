@@ -1,18 +1,9 @@
-// Operations drawer context — every destructive action goes through here.
-// The drawer is a dedicated right-side panel (not a modal). State machine:
-//   preview  — operator sees the planned diff before any signing
-//   auth     — hand-off to the OS keychain for signing (no separate passkey)
-//   executing— RPC submitted, awaiting receipt
-//   done     — terminal success or error state, ack to dismiss
+// Operations drawer context — every sensitive action goes through the same
+// review, authorization, execution, and receipt lifecycle.
 //
-// Monarch OS service verbs route through Talos API mTLS. SSH remains a
-// development fallback for plain Linux hosts where the Talos path is
-// not available. Browser preview and unsupported verbs never produce
-// success receipts; they are blocked until a live control channel exists.
-//
-// Verbs with dedicated chain/Talos helpers run before `commandFor(op)`;
-// verbs that still lack a TPM/ledger/keychain/foundation path stay
-// blocked in Tauri instead of falling back to shell execution.
+// Monarch OS service verbs route through Talos API mTLS. Actions without a
+// signed or native control path are blocked instead of falling back to shell
+// execution.
 
 import {
   createContext,
@@ -242,9 +233,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         { transport: "ssh-dev", command: cmd },
       );
     } catch (err) {
-      // No-session falls back only in the browser preview path. Any
-      // other error surfaces verbatim — the operator needs to see why
-      // a real host call failed.
+      // If the native control channel is unavailable outside the desktop app,
+      // report that clearly. Other host errors surface verbatim.
       if (isNoSessionError(err) && !inTauri()) {
         blockBrowserExecution(req);
         return;

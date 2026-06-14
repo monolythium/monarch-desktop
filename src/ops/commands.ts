@@ -1,13 +1,6 @@
-// Maps an Operations verb to the shell command we'd actually run on
-// a plain Linux development host. Monarch OS system service operations
-// use Talos API via `talosActionFor`; SSH remains only a dev fallback.
-// Other verbs either have dedicated live helpers or need higher-trust /
-// foundation-coordinated paths that do not exist yet. They return null
-// here so the drawer never dispatches a shell command no binary implements.
-// Chain verbs such as register, redelegate, operator/chat/cluster-name metadata, foundation
-// recovery, and foundation pending-change submission, offline backup export,
-// plus Talos OS upgrade/rollback, are handled before this mapper by dedicated
-// live helpers.
+// Maps the few service verbs that still have a host-command fallback. Chain
+// verbs, recovery actions, offline backup export, and Talos OS upgrade/rollback
+// are handled before this mapper by dedicated helpers.
 //
 // The intent is that `commandFor(op)` returns either a shell line we
 // trust to run on the operator host, or `null` to indicate "block this

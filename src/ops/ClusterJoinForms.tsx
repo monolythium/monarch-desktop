@@ -292,7 +292,7 @@ function ClusterJoinStatusPanel({
       : live.loading
         ? "Reading getClusterJoinRequest..."
         : live.notExposed
-          ? "CJ-1 view call is not exposed on the connected chain."
+          ? "Join-request status is not available from this node yet."
           : live.error
             ? `Read failed: ${live.error}`
             : liveData

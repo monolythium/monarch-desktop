@@ -1,9 +1,8 @@
 // Advisory bridge settings: provider toggle, hosted API key (kept in the
 // OS keychain via `keychain_set`), and hosted/local endpoint settings.
 //
-// Mirrors `SshSettings` so the Operations view shows two side-by-side
-// configuration cards. The Hosted provider key is the only credential we
-// touch here; the Rust side reads it just before issuing the HTTPS
+// The Hosted provider key is the only credential this panel stores. The
+// desktop side reads it just before issuing the HTTPS
 // request, so the cleartext key never persists in the React process
 // past the input handler.
 
@@ -123,7 +122,7 @@ export function AiSettings() {
         >
           <span className="dot" />
           {!tauri
-            ? "browser preview"
+            ? "Desktop app required"
             : cfg.provider === "hosted"
               ? hasKey
                 ? "hosted · key stored"
@@ -223,7 +222,7 @@ export function AiSettings() {
 
       {!tauri ? (
         <div className="halo halo--warn" style={{ marginTop: 14, alignSelf: "flex-start" }}>
-          <span className="dot" /> running in browser preview — bridge calls are no-ops
+          <span className="dot" /> Open Monarch Desktop to save advisory settings.
         </div>
       ) : null}
 

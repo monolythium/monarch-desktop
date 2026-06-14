@@ -21,7 +21,7 @@ export function StepShell({
     <div className="card setup__panel fade-in">
       <div className="setup__panel-head">
         <div className="setup__panel-num" aria-hidden>
-          {n}
+          {`Step ${n}`}
         </div>
         <div>
           <h2 className="setup__panel-title">{title}</h2>

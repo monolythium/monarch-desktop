@@ -1,11 +1,5 @@
-// Canonical Operations catalog. Single source of truth for the verbs
-// that show on the Operations route AND in the ⌘K palette. Adding a new
-// operator verb means appending one entry here — both surfaces pick it
-// up automatically.
-//
-// The 5 canonical verbs (restore / rotate-keys / restart / redelegate /
-// export-backup) line up with the legacy `OperationsView` design source.
-// Additional flow verbs round out what the palette surfaces today.
+// Canonical Operations catalog. Single source of truth for operator and
+// recovery actions shown in Operations, the command palette, and guided flows.
 
 import type { OpRequest } from "./types";
 
@@ -59,28 +53,28 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     icon: "UJ",
     risk: "medium",
     title: "Restore operator",
-    sub: "Submit foundation recovery tx",
+    sub: "Submit recovery transaction",
     intro:
-      "Brings a removed operator back into rotation after an incident. This is a removal-recovery action reserved for the foundation operations signer — ordinary operator installs cannot run it.",
+      "Brings a removed operator back into rotation after an incident. Run this only when you have been asked to perform recovery.",
     technical:
-      "Restore maps to node-registry recoverOperatorNode(bytes32), the removal-recovery executor (legacy executor name: unjail(bytes32)). mono-core gates that executor to the foundation multisig; Desktop submits only when a foundation operations signer is present in the OS keychain.",
+      "Posts recoverOperatorNode(bytes32) to node-registry 0x1005 using the recovery authorization stored for this install.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign recovery tx",
     keywords: ["restore", "removal", "resume", "rejoin", "missed", "rounds"],
     effects: [
       "Builds recoverOperatorNode(peerId) calldata against node-registry 0x1005.",
-      "Reads the foundation operations mnemonic from the OS keychain only during signing.",
+      "Reads recovery authorization from the OS keychain only during signing.",
       "Records the submitted recovery transaction hash in the local audit trail.",
     ],
     diff: [
-      { key: "status", label: "Status", value: "+ foundation recovery tx" },
+      { key: "status", label: "Status", value: "+ recovery tx" },
       { key: "rotation", label: "Rotation", value: "unchanged" },
     ],
     fields: [
       { key: "peer-id", label: "Peer id", value: "32-byte node-registry peer id" },
       { key: "executor", label: "Executor", value: "recoverOperatorNode(bytes32)" },
-      { key: "signer", label: "Signer", value: "foundation operations keychain entry" },
+      { key: "authorization", label: "Authorization", value: "recovery keychain entry" },
     ],
   },
   {
@@ -570,18 +564,18 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     icon: "IN",
     risk: "high",
     title: "Accept cluster invite",
-    sub: "Submit foundation Add pending-change",
+    sub: "Queue an Add roster change",
     intro:
-      "Queues adding an operator to a cluster roster at a future epoch. This is a foundation-coordinated action — it needs the foundation operations signer, which ordinary operator installs do not have.",
+      "Queues adding an operator to a cluster roster at a future epoch. Run this only when coordinating an approved roster change.",
     technical:
-      "Cluster invite acceptance queues a foundation-signed submitPendingChange(Add) transaction against node-registry 0x1005. Desktop collects the target ML-DSA-65 consensus pubkey and future effective epoch, signs with the foundation operations signer, and records the tx hash locally.",
+      "Queues submitPendingChange(Add) against node-registry 0x1005 with recovery authorization and records the transaction hash locally.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign Add pending-change",
-    keywords: ["invite", "cluster", "admission", "join", "foundation"],
+    keywords: ["invite", "cluster", "admission", "join", "recovery"],
     effects: [
       "Builds submitPendingChange(kind=Add, targetPubkey, effectiveEpoch, intentId=0).",
-      "Reads the foundation operations signer from the OS keychain only during signing.",
+      "Reads recovery authorization from the OS keychain only during signing.",
       "Records the submitted pending-change transaction hash in the local audit trail.",
     ],
     diff: [
@@ -599,19 +593,19 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     category: "cluster",
     icon: "SW",
     risk: "high",
-    title: "Cluster slot (foundation-coordinated)",
-    sub: "Submit foundation Rotate pending-change",
+    title: "Cluster slot change",
+    sub: "Queue a Rotate roster change",
     intro:
-      "Queues swapping an operator seat in a cluster roster at a future epoch. Foundation-coordinated: it needs the foundation operations signer, and the matching key-share ceremony attestation must still follow.",
+      "Queues swapping an operator seat in a cluster roster at a future epoch. The matching key-share ceremony attestation must still follow.",
     technical:
-      "Cluster slot swaps queue a foundation-signed submitPendingChange(Rotate) transaction against node-registry 0x1005. The queued rotate still requires the matching DKG re-share attestation before the epoch boundary, and Desktop submits the on-chain roster intent with an auditable transaction receipt.",
+      "Queues submitPendingChange(Rotate) against node-registry 0x1005 with recovery authorization. The queued rotate still requires the matching DKG re-share attestation before the epoch boundary.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign Rotate pending-change",
-    keywords: ["swap", "cluster", "slot", "rotate", "move", "foundation"],
+    keywords: ["swap", "cluster", "slot", "rotate", "move", "recovery"],
     effects: [
       "Builds submitPendingChange(kind=Rotate, targetPubkey, effectiveEpoch, intentId).",
-      "Reads the foundation operations signer from the OS keychain only during signing.",
+      "Reads recovery authorization from the OS keychain only during signing.",
       "Records the submitted pending-change transaction hash in the local audit trail.",
     ],
     diff: [
@@ -631,18 +625,18 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     icon: "FR",
     risk: "high",
     title: "Freeze admission",
-    sub: "Submit foundation incident freeze",
+    sub: "Submit incident freeze",
     intro:
-      "Emergency brake: blocks all new operator registrations and roster changes until the incident is resolved. Foundation-only — needs the foundation operations signer.",
+      "Emergency brake: blocks new operator registrations and roster changes until the incident is resolved.",
     technical:
-      "Submits freezeAdmission(bytes32) to node-registry 0x1005 with the foundation operations signer. The chain records the reason hash and blocks normal register and submitPendingChange admission paths until a replacement/recovery runbook resolves the incident.",
+      "Submits freezeAdmission(bytes32) to node-registry 0x1005 with recovery authorization. The chain records the reason hash and blocks normal registration and roster-change paths until the incident is resolved.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign freezeAdmission",
-    keywords: ["incident", "freeze", "admission", "fork", "cryptographic", "foundation"],
+    keywords: ["incident", "freeze", "admission", "fork", "cryptographic", "recovery"],
     effects: [
       "Builds freezeAdmission(reasonHash) calldata against node-registry 0x1005.",
-      "Reads the foundation operations signer from the OS keychain only during signing.",
+      "Reads recovery authorization from the OS keychain only during signing.",
       "Records the submitted incident-response transaction hash in the local audit trail.",
     ],
     diff: [
@@ -652,7 +646,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     fields: [
       { key: "reason", label: "Reason hash", value: "32-byte incident/runbook hash" },
       { key: "executor", label: "Executor", value: "freezeAdmission(bytes32)" },
-      { key: "signer", label: "Signer", value: "foundation operations keychain entry" },
+      { key: "authorization", label: "Authorization", value: "recovery keychain entry" },
     ],
   },
   {
@@ -661,18 +655,18 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     icon: "ER",
     risk: "high",
     title: "Emergency key rotation",
-    sub: "Submit foundation Rotate executor",
+    sub: "Submit emergency Rotate executor",
     intro:
-      "Forces a cluster key rotation through even while admission is frozen. Foundation-only incident response — needs the foundation operations signer, and the key-share ceremony attestation still follows.",
+      "Forces a cluster key rotation through even while admission is frozen. The key-share ceremony attestation still follows.",
     technical:
-      "Submits emergencyKeyRotation(bytes,uint64,uint64) to node-registry 0x1005 with the foundation operations signer. The executor queues a Rotate pending change even when normal admission is frozen; the matching DKG re-share attestation still follows through the rotate-keys operation.",
+      "Submits emergencyKeyRotation(bytes,uint64,uint64) to node-registry 0x1005 with recovery authorization. The executor queues a Rotate pending change even when normal admission is frozen.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign emergencyKeyRotation",
-    keywords: ["incident", "emergency", "key", "rotation", "dkg", "foundation"],
+    keywords: ["incident", "emergency", "key", "rotation", "dkg", "recovery"],
     effects: [
       "Builds emergencyKeyRotation(targetPubkey, effectiveEpoch, intentId) calldata.",
-      "Reads the foundation operations signer from the OS keychain only during signing.",
+      "Reads recovery authorization from the OS keychain only during signing.",
       "Records the submitted emergency key-rotation transaction hash in the local audit trail.",
     ],
     diff: [

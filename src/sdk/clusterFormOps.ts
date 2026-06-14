@@ -477,7 +477,7 @@ export async function previewFormCluster(
     return await client.call<FormClusterPreview>("lyth_previewFormCluster", [params]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`formCluster preview is not exposed or failed on the connected chain: ${message}`);
+    throw new Error(`Cluster-form preview is unavailable from the connected node: ${message}`);
   }
 }
 

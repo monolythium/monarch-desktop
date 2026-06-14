@@ -123,7 +123,7 @@ export const DESIGN_OPERATION_PARITY = {
   "recover-account-key": {
     status: "deferred",
     reason:
-      "Account-key recovery is not wired to the current keychain or wallet runtime.",
+      "Account-key recovery is not connected to the current keychain or wallet runtime.",
   },
   "import-operator-key": {
     status: "deferred",
@@ -143,11 +143,11 @@ export const DESIGN_OPERATION_PARITY = {
   },
   "unbond-stake": {
     status: "deferred",
-    reason: "Unbonding is not exposed by the current operation catalog.",
+    reason: "Unbonding is not available in the current operation catalog.",
   },
   "claim-rewards": {
     status: "deferred",
-    reason: "Reward claiming is not exposed by the current operation catalog.",
+    reason: "Reward claiming is not available in the current operation catalog.",
   },
   "enable-private-receive": {
     status: "deferred",
@@ -162,7 +162,7 @@ export const DESIGN_OPERATION_PARITY = {
   "unjail-cluster": {
     status: "deferred",
     reason:
-      "Design calls for cluster-threshold unjail; current restore path is foundation-gated recovery.",
+      "Design calls for cluster-threshold unjail; current restore path uses the guarded recovery executor.",
     relatedKind: "operator-restore",
   },
   "accept-cluster-invite": {
@@ -204,7 +204,7 @@ export const DESIGN_OPERATION_PARITY = {
   },
   "init-sentry": {
     status: "deferred",
-    reason: "Sentry topology setup is not exposed by the current Talos bridge.",
+    reason: "Sentry topology setup is not available in the current Talos bridge.",
   },
   "refresh-peers": {
     status: "deferred",
@@ -214,17 +214,17 @@ export const DESIGN_OPERATION_PARITY = {
   "edit-env-var": {
     status: "deferred",
     reason:
-      "Direct env editing is intentionally not exposed; any future flow must be machine-config diff based.",
+      "Direct env editing is intentionally unavailable; any future flow must be machine-config diff based.",
   },
   "sign-governance-memo": {
     status: "deferred",
     reason:
-      "Governance memo signing is not exposed by the current SDK/Desktop operation path.",
+      "Governance memo signing is not available in the current SDK/Desktop operation path.",
   },
   "submit-proposal": {
     status: "deferred",
     reason:
-      "Proposal submission is not exposed by the current SDK/Desktop operation path.",
+      "Proposal submission is not available in the current SDK/Desktop operation path.",
   },
   "emergency-halt-share": {
     status: "deferred",
@@ -234,7 +234,7 @@ export const DESIGN_OPERATION_PARITY = {
   "restore-foundation": {
     status: "implemented",
     kind: "operator-restore",
-    note: "Foundation operations signer submits recoverOperatorNode(bytes32).",
+    note: "Guarded recovery signer submits recoverOperatorNode(bytes32).",
   },
 } satisfies Record<DesignOperationId, DesignOperationParity>;
 
@@ -549,7 +549,7 @@ export const DESIGN_SOURCE_AUDIT = [
     desktopSurface: "/operations and OperationsDrawer",
     routes: ["/operations"],
     operationKinds: OP_CATALOG.map((entry) => entry.kind),
-    evidence: "Operations route, drawer state machine, catalog, command palette, and focused form tests exist.",
+    evidence: "Operations route, reviewed action flow, catalog, command palette, and focused form tests exist.",
     decision: "Every design operation is mapped to an implemented operation or explicit deferral.",
   },
   {
@@ -688,7 +688,7 @@ export const DESIGN_SOURCE_AUDIT = [
     domain: "desktop-shell",
     status: "partial",
     desktopSurface: "OperationsDrawer and shared UX flows",
-    evidence: "Operation drawer state machine and receipt flows are implemented.",
+    evidence: "Operation drawer review and receipt flows are implemented.",
     decision: "Design-only drawer variants are mapped to the single audited operation drawer.",
   },
   {

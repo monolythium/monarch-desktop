@@ -1488,7 +1488,7 @@ function isMissingCommandError(err: unknown): boolean {
 async function invokeCeremonyCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
   if (!inTauriWebview()) {
     throw new CeremonyTransportUnavailableError(
-      "Ceremony transport requires the desktop app — running in browser preview.",
+      "Ceremony transport requires Monarch Desktop.",
     );
   }
   try {

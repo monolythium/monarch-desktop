@@ -134,9 +134,7 @@ export function Metrics() {
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Metrics</h1>
-        <p className="view__subtitle">
-          live RPC snapshot · retained node telemetry · exportable
-        </p>
+        <p className="view__subtitle">Live node status and retained telemetry.</p>
       </header>
 
       <div className="metrics-toolbar card card--padded">
@@ -196,7 +194,7 @@ export function Metrics() {
 
       <div className="metrics-section-head">
         <div>
-          <div className="cap">lyth_metricsRange</div>
+          <div className="cap">telemetry history</div>
           <h2>Retained telemetry series</h2>
           <p>
             {metricsRange.data?.tracking
@@ -207,7 +205,7 @@ export function Metrics() {
         <span className={metricsRangeHalo(metricsRange, retainedSeries)}>
           <span className="dot" />{" "}
           {metricsRange.notExposed
-            ? "not exposed"
+            ? "unavailable"
             : metricsRange.error
               ? "error"
               : retainedSeries > 0
@@ -226,7 +224,7 @@ export function Metrics() {
 
       {metricsRange.notExposed ? (
         <div className="status-bar status-bar--warn">
-          <span className="dot" /> lyth_metricsRange is not exposed by this endpoint.
+          <span className="dot" /> Retained telemetry is not available from this node yet.
         </div>
       ) : metricSeries.length === 0 && !metricsRange.loading ? (
         <div className="status-bar status-bar--warn">
@@ -296,9 +294,17 @@ function liveSignals({
   nodeReachable: boolean;
   operatorCapabilities: ReturnType<typeof useOperatorCapabilities>;
 }): MetricSignal[] {
-  const chainSource = chain.notExposed ? "derived from basic RPC fallback" : "lyth_chainStatus";
+  const chainSource = chain.data
+    ? "chain status"
+    : chain.loading
+      ? "loading chain status"
+      : "chain status unavailable";
   const chainTone = chain.error ? "err" : nodeReachable || chain.data?.reachable ? "ok" : "warn";
-  const capsSource = operatorCapabilities.notExposed ? "lyth_operatorCapabilities not exposed" : "lyth_operatorCapabilities";
+  const capsSource = operatorCapabilities.data
+    ? "capability readiness"
+    : operatorCapabilities.loading
+      ? "checking readiness"
+      : "readiness unavailable";
   const mrv = mrvReadinessSignal({ operatorCapabilities: operatorCapabilities.data });
 
   return [
@@ -350,10 +356,10 @@ function liveSignals({
 }
 
 function metricsSourceLabel(slice: RpcSlice<MetricsRangeResponse>): string {
-  if (slice.notExposed) return "lyth_metricsRange not exposed";
-  if (slice.error) return `lyth_metricsRange error: ${slice.error}`;
-  if (slice.data) return "lyth_metricsRange retained telemetry";
-  return "awaiting lyth_metricsRange";
+  if (slice.notExposed) return "retained telemetry unavailable";
+  if (slice.error) return `telemetry read failed: ${slice.error}`;
+  if (slice.data) return "retained telemetry";
+  return "waiting for telemetry";
 }
 
 function metricsRangeHalo(

@@ -1,18 +1,12 @@
 // Tauri entry point. The Rust side exposes:
 //
-//   * `ssh_connect` / `ssh_exec` / `ssh_status` / `ssh_disconnect` —
-//     russh 0.46 client bridge. The active session is held inside a
-//     `tokio::Mutex` registered as Tauri-managed state so concurrent
-//     calls from the React side serialize cleanly.
-//   * `ssh_exec_stream` / `ssh_exec_cancel` — long-running streaming
-//     commands (typically `journalctl -fu monod -o json`) emit one
-//     Tauri event per stdout line on `monarch://ssh-log/<session_id>`.
-//     The Logs view subscribes via `listen()` and renders a live tail.
+//   * `ssh_connect` / `ssh_exec` / `ssh_status` / `ssh_disconnect` and
+//     `ssh_exec_stream` / `ssh_exec_cancel` — remote host diagnostics used
+//     by development and support builds.
 //   * `keychain_set` / `keychain_get` / `keychain_delete` — keyring 3
 //     wrappers under the `monarch-desktop` service. Operators store
-//     `ssh:host`, `ssh:user`, `ssh:key-path`, and (optionally)
-//     `ssh:passphrase` here. The advisory bridge stores the
-//     Hosted provider API key under the same service as `hosted-provider-api-key`.
+//     the operator key, Monarch OS endpoint metadata, and advisory bridge
+//     settings here.
 //   * `talos_connect` / `talos_status` / `talos_config_info` /
 //     `talos_trust_config` / `talos_service` /
 //     `talos_protocore_readiness` / `talos_host_telemetry` /
@@ -22,14 +16,13 @@
 //     Monarch OS control
 //     and release evidence bridge. Talos API calls use mTLS via the
 //     operator's `talosconfig`; runtime provenance is read over JSON-RPC.
-//     SSH remains a development bridge for plain Linux hosts.
 //   * `ask_monarch` / `set_ai_config` / `get_ai_config` — advisory
 //     bridge. Streams a configured hosted endpoint or a local chat endpoint
 //     replies to the React side as Tauri events on
 //     `monarch://ask/stream/<id>` and emits the final assembled text +
 //     parsed `proposed_action` on `monarch://ask/done/<id>`. Every
-//     proposed action is handed to the Operations drawer at the
-//     `preview` stage — never auto-executed.
+//     proposed action is handed to the Operations drawer for review —
+//     never auto-executed.
 //
 // Indexer hooks return explicit unavailable states until the corresponding
 // mono-core surface is exposed.

@@ -43,6 +43,7 @@ const PROTOCORE_RPC_TIMEOUT: Duration = Duration::from_secs(4);
 // read, so it gets a more forgiving budget than the 4s health bridges.
 const RPC_PROXY_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SERVICE_ID: &str = "ext-protocore";
+const TALOS_LOG_NAMESPACE: &str = "system";
 const PROTOCORE_DATA_DIR: &str = "/var/lib/protocore";
 const PROTOCORE_OPERATOR_SEAL_EK_PATH: &str =
     "/var/lib/protocore/operator/threshold/lythiumseal-operator-key.ek";
@@ -554,6 +555,16 @@ fn parse_service_action(action: &str) -> Result<ServiceAction, TalosError> {
         "stop" => Ok(ServiceAction::Stop),
         "restart" => Ok(ServiceAction::Restart),
         other => Err(TalosError::InvalidServiceAction(other.to_string())),
+    }
+}
+
+fn talos_logs_request(service: String, follow: bool, line_count: i32) -> machine::LogsRequest {
+    machine::LogsRequest {
+        namespace: TALOS_LOG_NAMESPACE.to_string(),
+        id: service,
+        driver: common::ContainerDriver::Containerd as i32,
+        follow,
+        tail_lines: line_count,
     }
 }
 
@@ -2662,13 +2673,7 @@ pub async fn talos_logs(
 
     let log_bytes = timeout(TALOS_TIMEOUT, async {
         let response = client
-            .logs(machine::LogsRequest {
-                namespace: String::new(),
-                id: service.clone(),
-                driver: common::ContainerDriver::Containerd as i32,
-                follow: false,
-                tail_lines: line_count,
-            })
+            .logs(talos_logs_request(service.clone(), false, line_count))
             .await?;
         let mut stream = response.into_inner();
         let mut bytes = Vec::new();
@@ -2684,7 +2689,7 @@ pub async fn talos_logs(
     Ok(TalosTextResult {
         node_address: node_address(&endpoint),
         endpoint,
-        command: format!("talos logs {service} --tail {line_count}"),
+        command: format!("talos logs --namespace {TALOS_LOG_NAMESPACE} {service} --tail {line_count}"),
         output: String::from_utf8_lossy(&log_bytes).to_string(),
         service: None,
     })
@@ -2716,13 +2721,7 @@ pub async fn talos_log_stream(
 
     let response = timeout(
         TALOS_TIMEOUT,
-        client.logs(machine::LogsRequest {
-            namespace: String::new(),
-            id: service.clone(),
-            driver: common::ContainerDriver::Containerd as i32,
-            follow: true,
-            tail_lines: line_count,
-        }),
+        client.logs(talos_logs_request(service.clone(), true, line_count)),
     )
     .await
     .map_err(|_| TalosError::Timeout.to_string())?
@@ -2798,8 +2797,9 @@ mod tests {
         format_fingerprint, node_address, normalize_private_key_pem, parse_reboot_mode,
         parse_rpc_u64, parse_service_action, parse_u64_string, protocore_rpc_endpoint,
         sanitize_backup_component, service_allows_offline_backup, summarize_service_state,
-        validate_service_name, validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo,
-        TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
+        talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
+        TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode,
+        TalosServiceInfo,
     };
     use serde_json::json;
 
@@ -2861,6 +2861,16 @@ mod tests {
         assert!(parse_service_action("STOP").is_ok());
         assert!(parse_service_action("restart").is_ok());
         assert!(parse_service_action("reboot").is_err());
+    }
+
+    #[test]
+    fn talos_logs_request_uses_system_namespace() {
+        let req = talos_logs_request("ext-protocore".to_string(), true, 128);
+
+        assert_eq!(req.namespace, "system");
+        assert_eq!(req.id, "ext-protocore");
+        assert!(req.follow);
+        assert_eq!(req.tail_lines, 128);
     }
 
     #[test]

@@ -80,7 +80,7 @@ const ALERT_RULES = [
   {
     id: "node-unreachable",
     label: "Connected node unreachable",
-    source: "lyth_chainStatus",
+    source: "chain status",
     level: "critical",
   },
   {
@@ -92,19 +92,19 @@ const ALERT_RULES = [
   {
     id: "release-digest",
     label: "Runtime digest does not match expected release",
-    source: "lyth_runtimeProvenance",
+    source: "runtime provenance",
     level: "critical",
   },
   {
     id: "bridge-paused",
     label: "Bridge route paused",
-    source: "lyth_bridgeHealth",
+    source: "bridge health",
     level: "warn",
   },
   {
     id: "oracle-indexer",
     label: "Oracle signer projection unavailable",
-    source: "lyth_oracleSigners",
+    source: "oracle signer set",
     level: "warn",
   },
 ] as const;
@@ -423,7 +423,7 @@ export function Marketplace() {
                 </label>
               ) : null}
               <span className={providers.notExposed ? "halo halo--warn" : "halo halo--ok"}>
-                <span className="dot" /> {providers.notExposed ? "not exposed" : "live"}
+                <span className="dot" /> {providers.notExposed ? "unavailable" : "live"}
               </span>
             </div>
           </div>
@@ -474,7 +474,7 @@ export function Marketplace() {
                 <tr>
                   <td colSpan={7}>
                     <Blocker
-                      title={providers.notExposed ? "Provider directory is not exposed." : "No providers returned."}
+                      title={providers.notExposed ? "Provider directory is unavailable from this endpoint." : "No providers returned."}
                       detail={providers.error ?? "The connected endpoint has no provider rows to list."}
                     />
                   </td>
@@ -491,7 +491,7 @@ export function Marketplace() {
               <div className="sub">Operator seat discovery from the live cluster-directory RPC.</div>
             </div>
             <span className={clusters.notExposed ? "halo halo--warn" : "halo halo--ok"}>
-              <span className="dot" /> {clusters.notExposed ? "not exposed" : "live"}
+              <span className="dot" /> {clusters.notExposed ? "unavailable" : "live"}
             </span>
           </div>
           <table className="tbl">
@@ -542,7 +542,7 @@ export function Marketplace() {
                 <tr>
                   <td colSpan={6}>
                     <Blocker
-                      title={clusters.notExposed ? "Cluster directory is not exposed." : "No clusters returned."}
+                      title={clusters.notExposed ? "Cluster directory is unavailable from this endpoint." : "No clusters returned."}
                       detail={clusters.error ?? "The connected endpoint has no cluster rows to list."}
                     />
                   </td>
@@ -601,7 +601,7 @@ export function Services() {
         />
         <StatCard
           label="router"
-          value={router.data?.enabled ? "enabled" : router.notExposed ? "not exposed" : "disabled"}
+          value={router.data?.enabled ? "enabled" : router.notExposed ? "unavailable" : "disabled"}
           sub={router.data ? `max fee ${bpsToPercent(router.data.protocolMaxOperatorFeeBps)}` : "operator router config"}
           tone={router.data?.enabled ? "ok" : "warn"}
         />
@@ -628,33 +628,33 @@ export function Services() {
       <div className="grid-3">
         <ServiceSurface
           title="Prover market"
-          status={prover.notExposed ? "not exposed" : prover.data?.status ?? "live"}
+          status={prover.data ? (prover.data.status ?? "live") : prover.loading ? "loading" : "unavailable"}
           detail={
             prover.data
               ? `${prover.data.openRequests ?? 0} open, ${prover.data.assignedRequests ?? 0} assigned, floor ${formatLythHex(prover.data.feeFloor)}`
-              : prover.error ?? "lyth_proverMarketStatus"
+              : prover.error ?? "market data unavailable"
           }
-          tone={prover.notExposed || prover.data?.status ? "warn" : "ok"}
+          tone={prover.data && !prover.data.status ? "ok" : "warn"}
         />
         <ServiceSurface
           title="Oracle writers"
-          status={oracle.notExposed ? "not exposed" : oracle.data?.status ?? "live"}
+          status={oracle.data ? (oracle.data.status ?? "live") : oracle.loading ? "loading" : "unavailable"}
           detail={
             oracle.data
               ? `${oracle.data.writers.length} active writers`
-              : oracle.error ?? "lyth_oracleSigners"
+              : oracle.error ?? "writer set unavailable"
           }
-          tone={oracle.notExposed || oracle.data?.status ? "warn" : "ok"}
+          tone={oracle.data && !oracle.data.status ? "ok" : "warn"}
         />
         <ServiceSurface
           title="Bridge relays"
-          status={bridge.notExposed ? "not exposed" : `${bridge.data?.records.length ?? 0} routes`}
+          status={bridge.data ? `${bridge.data.records.length} routes` : bridge.loading ? "loading" : "unavailable"}
           detail={
             bridge.data
               ? `${bridgePaused} paused routes`
-              : bridge.error ?? "lyth_bridgeHealth"
+              : bridge.error ?? "relay data unavailable"
           }
-          tone={bridgePaused > 0 ? "warn" : bridge.notExposed ? "warn" : "ok"}
+          tone={bridge.data && bridgePaused === 0 ? "ok" : "warn"}
         />
       </div>
 
@@ -744,7 +744,7 @@ export function Audit() {
     <section className="view fade-in">
       <PageHeader
         title="Audit"
-        subtitle="Local operation receipts with deterministic audit hashes. Cluster-wide audit stream is not exposed yet."
+        subtitle="Local operation receipts with deterministic audit hashes. Cluster-wide audit history is not available from this endpoint yet."
         action={<button type="button" className="btn btn--primary" onClick={copyAudit}>Copy JSON</button>}
       />
 
@@ -880,11 +880,11 @@ export function Governance() {
         <StatCard label="chain" value={String(chain.data?.chainId ?? "-")} sub={`height ${formatCount(chain.data?.blockHeight)}`} tone={chain.error ? "warn" : "ok"} />
         <StatCard
           label="indexer"
-          value={indexerDisabled ? "disabled" : indexer.data ? `height ${formatCount(indexer.data.currentHeight)}` : indexer.notExposed ? "not exposed" : "unknown"}
+          value={indexerDisabled ? "disabled" : indexer.data ? `height ${formatCount(indexer.data.currentHeight)}` : indexer.notExposed ? "unavailable" : "unknown"}
           sub={indexerDisabled ? (indexerRuntime?.disabledReason && indexerRuntime.disabledReason !== "indexer_disabled" ? indexerRuntime.disabledReason.replace(/_/g, " ") : "indexer disabled") : indexer.data ? `schema ${indexer.data.schemaVersion}` : indexer.error ?? "lyth_indexerStatus"}
           tone={indexerDisabled || indexer.notExposed ? "warn" : indexer.data ? "ok" : "info"}
         />
-        <StatCard label="capabilities" value={capabilities.notExposed ? "not exposed" : String(Object.keys(capabilities.data?.surfaces ?? {}).length)} sub="operator capability registry" tone={capabilities.notExposed ? "warn" : "ok"} />
+        <StatCard label="capabilities" value={capabilities.notExposed ? "unavailable" : String(Object.keys(capabilities.data?.surfaces ?? {}).length)} sub="operator capability registry" tone={capabilities.notExposed ? "warn" : "ok"} />
         <StatCard label="binding txs" value="blocked" sub="no governance submit helper" tone="warn" />
       </div>
 
@@ -915,8 +915,8 @@ export function Governance() {
               <tr>
                 <td colSpan={3}>
                   <Blocker
-                    title="No governance capability rows exposed."
-                    detail={capabilities.notExposed ? "lyth_operatorCapabilities is not available on this endpoint." : "The chain and SDK do not yet expose a production governance proposal or memo-signal surface for Desktop."}
+                    title="No governance capability rows available."
+                    detail={capabilities.notExposed ? "Governance capability data is not available from this endpoint." : "This endpoint does not provide proposal or memo-signal rows for Desktop yet."}
                   />
                 </td>
               </tr>
@@ -926,8 +926,8 @@ export function Governance() {
       </div>
 
       <Blocker
-        title="Prototype proposal voting is intentionally not wired."
-        detail="The design page has proposal lists, memo votes, and treasury panels backed by design-only data. Desktop needs chain read APIs and a signed transaction helper before votes or proposal submissions can be real."
+        title="Proposal voting is not available in this build."
+        detail="Desktop needs chain read APIs and a signed transaction helper before votes or proposal submissions can run."
       />
     </section>
   );
@@ -1016,8 +1016,8 @@ export function Alerts() {
       </div>
 
       <Blocker
-        title="Delivery channels are not wired yet."
-        detail="The design includes webhook, email, and quiet-hour configuration. Desktop can evaluate local rules now; a notification bridge and signed channel configuration still need implementation."
+        title="Delivery channels are not available in this build."
+        detail="Desktop can evaluate local rules now; webhook, email, and OS notification delivery need a signed channel configuration before they can run."
       />
     </section>
   );
@@ -1099,7 +1099,7 @@ export function Wallets() {
         <StatCard label="bonded stake" value={operator.data?.bondedStake ?? "-"} sub="lythoshi from registry" tone="gold" />
         <StatCard
           label="fee config"
-          value={feeConfig.data ? bpsToPercent(feeConfig.data.feeBps) : feeConfig.notExposed ? "not exposed" : "loading"}
+          value={feeConfig.data ? bpsToPercent(feeConfig.data.feeBps) : feeConfig.notExposed ? "unavailable" : "loading"}
           sub={feeConfig.data?.recipient ?? feeConfig.error ?? "operator router fee recipient"}
           tone={feeConfig.data ? "ok" : "warn"}
         />
@@ -1202,7 +1202,7 @@ export function SetupOperator() {
             </div>
           </div>
           <div className="inline-actions">
-            <CatalogButton kind="operator-register" variant="primary">Open register form</CatalogButton>
+            <CatalogButton kind="operator-register" variant="primary">Open registration form</CatalogButton>
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate("/marketplace")}>Browse marketplace</button>
           </div>
           <div className="empty-state" style={{ marginTop: 14 }}>
@@ -1408,7 +1408,7 @@ export function Keys() {
     <section className="view fade-in">
       <PageHeader
         title="Keys"
-        subtitle="PQM-1 operator key generation and storage, DKG attestation, backups, and emergency rotation entry points."
+        subtitle="PQM-1 operator key generation and storage, attestation, and backup actions."
       />
 
       <div className="grid-2">
@@ -1417,7 +1417,7 @@ export function Keys() {
           <div className="card__head">
             <div>
               <h3>Key operations</h3>
-              <div className="sub">All executable actions route through the shared drawer.</div>
+              <div className="sub">Review and authorize key actions before they run.</div>
             </div>
           </div>
           <div className="stack-actions">
@@ -1425,19 +1425,14 @@ export function Keys() {
             <CatalogButton kind="export-backup">Export offline backup</CatalogButton>
             {presence.hasFoundationKey ? (
               <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>
-            ) : (
-              <div className="empty-state" style={{ marginTop: 4 }}>
-                Emergency key rotation is foundation-only and hidden — no foundation signer is
-                stored on this install.
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
 
       <Blocker
-        title="Passkey enrollment and revocation are not wired in this app."
-        detail="The design includes local passkey administration. Desktop currently stores PQM-1 mnemonics in the OS keychain and uses chain/Talos operations; passkey lifecycle needs a dedicated runtime bridge."
+        title="Passkey management is not available in this build."
+        detail="Desktop currently stores PQM-1 mnemonics in the OS keychain and uses chain and Monarch OS operations. Passkey lifecycle needs a dedicated runtime bridge before it can be exposed."
       />
     </section>
   );
@@ -1454,13 +1449,13 @@ export function Recovery() {
     <section className="view fade-in">
       <PageHeader
         title="Recovery"
-        subtitle="Operator restore, emergency rotation, offline backup, and incident controls."
+        subtitle="Operator restore, offline backup, and incident controls."
       />
 
       <div className="grid-3">
         <StatCard label="your operator" value={shortHex(operatorId)} sub={self.clusterId !== null ? clusterLabel(self.clusterId) : self.status === "no-key" ? "no operator key stored" : "no cluster seat"} tone={operatorId ? "ok" : "warn"} />
-        <StatCard label="restore path" value="foundation-gated" sub="removal-recovery executor" tone="warn" />
-        <StatCard label="peer-vouched path" value="blocked" sub="cluster-vote API needed" tone="warn" />
+        <StatCard label="restore path" value="support-guided" sub="recovery executor" tone="warn" />
+        <StatCard label="peer recovery" value="future" sub="cluster approval needed" tone="warn" />
       </div>
 
       <div className="grid-2">
@@ -1489,9 +1484,7 @@ export function Recovery() {
               </>
             ) : (
               <div className="empty-state" style={{ marginTop: 4 }}>
-                Foundation-only actions (restore, freeze admission, emergency key rotation) are
-                hidden because no foundation signer is stored on this install — ordinary
-                operators never need them.
+                Recovery and admission controls are unavailable on this install.
               </div>
             )}
           </div>
@@ -1499,13 +1492,13 @@ export function Recovery() {
         <div className="card card--padded">
           <div className="card__head">
             <div>
-              <h3>Preferred future path</h3>
-              <div className="sub">Cluster-vouched recovery without foundation intervention.</div>
+              <h3>Future recovery path</h3>
+              <div className="sub">Cluster-vouched recovery after active-member approval.</div>
             </div>
           </div>
           <Blocker
-            title="Peer-vouched recovery is not executable yet."
-            detail="The policy flow needs cluster votes, threshold ACK collection, and a chain helper that applies the approved recovery change. The UI should stay blocked until those exist."
+            title="Peer-vouched recovery is not available in this build."
+            detail="The policy flow needs cluster votes, threshold acknowledgement collection, and a chain helper that applies the approved recovery change."
           />
         </div>
       </div>

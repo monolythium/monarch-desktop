@@ -20,7 +20,7 @@ export type TranslatedOpError = {
   raw: string;
 };
 
-/** Verbs signed by the foundation operations key, not the operator key. */
+/** Recovery actions that are unavailable on standard operator installs. */
 export const FOUNDATION_OP_KINDS: ReadonlySet<OpKind> = new Set<OpKind>([
   "operator-restore",
   "cluster-accept-invite",
@@ -33,9 +33,9 @@ export const FOUNDATION_OP_KINDS: ReadonlySet<OpKind> = new Set<OpKind>([
 export const MISSING_OPERATOR_KEY_MESSAGE =
   "No operator key stored - save your 24-word operator mnemonic on the Keys page first.";
 
-/** Friendly copy for the "foundation signer missing" case. */
+/** Friendly copy when a recovery action is unavailable on this install. */
 export const MISSING_FOUNDATION_KEY_MESSAGE =
-  "No foundation signer stored - this action needs the foundation operations mnemonic, which ordinary operator installs do not have.";
+  "This recovery action is not available on this install.";
 
 function rawMessage(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
@@ -137,7 +137,7 @@ const RULES: ReadonlyArray<ErrorRule> = [
   {
     test: /no active ssh session|running outside tauri|requires monarch desktop|browser preview/i,
     friendly:
-      "This action needs the Monarch Desktop app with a connected control channel - the browser preview cannot execute it.",
+      "This action needs Monarch Desktop with a connected node control channel.",
   },
   {
     test: /keychain/i,

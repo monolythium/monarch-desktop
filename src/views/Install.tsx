@@ -7,16 +7,15 @@
 // RPC handshake with the running node.
 //
 // Every check runs AUTOMATICALLY on mount (and on "Re-run checks") —
-// statuses are detected, never hardcoded. A check that cannot run on
-// this runtime (browser preview) shows UNKNOWN, which is explicitly not
-// the same as "not done".
+// statuses are detected, never hardcoded. A check that cannot run in the
+// current environment shows UNKNOWN, which is explicitly not the same as
+// "not done".
 
 import { useCallback, useEffect, useState } from "react";
 import {
   KEYCHAIN_ACCOUNTS,
   inTauri,
   keychainGet,
-  sshStatus,
   talosConfigInfo,
   talosService,
   talosStatus,
@@ -33,7 +32,7 @@ const PAIRING_STEPS = [
     n: 1,
     label: "Detect the node's control channel",
     detail:
-      "probe the configured Talos API / SSH endpoint · the node is provisioned out-of-band (signed Monarch OS image + talosctl)",
+      "probe the configured Talos API endpoint · the node is provisioned from the signed Monarch OS image",
   },
   {
     n: 2,
@@ -66,38 +65,34 @@ const CHECKING: StepResult = { status: "checking", note: "" };
 async function runInstallCheck(index: number, rpcReachable: boolean): Promise<StepResult> {
   if (!inTauri()) {
     if (index === 4) {
-      // The RPC handshake works from the browser preview too.
+      // The RPC handshake works in a plain browser too.
       return rpcReachable
         ? { status: "done", note: "RPC handshake passed" }
         : { status: "todo", note: "RPC handshake failed; node is unreachable" };
     }
     return {
       status: "unknown",
-      note: "Needs the Monarch Desktop app — the browser preview cannot verify Talos, SSH, keychain, or service state.",
+      note: "Open Monarch Desktop to verify OS control, keychain, and service state.",
     };
   }
 
   if (index === 0) {
-    const [ssh, talos] = await Promise.all([
-      sshStatus().catch(() => null),
-      talosStatus().catch(() => null),
-    ]);
+    const talos = await talosStatus().catch(() => null);
     if (talos?.configured) {
       return talos.reachable
         ? { status: "done", note: `Talos reachable at ${talos.endpoint ?? "configured endpoint"}` }
         : { status: "todo", note: `Talos configured but not reachable: ${talos.lastError ?? "unknown error"}` };
     }
-    if (ssh?.connected) return { status: "done", note: `SSH connected to ${ssh.user}@${ssh.host}` };
     return {
       status: "todo",
-      note: "No SSH or Talos control channel is configured — open Operations → Talos settings.",
+      note: "No Monarch OS control channel is configured — open Settings → Monarch OS.",
     };
   }
 
   if (index === 1) {
     const info = await talosConfigInfo().catch(() => null);
     if (!info) {
-      return { status: "unknown", note: "SSH/plain-host mode: host requirements verified manually" };
+      return { status: "unknown", note: "Talos context is not available yet." };
     }
     if (info.warnings.length > 0) {
       return { status: "todo", note: `Talos config warning: ${info.warnings[0]}` };
@@ -111,7 +106,7 @@ async function runInstallCheck(index: number, rpcReachable: boolean): Promise<St
   if (index === 2) {
     const service = await talosService("ext-protocore").catch(() => null);
     if (!service) {
-      return { status: "unknown", note: "Plain-host mode: service inspection requires the Talos API" };
+      return { status: "unknown", note: "Service inspection requires Monarch OS control." };
     }
     return {
       status: "done",
@@ -124,8 +119,6 @@ async function runInstallCheck(index: number, rpcReachable: boolean): Promise<St
       keychainGet(KEYCHAIN_ACCOUNTS.talosEndpoint).catch(() => null),
       keychainGet(KEYCHAIN_ACCOUNTS.talosConfigPath).catch(() => null),
       keychainGet(KEYCHAIN_ACCOUNTS.protocoreExpectedDigest).catch(() => null),
-      keychainGet(KEYCHAIN_ACCOUNTS.sshHost).catch(() => null),
-      keychainGet(KEYCHAIN_ACCOUNTS.sshUser).catch(() => null),
     ]);
     if (keys.some(Boolean)) {
       return {
@@ -137,7 +130,7 @@ async function runInstallCheck(index: number, rpcReachable: boolean): Promise<St
     }
     return {
       status: "todo",
-      note: "No Monarch control-channel credentials found in the OS keychain — save them in Operations → Talos settings.",
+      note: "No Monarch OS credentials found in the OS keychain — save them in Settings → Monarch OS.",
     };
   }
 
@@ -328,7 +321,7 @@ export function Install() {
           <span className="kv__v mono">{status.endpoint}</span>
         </div>
         <div className="kv">
-          <span className="kv__k">chain_id</span>
+          <span className="kv__k">network</span>
           <span className="kv__v mono">
             {status.chainId !== null ? status.chainId : "—"}
           </span>

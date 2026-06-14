@@ -15,9 +15,8 @@
 //     `ops.requestOp()` or fire any side-effecting Tauri command. It
 //     parses a `<proposed_action>{...}</proposed_action>` JSON envelope
 //     out of the model's text and hands it to the React side, which
-//     opens the Operations drawer at the `preview` stage. The drawer's
-//     state machine (`preview → auth → executing → done`) is the only
-//     path that ever touches the host.
+//     opens the Operations drawer for review and authorization. That
+//     reviewed action path is the only route that ever touches the host.
 //   * **Correlation-id scoped.** Every ask gets a fresh `u64` so
 //     parallel asks don't cross-stream. The id is the suffix on the
 //     `monarch://ask/...` event channels.

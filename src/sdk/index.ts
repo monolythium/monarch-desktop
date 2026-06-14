@@ -489,6 +489,6 @@ export type {
   LogEntry,
   LogLevel,
   LogStream,
-  SshTarget,
+  LogTarget,
   StreamStatus,
 } from "./useLogStream";

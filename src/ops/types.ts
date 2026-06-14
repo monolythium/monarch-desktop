@@ -1,5 +1,5 @@
-// Types shared by the Operations drawer state machine. Every sensitive
-// action must be expressed as an OpRequest and routed through the drawer.
+// Types shared by the Operations approval flow. Every sensitive action must be
+// expressed as an OpRequest and routed through the drawer.
 
 export const OP_KINDS = [
   "operator-start",
@@ -212,7 +212,7 @@ export type OpRequest = {
    *  delegation precompile arguments for the signed tx path. */
   redelegateInput?: RedelegateInput;
   /** Present only when `kind === "operator-restore"`. Carries the
-   *  node-registry peer id recovered by the foundation-gated executor. */
+   *  node-registry peer id recovered by the recovery executor. */
   restoreInput?: RestoreInput;
   /** Present only when `kind === "chat-bootstrap-peers"`. Carries the
    *  operator-owned chat bootstrap metadata declaration. */

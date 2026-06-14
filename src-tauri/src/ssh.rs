@@ -1,14 +1,11 @@
-// SSH bridge — minimal russh client wrapper.
+// Remote host diagnostics — minimal russh client wrapper.
 //
-// The SSH bridge scope is intentionally narrow:
+// This bridge stays intentionally narrow:
 //
 //   * `connect(target)` opens an authenticated session using the
-//     `SshTarget` struct (host + user + key_path). Operators store
-//     their key path (and optional passphrase) in the OS keychain via
-//     `keychain.rs`; we don't read raw key material out of the keychain
-//     here — the entry holds the *path*, the file system holds the
-//     bytes. (Tauri gets file-system access; russh-keys parses,
-//     decrypts, and discards.)
+//     host + user + key_path. The keychain entry holds the path; the file
+//     system holds the bytes. Tauri gets file-system access; russh-keys
+//     parses, decrypts, and discards the key material.
 //   * `exec(session, cmd)` runs a single command and returns stdout.
 //   * `exec_stream(...)` spawns a long-running command (e.g. `journalctl
 //     -fu monod`) on a dedicated channel, reads lines as they arrive,
@@ -19,7 +16,7 @@
 // What we deliberately *don't* do here:
 //
 //   * No interactive shell.
-//   * No SFTP file transfer (out of scope; brief explicitly excludes it).
+//   * No SFTP file transfer.
 //   * No fingerprint pinning yet — `check_server_key` accepts any key
 //     because the OS keychain doesn't yet hold the host fingerprint.
 //     Pin host fingerprints before any

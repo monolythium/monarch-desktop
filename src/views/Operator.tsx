@@ -1,7 +1,7 @@
 import { formatLyth } from "@monolythium/core-sdk";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSelfOperator } from "../hooks/useSelfOperator";
+import { useKeychainPresence, useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
 import {
   DEFAULT_ACTIVE_CLUSTER_ID,
@@ -37,6 +37,7 @@ export function Operator() {
   const operatorId = self.operatorId;
   const operator = useOperatorInfo(operatorId);
   const ops = useOps();
+  const presence = useKeychainPresence();
   const navigate = useNavigate();
 
   // Copied-state feedback for the key-row copy buttons: flash a ✓ for 1.2s.
@@ -113,8 +114,8 @@ export function Operator() {
       <header>
         <h1 className="view__title">Operator identity</h1>
         <p className="view__subtitle">
-          chain_id {status.chainId ?? "—"} · {status.endpoint}
-          {setSize !== null ? ` · ${setSize} operators visible` : null}
+          {status.reachable ? "Connected node" : "Node not connected"} · {status.endpoint}
+          {setSize !== null ? ` · ${setSize} operators visible` : ""}
         </p>
       </header>
 
@@ -139,10 +140,11 @@ export function Operator() {
       ) : null}
       {operator.notExposed && self.status !== "no-key" ? (
         <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
-          <span className="dot" /> identity RPC not yet exposed — live identity unavailable
+          <span className="dot" /> Live identity is not available from this node yet.
         </div>
       ) : null}
 
+      {self.status !== "no-key" ? (
       <div className="card card--padded operator-hero">
         <div>
           <div className="cap">operator identity</div>
@@ -280,6 +282,7 @@ export function Operator() {
           </button>
         </div>
       </div>
+      ) : null}
 
       <div className="grid-2">
         <div className="card">
@@ -331,7 +334,7 @@ export function Operator() {
             </div>
             <div className="mono" style={{ fontSize: 11, color: "var(--fg-500)", marginTop: 8 }}>
               {risk.notExposed
-                ? "removal-risk window not exposed by this node"
+                ? "Removal-risk history is not available from this node yet."
                 : risk.error
                   ? risk.error
                   : riskSummary.detail}
@@ -343,7 +346,7 @@ export function Operator() {
             <div className="numeral numeral--gold">{signingSummary.signedPctLabel}</div>
             <p>
               {signing.notExposed
-                ? "signing history not exposed by this node"
+                ? "Signing history is not available from this node yet."
                 : signing.error
                   ? signing.error
                   : `${signingSummary.signed} signed · ${signingSummary.missed} missed · ${signingSummary.noCert} no certificate`}
@@ -363,30 +366,32 @@ export function Operator() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() =>
-                ops.requestOp({
-                  kind: "operator-restore",
-                  title: "Restore operator",
-                  sub: "Foundation recovery tx",
-                  intro:
-                    "Restore maps to node-registry recoverOperatorNode(bytes32), the foundation-gated disaster-recovery alias for unjail(bytes32). Desktop submits only when the foundation operations signer is stored in the OS keychain.",
-                  fields: [
-                    { key: "operator", label: "Operator", value: moniker },
-                    { key: "peer-id", label: "Peer id", value: operatorId ?? "enter peer id" },
-                  ],
-                  restoreInput: operatorId ? { peerIdHex: operatorId } : undefined,
-                  icon: "UJ",
-                  risk: "medium",
-                  needsPasskey: true,
-                  confirmLabel: "Sign recovery tx",
-                })
-              }
-            >
-              Restore
-            </button>
+            {presence.hasFoundationKey ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() =>
+                  ops.requestOp({
+                    kind: "operator-restore",
+                    title: "Restore operator",
+                    sub: "Recovery transaction",
+                    intro:
+                      "Brings a removed operator back into rotation after an incident. Run this only when you have been asked to perform recovery.",
+                    fields: [
+                      { key: "operator", label: "Operator", value: moniker },
+                      { key: "peer-id", label: "Peer id", value: operatorId ?? "enter peer id" },
+                    ],
+                    restoreInput: operatorId ? { peerIdHex: operatorId } : undefined,
+                    icon: "UJ",
+                    risk: "medium",
+                    needsPasskey: true,
+                    confirmLabel: "Sign recovery tx",
+                  })
+                }
+              >
+                Restore
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn--primary btn--sm"
@@ -436,7 +441,7 @@ export function Operator() {
                   {dutyAttestation
                     ? `${dutyAttestation.kind} · rounds ${dutyAttestation.startRound.toString()}-${dutyAttestation.endRound.toString()}`
                     : duties.notExposed
-                      ? "duty schedule not exposed"
+                      ? "duty schedule unavailable"
                       : "loading"}
                 </div>
               </div>
@@ -482,7 +487,7 @@ export function Operator() {
             {earnings.scored
               ? "scored"
               : serviceScore.notExposed
-                ? "score read not exposed"
+                ? "score unavailable"
                 : "not scored yet"}
           </span>
         </div>
@@ -508,7 +513,7 @@ export function Operator() {
             </div>
             <div className="stat__sub">
               {charter.notExposed
-                ? "active-charter read not exposed by this endpoint"
+                ? "Reward split is not available from this node yet."
                 : earnings.split.present
                   ? `operators keep ${bpsToPercent(10000 - earnings.split.delegatorShareBps)} of the cluster pot; delegators take ${bpsToPercent(earnings.split.delegatorShareBps)}`
                   : "this cluster uses the default operator/delegator split — amend it on the Cluster screen's charter panel"}

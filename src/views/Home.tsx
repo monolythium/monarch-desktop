@@ -61,9 +61,6 @@ export function Home() {
     <section className="view fade-in">
       <header>
         <h1 className="view__title">Home</h1>
-        <p className="view__subtitle">
-          chain_id {chain.data?.chainId ?? status.chainId ?? "—"} · {clusterModel.targetSummary} · {clusterModel.thresholdSummary}
-        </p>
       </header>
 
       {chain.notExposed || cluster.notExposed ? (
@@ -113,7 +110,7 @@ export function Home() {
                 {clusterData
                   ? `${clusterData.threshold}-of-${clusterData.size} live quorum · ${clusterModel.seatSummary}`
                   : cluster.notExposed
-                    ? "cluster status RPC not exposed"
+                    ? "Cluster status is not available from this node yet."
                     : `${MONARCH_CLUSTER_THRESHOLD}-of-${MONARCH_CLUSTER_SIZE} target quorum`}
               </div>
             </div>
@@ -171,7 +168,7 @@ export function Home() {
               </div>
             </div>
             <span className={`halo halo--${signing.notExposed ? "warn" : "ok"}`}>
-              <span className="dot" /> {signing.notExposed ? "not exposed" : signingSummary.signedPctLabel}
+              <span className="dot" /> {signing.notExposed ? "unavailable" : signingSummary.signedPctLabel}
             </span>
           </div>
           {signing.data && recentSigning.length > 0 ? (
@@ -217,7 +214,7 @@ export function Home() {
               </div>
             </div>
             <span className={`halo halo--${duties.notExposed ? "warn" : "info"}`}>
-              <span className="dot" /> {duties.notExposed ? "not exposed" : "live schedule"}
+              <span className="dot" /> {duties.notExposed ? "unavailable" : "live schedule"}
             </span>
           </div>
           {duties.data ? (

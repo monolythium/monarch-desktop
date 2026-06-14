@@ -67,6 +67,18 @@ export function Cluster() {
     clusterModel.state === "aligned" ? "halo--ok"
     : clusterModel.state === "degraded" ? "halo--err"
     : "halo--warn";
+  const connectedClusterStatus = c
+    ? `${clusterModel.liveOperators}/${c.size}`
+    : cluster.loading
+      ? "checking"
+      : "unavailable";
+  const connectedClusterDetail = c
+    ? `${clusterModel.offlineOperators} offline`
+    : cluster.error
+      ? "check node connection"
+      : cluster.notExposed
+        ? "cluster status not available"
+        : "waiting for node";
 
   return (
     <section className="view fade-in">
@@ -121,7 +133,7 @@ export function Cluster() {
       <div className="card card--padded">
         <div className="card__head" style={{ padding: 0, marginBottom: 12 }}>
           <div>
-            <h3>Whitepaper cluster model</h3>
+            <h3>Live protocol descriptor</h3>
             <div className="sub">
               {clusterModel.targetSummary} · {clusterModel.seatSummary}
             </div>
@@ -134,7 +146,7 @@ export function Cluster() {
           <ModelStat label="network seats" value={MONARCH_TARGET_OPERATOR_POSITIONS.toLocaleString()} sub={`${MONARCH_TARGET_ACTIVE_OPERATOR_SEATS} active · ${MONARCH_TARGET_STANDBY_OPERATOR_SEATS} standby`} />
           <ModelStat label="cluster seats" value={String(MONARCH_CLUSTER_SIZE)} sub={`${MONARCH_ACTIVE_OPERATOR_SEATS} active · ${MONARCH_STANDBY_OPERATOR_SEATS} standby`} />
           <ModelStat label="threshold" value={`${MONARCH_CLUSTER_THRESHOLD}-of-${MONARCH_CLUSTER_SIZE}`} sub="tolerates three outages" />
-          <ModelStat label="connected cluster" value={c ? `${clusterModel.liveOperators}/${c.size}` : "—"} sub={c ? `${clusterModel.offlineOperators} offline` : "awaiting lyth_clusterStatus"} />
+          <ModelStat label="connected cluster" value={connectedClusterStatus} sub={connectedClusterDetail} />
         </div>
         {clusterModel.blockers.length > 0 ? (
           <div className="stat__sub mono" style={{ marginTop: 12 }}>
@@ -229,7 +241,7 @@ export function Cluster() {
               <tr>
                 <td colSpan={6} className="mono" style={{ color: "var(--fg-500)" }}>
                   {clusters.notExposed
-                    ? "Cluster directory RPC is not exposed by this endpoint."
+                    ? "Cluster directory is not available from this node yet."
                     : "No clusters returned by the connected endpoint."}
                 </td>
               </tr>
@@ -322,7 +334,7 @@ export function Cluster() {
               <tr>
                 <td colSpan={6} className="mono" style={{ color: "var(--fg-500)" }}>
                   {providers.notExposed
-                    ? "Provider directory RPC is not exposed by this endpoint."
+                    ? "Provider directory is not available from this node yet."
                     : "No providers returned by the connected endpoint."}
                 </td>
               </tr>
@@ -359,8 +371,8 @@ export function Cluster() {
               <div className="sub">
                 {members.length > 0
                   ? `${members.length} operators from live cluster status`
-                  : cluster.notExposed
-                    ? "blocked by lyth_clusterStatus"
+                  : cluster.notExposed || cluster.error
+                    ? "cluster roster unavailable"
                     : "loading"}
               </div>
             </div>
@@ -395,10 +407,10 @@ export function Cluster() {
                       {meta
                         ? hostingClassLabel(meta.hostingClass)
                         : memberMetadata.notExposed
-                          ? "not exposed"
+                          ? "unavailable"
                           : "—"}
                     </td>
-                    <td>{meta?.geoRegion ?? (memberMetadata.notExposed ? "not exposed" : "—")}</td>
+                    <td>{meta?.geoRegion ?? (memberMetadata.notExposed ? "unavailable" : "—")}</td>
                     <td>
                       <span className={`halo ${tone}`}>
                         <span className="dot" /> {stateLabel(m.state)}
@@ -500,7 +512,7 @@ export function Cluster() {
               <tr>
                 <td colSpan={4} className="mono" style={{ color: "var(--fg-500)" }}>
                   {resignations.notExposed
-                    ? "Cluster resignation RPC is not exposed by this endpoint."
+                    ? "Resignation history is not available from this node yet."
                     : "No pending or applied cluster resignation rows returned."}
                 </td>
               </tr>
@@ -540,12 +552,12 @@ export function Cluster() {
               {diversity.data
                 ? `ASN ${bpsToPercent(diversity.data.asnVariance)} · geo ${bpsToPercent(diversity.data.geoVariance)} · hosting ${bpsToPercent(diversity.data.hostingSpread)}`
                 : diversity.notExposed
-                  ? "diversity scoring not yet exposed"
+                  ? "diversity scoring unavailable"
                   : "loading"}
             </div>
             <div className="stat__sub mono" style={{ marginTop: 8 }}>
               {memberMetadata.notExposed
-                ? "lead operator network metadata not exposed"
+                ? "lead operator network metadata unavailable"
                 : leadMeta
                   ? `lead: ${hostingClassLabel(leadMeta.hostingClass)} · ${leadMeta.geoRegion ?? "geo —"} · ASN ${leadMeta.asn ?? "—"}`
                   : "lead operator: loading"}
@@ -556,7 +568,7 @@ export function Cluster() {
               <div className="stat__label">oracle writers</div>
               <div className="mono">
                 {oracle.notExposed
-                  ? "not exposed"
+                  ? "unavailable"
                   : oracle.data?.status === "indexer_unavailable"
                     ? "indexer unavailable"
                     : (oracle.data?.writers.length ?? 0)}
@@ -566,7 +578,7 @@ export function Cluster() {
               <div className="stat__label">bridge routes</div>
               <div className="mono">
                 {bridge.notExposed
-                  ? "not exposed"
+                  ? "unavailable"
                   : `${bridge.data?.records.length ?? 0} · ${
                       bridge.data?.records.filter((r) => r.circuitBreaker.paused).length ?? 0
                     } paused`}

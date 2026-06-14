@@ -55,14 +55,14 @@ export function evaluateClusterModel(
   if (!cluster) {
     return {
       state: "unknown",
-      label: "cluster model unavailable",
+      label: "awaiting cluster status",
       targetSummary,
       thresholdSummary,
       seatSummary,
       liveOperators: 0,
       offlineOperators: 0,
       standbySeats: MONARCH_STANDBY_OPERATOR_SEATS,
-      blockers: ["lyth_clusterStatus"],
+      blockers: ["live cluster status unavailable"],
     };
   }
 

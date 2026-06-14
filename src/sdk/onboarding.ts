@@ -6,8 +6,8 @@
 // src/sdk detectors. Probe results use `boolean | null` everywhere:
 //   true  -> verified done
 //   false -> verified NOT done
-//   null  -> cannot verify (method not exposed / outside the desktop
-//            runtime) - rendered as "unknown", never as "not done".
+//   null  -> cannot verify from the current connection - rendered as
+//            "unknown", never as "not done".
 
 import { formatLyth } from "@monolythium/core-sdk";
 import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
@@ -54,7 +54,7 @@ export type OnboardingStepStatus =
   | "todo"
   /** Cannot start until an earlier step completes. */
   | "blocked"
-  /** Cannot be verified on this endpoint/runtime ("not exposed" is NOT "not done"). */
+  /** Cannot be verified from the current connection. */
   | "unknown";
 
 export type OnboardingStep = {
@@ -253,7 +253,7 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
           : register === "blocked"
             ? "Needs your operator key first."
             : register === "unknown"
-              ? "Registration lookup is not exposed on this endpoint."
+              ? "Registration status is not available from this node yet."
               : "Lock the bond and list your node so clusters can admit you.",
       status: register,
       fixRoute: "/setup-operator",
