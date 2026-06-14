@@ -13,6 +13,7 @@ import {
   downloadAndInstallUpdate,
   type UpdateCheckResult,
 } from "../sdk/updater";
+import { APP_CHANGELOG } from "../sdk/changelog";
 import {
   getStoredRpcEndpoint,
   rpcEndpoint,
@@ -46,6 +47,36 @@ function SettingsSection({
       </summary>
       <div className="settings-section__body">{children}</div>
     </details>
+  );
+}
+
+function ChangelogCard() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {APP_CHANGELOG.map((entry) => (
+        <div key={entry.version} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <b style={{ fontFamily: "var(--f-mono)", fontSize: 13 }}>v{entry.version}</b>
+            <span className="cap" style={{ color: "var(--fg-400)" }}>{entry.date}</span>
+          </div>
+          <ul
+            style={{
+              margin: 0,
+              paddingLeft: 18,
+              display: "flex",
+              flexDirection: "column",
+              gap: 5,
+            }}
+          >
+            {entry.highlights.map((h) => (
+              <li key={h} style={{ fontSize: 12.5, color: "var(--fg-200)", lineHeight: 1.55 }}>
+                {h}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -217,6 +248,13 @@ export function Settings() {
           meta="desktop"
         >
           <UpdatesCard />
+        </SettingsSection>
+        <SettingsSection
+          title="Changelog"
+          description="What changed in each Monarch Desktop release."
+          meta={APP_CHANGELOG[0] ? `v${APP_CHANGELOG[0].version}` : "desktop"}
+        >
+          <ChangelogCard />
         </SettingsSection>
         <SettingsSection
           title="Node connection"
