@@ -244,7 +244,14 @@ export function NodeUpdateChip() {
         type="button"
         className="monarch-topbar__round"
         style={{ cursor: "pointer", gap: 6 }}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // Opening the dropdown re-checks for a node update on the spot, so the
+          // operator never has to restart the app to see whether one is
+          // available. (The feed also loads on mount.)
+          const next = !open;
+          setOpen(next);
+          if (next && !feed.loading) feed.refresh();
+        }}
         aria-label="Protocore node version and updates"
         title={
           labelKnown
@@ -303,7 +310,7 @@ export function NodeUpdateChip() {
               onClick={feed.refresh}
               disabled={feed.loading}
             >
-              {feed.loading ? "Checking…" : "Re-check"}
+              {feed.loading ? "Checking…" : "Check for node updates"}
             </button>
           </div>
 
