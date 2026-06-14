@@ -1,6 +1,7 @@
 import { formatLyth } from "@monolythium/core-sdk";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toMono1 } from "../sdk/address";
 import { useKeychainPresence, useSelfOperator } from "../hooks/useSelfOperator";
 import { useOps } from "../ops";
 import {
@@ -95,7 +96,11 @@ export function Operator() {
   const dutyAttestation = duties.data?.duties.attestation;
   const dutyKeyRotation = duties.data?.duties.keyRotation;
   const keyRows = [
-    { label: "Operator wallet address", algo: "send LYTH here", value: self.address ?? v?.address ?? "—" },
+    // Always show the bech32m `mono1…` form here — this is the "send LYTH here"
+    // funding address, and the `0x` hex EVM-compat form (which `v?.address` can
+    // be, from the registry RPC) is REJECTED by send paths. `toMono1` passes a
+    // `mono1…` through and converts `0x…` hex; falls back to "—".
+    { label: "Operator wallet address", algo: "send LYTH here", value: toMono1(self.address ?? v?.address) ?? "—" },
     { label: "Operator ID", algo: "cluster member id", value: operatorId ?? "—" },
     { label: "Consensus key fingerprint", algo: "registry", value: v?.pubkey ?? "—" },
     { label: "Cluster anchor", algo: "cluster account", value: clusterData?.anchorAddress ?? "—" },
