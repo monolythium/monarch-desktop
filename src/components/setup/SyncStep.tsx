@@ -1,18 +1,33 @@
 // Step 5 — Sync.
 //
-// A node that's still importing blocks isn't ready to register or sign. This
-// polls `eth_syncing`: while it returns a status object the node is catching
-// up, so we draw a progress bar from currentBlock vs highestBlock; when it
-// returns `null` the node is caught up and the step is marked done. The live
-// height from `useNodeStatus` is shown alongside so the operator sees the chain
-// ticking. On a single self-run node already at the tip, `eth_syncing` is null
-// from the first poll and the step completes immediately — which is correct.
+// A node that's still importing blocks isn't ready to register or sign. The
+// authoritative signal is `lyth_syncStatus` (localRound vs the highest round a
+// peer has advertised); we only call the node "synced" when it has actually
+// caught up to the committee — NOT merely when `eth_syncing` returns null. A
+// cold-start node sits at `localRound 0` with a far-ahead `peerMaxRound` while
+// it fast-syncs from a checkpoint; `eth_syncing` can report null in that window
+// even though the node is nowhere near the head, which is exactly how the old
+// check painted "synced" at height 0 while the topbar correctly said "syncing".
+// `eth_syncing` is kept only as a fallback for nodes that don't serve
+// `lyth_syncStatus` (and even then we require a non-zero height before claiming
+// synced).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc, useNodeStatus } from "../../sdk";
 import { StepShell } from "./StepShell";
 
 const POLL_MS = 3_000;
+// Within a handful of rounds of the committee head counts as caught up — the
+// chain advances every few seconds, so the local round trails the freshest
+// advertised round by a small margin even on a healthy node.
+const SYNCED_LAG = 5;
+
+type LythSyncStatus = {
+  lag: number;
+  localRound: number;
+  peerMaxRound: number;
+  state: string;
+};
 
 type SyncState =
   | { kind: "checking" }
@@ -25,14 +40,46 @@ export function SyncStep({ n, onSynced }: { n: number; onSynced: () => void }) {
   const [state, setState] = useState<SyncState>({ kind: "checking" });
   const firedRef = useRef(false);
 
+  const markSynced = useCallback(() => {
+    setState({ kind: "synced" });
+    if (!firedRef.current) {
+      firedRef.current = true;
+      onSynced();
+    }
+  }, [onSynced]);
+
   const poll = useCallback(async () => {
     try {
+      // Primary signal: how far the local round trails the committee head.
+      const status = await rpc
+        .call<LythSyncStatus>("lyth_syncStatus", [])
+        .catch(() => null);
+      if (status) {
+        const peerMax = Number(status.peerMaxRound) || 0;
+        const local = Number(status.localRound) || 0;
+        const lag = Number(status.lag) || Math.max(0, peerMax - local);
+        if (peerMax > 0) {
+          // We know a peer is ahead: caught up only when the gap is tiny AND
+          // we've actually left round 0. A node at local 0 with a far-ahead
+          // peer is syncing, full stop.
+          if (lag <= SYNCED_LAG && local > 0) {
+            markSynced();
+          } else {
+            setState({ kind: "syncing", current: local, highest: peerMax });
+          }
+          return;
+        }
+        // No peer reports a higher round. Genuinely alone or just-booted —
+        // fall through to eth_syncing, but never call height 0 "synced".
+      }
+
       const sync = await rpc.ethSyncing();
+      const height = node.blockNumber ?? Number(status?.localRound ?? 0);
       if (sync === null) {
-        setState({ kind: "synced" });
-        if (!firedRef.current) {
-          firedRef.current = true;
-          onSynced();
+        if (height > 0) {
+          markSynced();
+        } else {
+          setState({ kind: "checking" });
         }
         return;
       }
@@ -42,7 +89,7 @@ export function SyncStep({ n, onSynced }: { n: number; onSynced: () => void }) {
     } catch (err) {
       setState({ kind: "error", message: (err as Error)?.message ?? String(err) });
     }
-  }, [onSynced]);
+  }, [markSynced, node.blockNumber]);
 
   useEffect(() => {
     void poll();
@@ -112,7 +159,7 @@ export function SyncStep({ n, onSynced }: { n: number; onSynced: () => void }) {
           <span className="halo halo--info">
             <span className="dot dot--pulse" />
             {state.kind === "syncing"
-              ? ` block ${state.current.toLocaleString()} / ${state.highest.toLocaleString()} (${pct}%)`
+              ? ` round ${state.current.toLocaleString()} / ${state.highest.toLocaleString()} (${pct}%)`
               : " checking sync state…"}
           </span>
         )}

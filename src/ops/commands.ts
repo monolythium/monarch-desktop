@@ -55,6 +55,10 @@ export function commandFor(op: OpRequest): string | null {
     case "emergency-key-rotation":
     case "ota-apply":
     case "ota-rollback":
+    // Wipe & re-provision is a dedicated Talos Reset path
+    // (`OpsContext.runReprovisionFlow`); never shell-fallback a destructive
+    // partition wipe.
+    case "operator-reprovision":
       return null;
     default: {
       // Exhaustiveness guard. If a new OpKind is added we want this to

@@ -537,6 +537,18 @@ export async function talosRollback(): Promise<TalosTextResult> {
   return await invoke<TalosTextResult>("talos_rollback");
 }
 
+// Wipe the node's EPHEMERAL partition (the chain DB + resolved genesis +
+// config) and reboot — an in-place re-provision that preserves the Talos
+// machine config. Recovers a node wedged off the chain head so its next boot
+// re-resolves cold-start fast-sync seeds and fast-syncs from a fresh DB.
+export async function talosWipeProtocore(): Promise<TalosTextResult> {
+  if (!inTauri()) {
+    throw new Error("talos_wipe_protocore unavailable — running outside Tauri");
+  }
+  recordE2eCommand("talos_wipe_protocore");
+  return await invoke<TalosTextResult>("talos_wipe_protocore");
+}
+
 export async function talosServiceAction(
   service = "ext-protocore",
   action: "start" | "stop" | "restart",

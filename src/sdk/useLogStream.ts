@@ -23,6 +23,7 @@ import {
   sshExecStream,
   sshStatus,
   talosLogCancel,
+  talosLogs,
   talosLogStream,
 } from "./bridge";
 
@@ -251,6 +252,29 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
 
       (async () => {
         try {
+          // Prime the panel with a one-shot tail BEFORE following. The follow
+          // stream only emits lines the node writes after the session opens, so
+          // a healthy-but-quiet node would otherwise leave the panel stuck on
+          // "Connected. Waiting for logs". The synchronous `talos_logs` tail
+          // (same Talos Logs API, non-follow) fills in the recent history
+          // immediately; the follow session below then appends new lines.
+          try {
+            const snapshot = await talosLogs("ext-protocore", BUFFER_LIMIT);
+            if (!cancelled && aliveRef.current && snapshot.output) {
+              const seeded = snapshot.output
+                .split("\n")
+                .map((raw) => parseJournaldLine(raw))
+                .filter((entry): entry is LogEntry => entry !== null);
+              if (seeded.length > 0) {
+                setLines(seeded.slice(-BUFFER_LIMIT));
+              }
+            }
+          } catch {
+            // Non-fatal: priming is best-effort. If the one-shot tail is
+            // unavailable the follow stream below still drives the panel.
+          }
+          if (cancelled) return;
+
           const requestedId = Date.now() + Math.floor(Math.random() * 10_000);
           unlisten = await listenTalosLog(
             requestedId,
@@ -276,7 +300,10 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
               setStatus({ kind: "error", target, error: message });
             },
           );
-          const id = await talosLogStream("ext-protocore", BUFFER_LIMIT, requestedId);
+          // Small follow tail: the one-shot prime already showed recent
+          // history, so the follow session only needs to pick up new lines (a
+          // couple of overlap lines at the seam is harmless).
+          const id = await talosLogStream("ext-protocore", 2, requestedId);
           if (cancelled) {
             await talosLogCancel(id).catch(() => undefined);
             return;

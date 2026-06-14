@@ -94,6 +94,7 @@ pub fn run() {
             talos::talos_upgrade,
             talos::talos_bootstrap,
             talos::talos_rollback,
+            talos::talos_wipe_protocore,
             talos::talos_service_action,
             talos::talos_export_protocore_backup,
             talos::talos_operator_seal_ek,

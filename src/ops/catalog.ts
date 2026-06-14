@@ -408,6 +408,48 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "operator-reprovision",
+    category: "emergency",
+    icon: "WP",
+    risk: "high",
+    title: "Wipe node data & re-provision",
+    sub: "Talos reset · EPHEMERAL",
+    intro:
+      "Erases this node's chain data and reboots it for a clean re-sync. Use only when the node is wedged off the chain head — stuck at block 0 in dag-sync, or pinned behind its own proposer anchor — and a restart did not fix it. Your operator keys and Talos config are preserved; the node fast-syncs from a fresh database on the way back up.",
+    technical:
+      "Calls the Talos Reset RPC against the trusted node context with system_partitions_to_wipe=[EPHEMERAL] (graceful=false, reboot=true). EPHEMERAL (/var) holds /var/lib/protocore — the chain DB, the resolved genesis.toml, and config.toml. The STATE partition (machine config) is left intact, so the node reboots, re-applies its config, and the protocore entrypoint re-runs its first-boot path: it re-resolves the genesis hash and the [fast_sync] cold-start seed RPCs from the chain-registry, then fast-syncs from a quorum-verified checkpoint instead of replaying the (pruned) DAG from round 0.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Wipe data & reboot node",
+    keywords: [
+      "wipe",
+      "reset",
+      "re-provision",
+      "reprovision",
+      "fast-sync",
+      "stuck",
+      "block 0",
+      "round 0",
+      "dag-sync",
+      "anchor",
+      "recover",
+    ],
+    effects: [
+      "Talos wipes the EPHEMERAL partition (/var/lib/protocore: chain DB, genesis.toml, config.toml) and reboots.",
+      "Operator keys and the Talos machine config on the STATE partition are preserved.",
+      "On reboot the node re-resolves genesis + cold-start fast-sync seeds and fast-syncs from a quorum-verified checkpoint — climbing off block 0 in minutes instead of dag-syncing a pruned DAG forever.",
+    ],
+    diff: [
+      { key: "data", label: "Chain data (/var/lib/protocore)", value: "wiped" },
+      { key: "keys", label: "Operator keys + machine config", value: "preserved" },
+      { key: "recovery", label: "On reboot", value: "fresh fast-sync from checkpoint" },
+    ],
+    fields: [
+      { key: "transport", label: "Transport", value: "Talos Reset RPC (EPHEMERAL)" },
+      { key: "reboot", label: "Reboot", value: "automatic" },
+    ],
+  },
+  {
     kind: "cluster-form",
     category: "cluster",
     icon: "FC",

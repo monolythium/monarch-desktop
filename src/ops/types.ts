@@ -25,6 +25,7 @@ export const OP_KINDS = [
   "emergency-key-rotation",
   "ota-apply",
   "ota-rollback",
+  "operator-reprovision",
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];

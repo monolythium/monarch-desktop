@@ -254,6 +254,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "freeze-admission",
   "emergency-key-rotation",
   "ota-rollback",
+  "operator-reprovision",
 ] satisfies ReadonlyArray<OpKind>;
 
 export type DesignAuditStatus =

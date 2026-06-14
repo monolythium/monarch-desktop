@@ -1152,6 +1152,24 @@ fn format_rollback_response(response: machine::RollbackResponse) -> String {
     }
 }
 
+fn format_reset_response(response: machine::ResetResponse) -> String {
+    let mut lines = Vec::new();
+    for msg in response.messages {
+        let host = metadata_host(msg.metadata.as_ref());
+        let actor = if msg.actor_id.trim().is_empty() {
+            "actor unavailable".to_string()
+        } else {
+            format!("actor {}", msg.actor_id)
+        };
+        lines.push(format!("{host}: reset accepted ({actor})"));
+    }
+    if lines.is_empty() {
+        "reset accepted".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
 fn unix_now() -> Result<u64, TalosError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2551,6 +2569,63 @@ pub async fn talos_rollback(state: State<'_, TalosState>) -> Result<TalosTextRes
         endpoint,
         command: "talos rollback".to_string(),
         output: format_rollback_response(response),
+        service: None,
+    })
+}
+
+/// Wipe the node's `EPHEMERAL` partition and reboot — an in-place
+/// re-provision. `EPHEMERAL` (`/var`) holds `/var/lib/protocore` (the chain DB,
+/// the resolved `genesis.toml`, and `config.toml`); the `STATE` partition that
+/// carries the Talos machine config is left intact, so the node reboots,
+/// re-applies its existing config, and the protocore entrypoint runs its
+/// first-boot path again (genesis + cold-start fast-sync seeds re-resolved from
+/// the chain-registry, fresh DB → fast-sync fires). This is the recovery for a
+/// node wedged off the chain head — e.g. an operator stuck behind its own
+/// proposer anchor (M3-L-14), or a node whose `[fast_sync]` seeds never landed
+/// in config so fast-sync never fired and it dag-syncs from round 0 forever.
+/// `graceful=false` because a single self-hosted node has no peer to hand etcd
+/// to; `reboot=true` so it comes back on its own.
+#[tauri::command]
+pub async fn talos_wipe_protocore(state: State<'_, TalosState>) -> Result<TalosTextResult, String> {
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    let control_plane =
+        build_config_info(Some(&endpoint), &config_path).map_err(|e| e.to_string())?;
+    enforce_privileged_control_plane(&control_plane).map_err(|e| e.to_string())?;
+    let mut client = machine_client(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let response = timeout(
+        TALOS_TIMEOUT,
+        client.reset(machine::ResetRequest {
+            graceful: false,
+            reboot: true,
+            // Wipe only EPHEMERAL (/var, holds /var/lib/protocore). Leaving
+            // system_partitions_to_wipe empty would erase EVERY partition —
+            // including STATE (the machine config) — turning this into a full
+            // reinstall instead of a data re-provision.
+            system_partitions_to_wipe: vec![machine::ResetPartitionSpec {
+                label: "EPHEMERAL".to_string(),
+                wipe: true,
+            }],
+            user_disks_to_wipe: vec![],
+            mode: machine::reset_request::WipeMode::SystemDisk as i32,
+        }),
+    )
+    .await
+    .map_err(|_| TalosError::Timeout.to_string())?
+    .map_err(|e| e.to_string())?
+    .into_inner();
+
+    Ok(TalosTextResult {
+        node_address: node_address(&endpoint),
+        endpoint,
+        command: "talos reset --graceful=false --reboot --system-labels-to-wipe EPHEMERAL"
+            .to_string(),
+        output: format_reset_response(response),
         service: None,
     })
 }

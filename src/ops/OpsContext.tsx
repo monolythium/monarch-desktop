@@ -24,6 +24,7 @@ import {
   talosRollback,
   talosServiceAction,
   talosUpgrade,
+  talosWipeProtocore,
 } from "../sdk";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
 import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
@@ -1154,6 +1155,39 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runReprovisionFlow = useCallback(
+    async (req: OpRequest) => {
+      try {
+        const result = await talosWipeProtocore();
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: summarize(
+              result.output,
+              `${req.title} submitted via Talos Reset (EPHEMERAL). The node wipes its chain data and reboots; it re-resolves cold-start seeds and fast-syncs from a fresh DB.`,
+            ),
+          },
+          {
+            transport: "talos",
+            action: "reset-ephemeral",
+            endpoint: result.endpoint,
+            nodeAddress: result.nodeAddress,
+            command: result.command,
+          },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "talos", action: "reset-ephemeral" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
   const runTalosFlow = useCallback(async (req: OpRequest) => {
     if (req.kind === "operator-restore") {
       if (inTauri()) {
@@ -1307,6 +1341,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "operator-reprovision") {
+      if (inTauri()) {
+        await runReprovisionFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     const action = talosActionFor(req);
     if (!action) {
       const cmd = commandFor(req);
@@ -1376,6 +1418,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runPendingChangeFlow,
     runRedelegateFlow,
     runRegisterFlow,
+    runReprovisionFlow,
     runRestoreFlow,
     runSshFlow,
     settleOperation,

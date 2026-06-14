@@ -460,6 +460,7 @@ export {
   talosStatus,
   talosTrustConfig,
   talosUpgrade,
+  talosWipeProtocore,
   EMPTY_TALOS_STATUS,
 } from "./bridge";
 export type {
