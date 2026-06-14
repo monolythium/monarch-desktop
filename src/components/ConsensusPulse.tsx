@@ -23,10 +23,12 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { rpc } from "../sdk/client";
 import { useQuery } from "../sdk/queryCache";
 import { liveFeed, useLiveFeedStatus } from "../sdk/subscriptions";
@@ -143,6 +145,7 @@ export function ConsensusPulse() {
   const backfilled = useRef(false);
   const followRef = useRef(true);
   const stripRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const [version, setVersion] = useState(0);
   const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
@@ -317,7 +320,7 @@ export function ConsensusPulse() {
         : { cls: "halo halo--warn", label: "waiting" };
 
   return (
-    <div className="card card--padded pulse" aria-label="Consensus activity">
+    <div className="card card--padded pulse" aria-label="Consensus activity" ref={cardRef}>
       <div className="pulse__head">
         <div>
           <h3>Consensus activity</h3>
@@ -410,7 +413,12 @@ export function ConsensusPulse() {
       )}
 
       {selected ? (
-        <RoundPopover entry={selected} lanes={lanes} onClose={() => setSelectedRound(null)} />
+        <RoundPopover
+          entry={selected}
+          lanes={lanes}
+          anchorRef={cardRef}
+          onClose={() => setSelectedRound(null)}
+        />
       ) : null}
     </div>
   );
@@ -419,12 +427,38 @@ export function ConsensusPulse() {
 function RoundPopover({
   entry,
   lanes,
+  anchorRef,
   onClose,
 }: {
   entry: PulseRound;
   lanes: ClusterLane[];
+  anchorRef: React.RefObject<HTMLDivElement | null>;
   onClose: () => void;
 }) {
+  // The popover is portalled to <body> and positioned from the card's rect.
+  // Every `.card` has `backdrop-filter`, which creates a stacking context — so a
+  // popover left inside the card is trapped beneath sibling cards no matter its
+  // z-index. Rendering at the body root escapes that entirely.
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setPos({
+        top: r.bottom - 6,
+        right: Math.max(12, window.innerWidth - r.right + 12),
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    // capture-phase so scrolls on any ancestor (the view, a row) reposition it
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [anchorRef]);
   type LeaderState =
     | { status: "idle" }
     | { status: "loading" }
@@ -465,8 +499,13 @@ function RoundPopover({
     }
   };
 
-  return (
-    <div className="pulse__pop" role="dialog" aria-label={`Round ${entry.round} certificate`}>
+  return createPortal(
+    <div
+      className="pulse__pop"
+      role="dialog"
+      aria-label={`Round ${entry.round} certificate`}
+      style={pos ? { top: pos.top, right: pos.right } : { visibility: "hidden" }}
+    >
       <div className="pulse__pop-head">
         <b>Round {entry.round.toLocaleString()}</b>
         <button type="button" className="pulse__pop-close" onClick={onClose} aria-label="Close">
@@ -554,6 +593,7 @@ function RoundPopover({
           </button>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

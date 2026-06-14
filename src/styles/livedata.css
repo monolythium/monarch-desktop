@@ -153,16 +153,14 @@
   padding: 14px 4px;
 }
 
-/* round detail popover */
+/* round detail popover — portalled to <body> and positioned with fixed top/right
+   (inline) from the card's rect. Every `.card` has backdrop-filter, which makes a
+   stacking context; a popover left inside the card is trapped under sibling cards
+   no matter its z-index, so it is rendered at the body root instead. */
 .pulse__pop {
-  position: absolute;
-  right: 12px;
-  top: calc(100% - 6px);
-  /* High z-index so the detail card sits above neighbouring cards/rows instead
-     of rendering behind them. Opaque fill (no backdrop blur) so the content
-     underneath never bleeds through and makes it hard to read. */
-  z-index: 500;
-  width: min(440px, calc(100% - 24px));
+  position: fixed;
+  z-index: 9999;
+  width: min(440px, calc(100vw - 24px));
   background: var(--ink-200);
   border: 1px solid var(--glass-stroke-hi, var(--glass-stroke));
   border-radius: 14px;
