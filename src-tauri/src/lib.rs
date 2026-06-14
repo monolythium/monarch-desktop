@@ -35,6 +35,7 @@ mod keychain;
 // `maintenance_dryrun` example binary can exercise the exact generator the
 // provision flow uses against a live node.
 pub mod provision;
+mod release_feed;
 mod ssh;
 mod talos;
 // Public so the `maintenance_probe` example binary can drive the insecure
@@ -104,6 +105,7 @@ pub fn run() {
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,
             provision::talos_generate_full_node_config,
+            release_feed::latest_protocore_release,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

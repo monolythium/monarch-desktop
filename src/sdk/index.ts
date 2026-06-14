@@ -375,6 +375,18 @@ export type {
   ReleaseAttestationInput,
   ReleaseAttestationStatus,
 } from "./releaseAttestation";
+export {
+  fetchLatestProtocoreRelease,
+  protocoreUpdateStatus,
+  useLatestProtocoreRelease,
+} from "./protocoreRelease";
+export type {
+  LatestProtocoreRelease,
+  LatestProtocoreReleaseHook,
+  ProtocoreUpdateState,
+  ProtocoreUpdateStatus,
+  ProtocoreUpdateStatusInput,
+} from "./protocoreRelease";
 export { desktopReleaseReadiness } from "./releaseReadiness";
 export type {
   DesktopReleaseReadinessInput,

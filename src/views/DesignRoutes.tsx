@@ -25,8 +25,10 @@ import {
   inTauri,
   KEYCHAIN_ACCOUNTS,
   keychainGet,
+  protocoreUpdateStatus,
   releaseAttestationStatus,
   rpcEndpoint,
+  useLatestProtocoreRelease,
   talosProtocoreReadiness,
   talosService,
   talosStatus,
@@ -48,7 +50,9 @@ import {
   type TalosServiceInfo,
   type TalosStatus,
 } from "../sdk";
+import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import { shortAddr, toMono1 } from "../sdk/address";
+import { isValidUpgradeImage } from "../ops/OtaApplyForm";
 
 const ACTIVE_CLUSTER_ID = DEFAULT_ACTIVE_CLUSTER_ID;
 
@@ -1326,7 +1330,238 @@ export function SetupCluster() {
   );
 }
 
+function formatReleaseDate(value: string): string {
+  if (!value) return "unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  });
+}
+
+const CHANGELOG_PREVIEW_LINES = 6;
+
+// The git commit is the only reliable cross-release identity, compared on its
+// first 12 chars (see protocoreRelease.ts). Show exactly that prefix.
+function shortCommit12(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "—";
+  return trimmed.slice(0, 12);
+}
+
+function ReleaseChangelog({ notes, htmlUrl }: { notes: string; htmlUrl: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = useMemo(
+    () => notes.split(/\r?\n/).filter((line) => line.length > 0),
+    [notes],
+  );
+  const hasMore = lines.length > CHANGELOG_PREVIEW_LINES;
+  const shown = expanded ? lines : lines.slice(0, CHANGELOG_PREVIEW_LINES);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="cap" style={{ marginBottom: 6 }}>changelog</div>
+      {shown.length > 0 ? (
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontSize: 11.5,
+            lineHeight: 1.5,
+            color: "var(--fg-300)",
+            fontFamily: "var(--font-mono, monospace)",
+          }}
+        >
+          {shown.join("\n")}
+        </pre>
+      ) : (
+        <div style={{ fontSize: 11.5, color: "var(--fg-400)" }}>No release notes published.</div>
+      )}
+      <div className="inline-actions" style={{ marginTop: 8 }}>
+        {hasMore ? (
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        ) : null}
+        {htmlUrl ? (
+          <a className="btn btn--ghost btn--sm" href={htmlUrl} target="_blank" rel="noreferrer noopener">
+            View on GitHub
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LatestSignedReleaseCard({
+  ops,
+  provenance,
+}: {
+  ops: OpsRequester;
+  provenance: RuntimeProvenanceResponse | null;
+}) {
+  const feed = useLatestProtocoreRelease();
+  const release = feed.data;
+  const status = useMemo(
+    () => protocoreUpdateStatus({ release, provenance }),
+    [release, provenance],
+  );
+
+  // Mirror updater.ts silence: a failed/empty fetch never blocks the page.
+  if (feed.loading && !release) {
+    return (
+      <div className="card card--padded">
+        <div className="card__head">
+          <div>
+            <h3>Latest protocore release</h3>
+            <div className="sub">Checking the protocore release feed…</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!release) {
+    return (
+      <div className="card card--padded">
+        <div className="card__head">
+          <div>
+            <h3>Latest protocore release</h3>
+            <div className="sub" style={{ color: "var(--fg-400)" }}>
+              Release feed unavailable — could not read the latest protocore release.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const installerOk = isValidUpgradeImage(release.installerImage);
+  const applyEnabled = status.state === "update-available" && installerOk;
+  const nodeCommit = provenance?.runtime.gitCommit ?? null;
+
+  const applyUpdate = () => {
+    if (!applyEnabled) return;
+    const entry = OP_CATALOG.find((candidate) => candidate.kind === "ota-apply");
+    if (!entry) return;
+    ops.requestOp(
+      catalogRequest(entry, {
+        otaApplyInput: {
+          image: release.installerImage,
+          stage: false,
+          rebootMode: "default",
+        },
+      }),
+    );
+  };
+
+  return (
+    <div className="card card--padded">
+      <div className="card__head">
+        <div>
+          <h3>Latest protocore release</h3>
+          <div className="sub">
+            The newest protocore release published on GitHub, compared against your node's build.
+          </div>
+        </div>
+        <div className="inline-actions">
+          <span className={status.className} title={status.title}>
+            <span className="dot" /> {status.text}
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={feed.refresh}
+            disabled={feed.loading}
+          >
+            {feed.loading ? "Checking…" : "Re-check"}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid-3" style={{ marginTop: 12 }}>
+        <StatCard label="version" value={release.tag} sub={release.name} tone="info" />
+        <StatCard label="released" value={formatReleaseDate(release.publishedAt)} sub="published on GitHub" tone="info" />
+        <StatCard
+          label="signature"
+          value={release.signed ? "signed" : "unsigned"}
+          sub={
+            release.signed
+              ? release.sbom
+                ? "cosign signature + SBOM published"
+                : "cosign signature published"
+              : "no cosign signature on release"
+          }
+          tone={release.signed ? "ok" : "warn"}
+        />
+      </div>
+
+      <div className="grid-2" style={{ marginTop: 12 }}>
+        <div className="kv" style={{ gap: 12 }}>
+          <span className="kv__k">Release commit</span>
+          <span className="mono">{shortCommit12(release.monoCoreCommit)}</span>
+        </div>
+        <div className="kv" style={{ gap: 12 }}>
+          <span className="kv__k">Node commit</span>
+          <span className="mono">{shortCommit12(nodeCommit)}</span>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 6 }}>
+        <span
+          className={release.signed ? "halo halo--ok" : "halo halo--warn"}
+          title={
+            release.signed
+              ? "The cosign .sig/.pem and SBOM assets are present on the published GitHub release. This is an assets-present check, not an on-device cosign verification."
+              : "The published release is missing a cosign .sig/.pem pair."
+          }
+        >
+          <span className="dot" />{" "}
+          {release.signed
+            ? release.sbom
+              ? "cosign signature + SBOM published"
+              : "cosign signature published"
+            : "unsigned release"}
+        </span>
+      </div>
+
+      <ReleaseChangelog notes={release.notes} htmlUrl={release.htmlUrl} />
+
+      <div className="inline-actions" style={{ marginTop: 12 }}>
+        <button
+          type="button"
+          className="btn btn--primary btn--sm"
+          onClick={applyUpdate}
+          disabled={!applyEnabled}
+          title={
+            status.state === "current"
+              ? "Node already matches the latest signed release."
+              : status.state === "unknown"
+                ? "Cannot compare the node build against this release."
+                : !installerOk
+                  ? "The derived installer image reference is not a valid upgrade image."
+                  : "Open the guarded OS upgrade drawer pre-filled with this release."
+          }
+        >
+          Apply this update
+        </button>
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)", alignSelf: "center" }}>
+          Opens the guarded Talos upgrade drawer (preserve=true). You still review and confirm.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function Attestation() {
+  const ops = useOps();
   const [snapshot, refreshTalos] = useTalosSnapshot();
   const provenance = useRuntimeProvenance();
   const releaseStatus = releaseAttestationStatus({
@@ -1360,6 +1595,8 @@ export function Attestation() {
         <StatCard label="protocore" value={snapshot.readiness?.displayState ?? "not checked"} sub={snapshot.readiness?.summary ?? snapshot.error ?? "Talos readiness"} tone={snapshot.readiness?.severity === "ok" ? "ok" : "warn"} />
         <StatCard label="release gates" value={readiness.ok ? "ready" : `${readiness.blockers.length} blockers`} sub="desktop release readiness" tone={readiness.ok ? "ok" : "warn"} />
       </div>
+
+      <LatestSignedReleaseCard ops={ops} provenance={provenance.data} />
 
       <div className="card card--padded">
         <div className="card__head">
