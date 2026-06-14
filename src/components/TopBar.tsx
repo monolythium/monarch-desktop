@@ -9,6 +9,7 @@ import { useLocation } from "react-router-dom";
 import { NAV_ROUTES } from "../nav/routes";
 import { useChainStatus, useNodeStatus } from "../sdk";
 import { EndpointChip } from "./EndpointChip";
+import { NodeUpdateChip } from "./NodeUpdateChip";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import "../styles/livedata.css";
 
@@ -103,6 +104,8 @@ export function TopBar({
       </div>
 
       <EndpointChip />
+
+      <NodeUpdateChip />
 
       <ThemeSwitcher />
     </header>

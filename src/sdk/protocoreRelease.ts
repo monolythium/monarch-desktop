@@ -69,6 +69,27 @@ export async function fetchLatestProtocoreRelease(
   }
 }
 
+/** Discover the most recent signed protocore releases (newest first) for the
+ *  channel — backs the topbar update dropdown. Returns `[]` outside a Tauri
+ *  runtime or on any error (silent, like {@link fetchLatestProtocoreRelease}).
+ *  `limit` is advisory; the Rust side clamps it. */
+export async function fetchRecentProtocoreReleases(
+  channel?: string,
+  limit?: number,
+): Promise<LatestProtocoreRelease[]> {
+  if (!isTauri()) return [];
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const result = await invoke<LatestProtocoreRelease[]>("recent_protocore_releases", {
+      channel,
+      limit,
+    });
+    return Array.isArray(result) ? result : [];
+  } catch {
+    return [];
+  }
+}
+
 export type ProtocoreUpdateState = "current" | "update-available" | "unknown";
 
 export type ProtocoreUpdateStatus = {
@@ -139,6 +160,64 @@ export function protocoreUpdateStatus({
   };
 }
 
+/** The running node's position within a list of recent releases. PURE so the
+ *  topbar dropdown and tests share one source of truth. */
+export type NodeReleaseSummary = {
+  /** Release the running node is on (its `monoCoreCommit` first-12 matches
+   *  `runtime.gitCommit`), or `null` when no listed release matches. */
+  current: LatestProtocoreRelease | null;
+  /** Display label for the running node's build: the matching release tag, or
+   *  "unknown build" when nothing matches / provenance is missing. */
+  label: string;
+  /** Whether the list contains a release NEWER than the node's current one.
+   *  Newest-first ordering means: any release ahead of the matched index, or —
+   *  when the node matches nothing but the list is non-empty — a newer build
+   *  exists to move to. HONEST: this means "a different/newer signed release is
+   *  available", never "the node is outdated". */
+  updateAvailable: boolean;
+  /** The newest release in the list, if any (the dropdown's headline). */
+  latest: LatestProtocoreRelease | null;
+};
+
+/** Locate the running node within a newest-first release list and report
+ *  whether a newer signed release exists. Pure. The caller passes releases
+ *  already ordered newest-first (as the Rust feed returns them). */
+export function protocoreNodeReleaseSummary(
+  releases: LatestProtocoreRelease[],
+  provenance: RuntimeProvenanceResponse | null,
+): NodeReleaseSummary {
+  const latest = releases[0] ?? null;
+  const nodeCommit = shortCommit(provenance?.runtime.gitCommit);
+
+  if (!nodeCommit) {
+    // No node identity to compare — never claim an update is available.
+    return { current: null, label: "unknown build", updateAvailable: false, latest };
+  }
+
+  const current =
+    releases.find((r) => shortCommit(r.monoCoreCommit) === nodeCommit) ?? null;
+  if (!current) {
+    // The node build matches no listed release. A newer signed build exists to
+    // move to as long as the list is non-empty, but we cannot name the node's
+    // own release, so the label stays "unknown build".
+    return {
+      current: null,
+      label: "unknown build",
+      updateAvailable: latest !== null,
+      latest,
+    };
+  }
+
+  // Newest-first: anything before the matched index is newer than the node.
+  const index = releases.indexOf(current);
+  return {
+    current,
+    label: current.tag,
+    updateAvailable: index > 0,
+    latest,
+  };
+}
+
 export type LatestProtocoreReleaseHook = {
   data: LatestProtocoreRelease | null;
   loading: boolean;
@@ -186,6 +265,60 @@ export function useLatestProtocoreRelease(channel?: string): LatestProtocoreRele
       cancelled = true;
     };
   }, [channel, nonce]);
+
+  return { data, loading, error, refresh };
+}
+
+export type RecentProtocoreReleasesHook = {
+  data: LatestProtocoreRelease[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+};
+
+/** Fetch the recent signed releases once on mount, plus a manual `refresh()`.
+ *  Like {@link useLatestProtocoreRelease}, deliberately NOT a tight poll — the
+ *  unauthenticated GitHub limit is 60/hr — so it never sits on an interval. */
+export function useRecentProtocoreReleases(
+  channel?: string,
+  limit?: number,
+): RecentProtocoreReleasesHook {
+  const [data, setData] = useState<LatestProtocoreRelease[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
+  const mounted = useRef(true);
+
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchRecentProtocoreReleases(channel, limit)
+      .then((result) => {
+        if (cancelled || !mounted.current) return;
+        setData(result);
+        if (result.length === 0) setError("release feed unavailable");
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled || !mounted.current) return;
+        setData([]);
+        setError("release feed unavailable");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channel, limit, nonce]);
 
   return { data, loading, error, refresh };
 }
