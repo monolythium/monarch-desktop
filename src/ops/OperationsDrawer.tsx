@@ -39,6 +39,7 @@ import {
   isFreezeAdmissionInputComplete,
 } from "./IncidentExecutorForm";
 import { isOtaApplyInputComplete, OtaApplyForm } from "./OtaApplyForm";
+import { LogRetentionForm } from "./LogRetentionForm";
 import {
   isOperatorDisplayInputComplete,
   OperatorDisplayForm,
@@ -62,9 +63,9 @@ import {
   type PreflightRow,
 } from "./preflight";
 import type { OpKind, OpRequest, OpStage } from "./types";
+import { isLogRetentionInputComplete } from "./types";
 import { matchSelfMember, useSelfOperator } from "../hooks/useSelfOperator";
-import { DEFAULT_ACTIVE_CLUSTER_ID } from "../sdk/clusterModel";
-import { useClusterStatus } from "../sdk/hooks";
+import { useClusterStatus, type ClusterStatus } from "../sdk/hooks";
 
 const STAGE_LABEL: Record<OpStage, string> = {
   preview: "Preview",
@@ -217,40 +218,102 @@ function PreflightStrip({
   );
 }
 
+/**
+ * Quorum-impact verdict for a service stop/restart verb. Pure so it can be
+ * unit-tested without rendering. Distinguishes a node with a consensus seat
+ * (real quorum math) from a relay/standalone with no seat (`clusterId === null`)
+ * — the latter has no committee impact and must NOT borrow cluster-0's math.
+ */
+export type QuorumImpact =
+  | { kind: "not-applicable" }
+  | { kind: "non-cluster" }
+  | { kind: "unavailable" }
+  | {
+      kind: "quorum";
+      verb: "Stopping" | "Restarting";
+      after: number;
+      size: number;
+      threshold: number;
+      holds: boolean;
+      counted: boolean;
+    };
+
+export function quorumImpact(
+  opKind: OpKind,
+  clusterId: number | null,
+  data: ClusterStatus | null,
+  selfOperatorId: string | null,
+): QuorumImpact {
+  if (opKind !== "operator-stop" && opKind !== "operator-restart") {
+    return { kind: "not-applicable" };
+  }
+  // A relay / standalone node holds no consensus seat (clusterId === null), so
+  // there is no committee to estimate quorum against. Surface that explicitly
+  // rather than laundering null into cluster 0 and rendering cluster-0 math.
+  if (clusterId === null) {
+    return { kind: "non-cluster" };
+  }
+  if (!data) {
+    return { kind: "unavailable" };
+  }
+  const live = data.members.filter((member) => member.state !== "jail").length;
+  const counted = matchSelfMember(data.members, selfOperatorId) !== null;
+  const after = Math.max(live - 1, 0);
+  return {
+    kind: "quorum",
+    verb: opKind === "operator-stop" ? "Stopping" : "Restarting",
+    after,
+    size: data.size,
+    threshold: data.threshold,
+    holds: after >= data.threshold,
+    counted,
+  };
+}
+
 /** Live quorum-impact line for service stop/restart verbs. */
 function QuorumImpact({ kind }: { kind: OpKind }) {
   const self = useSelfOperator();
-  const cluster = useClusterStatus(self.clusterId ?? DEFAULT_ACTIVE_CLUSTER_ID);
-  const data = cluster.data;
-  if (kind !== "operator-stop" && kind !== "operator-restart") return null;
-  if (!data) {
-    return (
-      <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
-        <span className="dot" /> Cluster status is unavailable — verify quorum impact manually before
-        taking your node offline.
-      </div>
-    );
+  // Pass the seat through verbatim: `useClusterStatus(null)` resolves to
+  // NO_TARGET (no cluster-0 fetch), so a relay/standalone never pulls another
+  // cluster's roster.
+  const cluster = useClusterStatus(self.clusterId);
+  const impact = quorumImpact(kind, self.clusterId, cluster.data, self.operatorId);
+
+  switch (impact.kind) {
+    case "not-applicable":
+      return null;
+    case "non-cluster":
+      return (
+        <div className="halo halo--ok" style={{ alignSelf: "flex-start", whiteSpace: "normal", lineHeight: 1.4 }}>
+          <span className="dot" /> This node is not a consensus operator — restarting has no
+          committee/quorum impact.
+        </div>
+      );
+    case "unavailable":
+      return (
+        <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
+          <span className="dot" /> Cluster status is unavailable — verify quorum impact manually before
+          taking your node offline.
+        </div>
+      );
+    case "quorum":
+      return (
+        <div
+          className={impact.holds ? "halo halo--ok" : "halo halo--err"}
+          style={{ alignSelf: "flex-start", whiteSpace: "normal", lineHeight: 1.4 }}
+        >
+          <span className="dot" />
+          <span>
+            {impact.verb} leaves {impact.after} of {impact.size} operators live (threshold{" "}
+            {impact.threshold}) — quorum {impact.holds ? "holds" : "AT RISK"}
+            {impact.counted
+              ? ""
+              : " · note: your seat was not matched in this cluster, so the impact is an estimate"}
+            .
+          </span>
+        </div>
+      );
   }
-  const live = data.members.filter((member) => member.state !== "jail").length;
-  const selfSeat = matchSelfMember(data.members, self.operatorId);
-  const counted = selfSeat !== null;
-  const after = Math.max(live - 1, 0);
-  const holds = after >= data.threshold;
-  const verb = kind === "operator-stop" ? "Stopping" : "Restarting";
-  return (
-    <div
-      className={holds ? "halo halo--ok" : "halo halo--err"}
-      style={{ alignSelf: "flex-start", whiteSpace: "normal", lineHeight: 1.4 }}
-    >
-      <span className="dot" />
-      <span>
-        {verb} leaves {after} of {data.size} operators live (threshold {data.threshold}) — quorum{" "}
-        {holds ? "holds" : "AT RISK"}
-        {counted ? "" : " · note: your seat was not matched in this cluster, so the impact is an estimate"}
-        .
-      </span>
-    </div>
-  );
 }
 
 export function OperationsDrawer() {
@@ -343,6 +406,11 @@ export function OperationsDrawer() {
     request?.kind === "emergency-key-rotation" &&
     stage === "preview" &&
     !isEmergencyKeyRotationInputComplete(request.emergencyKeyRotationInput);
+  const logRetentionNeedsInput =
+    (request?.kind === "set-log-retention" ||
+      request?.kind === "clean-protocore-logs") &&
+    stage === "preview" &&
+    !isLogRetentionInputComplete(request.logRetentionInput);
   const inputBlocked =
     registerNeedsInput ||
     redelegateNeedsInput ||
@@ -359,6 +427,7 @@ export function OperationsDrawer() {
     dkgReshareNeedsInput ||
     freezeAdmissionNeedsInput ||
     emergencyKeyRotationNeedsInput ||
+    logRetentionNeedsInput ||
     otaApplyNeedsInput;
   const inputTitle = registerNeedsInput
     ? "Fill every register input first"
@@ -390,7 +459,9 @@ export function OperationsDrawer() {
                               ? "Enter the incident reason hash first"
                               : emergencyKeyRotationNeedsInput
                                 ? "Fill every emergency key-rotation input first"
-                                : otaApplyNeedsInput
+                                : logRetentionNeedsInput
+                                  ? "Enter a valid max size (MB) and rotated-file count first"
+                                  : otaApplyNeedsInput
                                   ? "Enter the signed image reference first"
                                   : preflight.blocked
                                     ? "Resolve the failing preflight checks first"
@@ -673,6 +744,9 @@ function DrawerBody({
           <EmergencyKeyRotationForm />
         ) : null}
         {request.kind === "ota-apply" ? <OtaApplyForm /> : null}
+        {request.kind === "set-log-retention" || request.kind === "clean-protocore-logs" ? (
+          <LogRetentionForm />
+        ) : null}
         {request.destructive ? (
           <div className="halo halo--warn" style={{ alignSelf: "flex-start" }}>
             <span className="dot" /> Destructive — review every field
