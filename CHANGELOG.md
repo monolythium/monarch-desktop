@@ -4,6 +4,37 @@ All notable changes to Monarch Desktop are recorded here. This project adheres
 to semantic-ish versioning while pre-1.0 (patch bumps for fixes and small
 features, minor bumps for larger surface changes).
 
+## 0.0.42 — 2026-06-15
+
+### Fixed
+
+- **"Set log retention" / "Clean up logs" no longer fail with a Talos config
+  error.** The retention Operations sent only the protocore
+  `ExtensionServiceConfig` document to Talos's `ApplyConfiguration`, which Talos
+  rejected with *"apply rejected: the applied machine configuration doesn't
+  contain v1alpha1 config, did you mean to patch the machine config instead?"* —
+  a full apply must carry the v1alpha1 `Config` document, and a bare partial does
+  not. Monarch now reads the node's current machine config, sets
+  `PROTOCORE_LOG_MAX_BYTES` / `PROTOCORE_LOG_MAX_FILES` inside its existing
+  protocore `ExtensionServiceConfig` document (preserving every other document
+  and key), and re-applies the COMPLETE merged config in `NoReboot` mode. The
+  merge is idempotent — re-applying the same bound is a no-op — and appends a
+  fresh protocore document if the node does not have one yet.
+
+- **The Logs panel no longer reports "Log stream failed" on a healthy node.** A
+  reachable node whose protocore service had logged little since its last start
+  (a fresh restart or a freshly upgraded image) showed the red *"Log stream
+  failed. Check the Monarch OS connection in Settings."* even though the node was
+  fine. The panel now distinguishes three honest states: a stream that is open
+  but quiet ("Stream open · quiet" — the node simply has not written much yet), a
+  benign stream close on a reachable node, and a genuine transport failure. A
+  follow-stream hiccup after the node has already proven reachable (the one-shot
+  tail came back, or any line arrived) is reported as a benign close, not a
+  failure; the hard error is shown only when nothing ever proved the node serves
+  logs, and it surfaces the real underlying reason. The near-empty log-directory
+  size ("Logs 6 B") is expected on the current image — protocore logs to the
+  Talos service buffer, not to that file.
+
 ## 0.0.41 — 2026-06-15
 
 ### Fixed

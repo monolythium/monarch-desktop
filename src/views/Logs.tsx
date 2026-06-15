@@ -88,6 +88,13 @@ function streamHalo(status: StreamStatus): { cls: string; text: string; title: s
         text: "Live logs",
         title: `ext-protocore logs streaming through Talos API session ${status.sessionId}`,
       };
+    case "talos-quiet":
+      return {
+        cls: "halo halo--info",
+        text: "Stream open · quiet",
+        title:
+          "Node reachable; ext-protocore has logged little since its last start. New lines appear as the node writes them.",
+      };
     case "streaming":
       return {
         cls: "halo halo--ok",
@@ -480,7 +487,7 @@ export function Logs() {
             type="button"
             className="btn btn--ghost btn--sm"
             onClick={() => openLogOp("set-log-retention")}
-            title="Bound how large the protocore log can grow (ApplyConfiguration patch)."
+            title="Bound how large the protocore log can grow (merges the cap into the node's machine config and re-applies it)."
           >
             Set log retention
           </button>
@@ -595,7 +602,11 @@ export function Logs() {
                     ? "No log stream selected."
                     : query.trim()
                       ? "No log lines match this filter."
-                      : "Connected. Waiting for logs from the node."}
+                      : status.kind === "talos-quiet"
+                        ? "Connected. The node has logged little since it last started — new lines will appear as it writes them."
+                        : status.kind === "ended"
+                          ? "Log stream closed. The node is reachable; reopen the Logs view to resume the live tail."
+                          : "Connected. Waiting for logs from the node."}
             </div>
           ) : null}
         </div>

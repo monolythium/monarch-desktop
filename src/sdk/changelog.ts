@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.42",
+    date: "2026-06-15",
+    highlights: [
+      "Logs: \"Set log retention\" and \"Clean up logs\" no longer fail with a Talos error (\"...doesn't contain v1alpha1 config, did you mean to patch the machine config instead?\"). Monarch now merges the size/file caps into your node's complete machine config and re-applies it, so the bound actually takes.",
+      "Logs: a healthy node that simply has not logged much yet no longer shows the red \"Log stream failed. Check the Monarch OS connection.\" It now reads \"Stream open · quiet\" and fills in as the node writes lines; the hard error only appears when the node truly can't be reached.",
+    ],
+  },
+  {
     version: "0.0.41",
     date: "2026-06-15",
     highlights: [

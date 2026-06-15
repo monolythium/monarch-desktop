@@ -3325,13 +3325,23 @@ pub async fn talos_log_disk_usage(
     })
 }
 
-/// Validate the operator-supplied retention bound and build the machine-config
-/// patch that records it on the protocore extension. `max_megabytes` caps the
-/// log size and `max_files` caps the rotated-file count; both must be sane.
-fn build_log_retention_patch(
+// Where Talos persists the node's machine configuration. `ApplyConfiguration`
+// replaces this document set wholesale, so a retention change must re-apply the
+// COMPLETE config (v1alpha1 `Config` + the `ExtensionServiceConfig` doc), not a
+// bare partial — Talos rejects a partial full-apply with "the applied machine
+// configuration doesn't contain v1alpha1 config, did you mean to patch the
+// machine config instead?".
+const TALOS_MACHINE_CONFIG_PATH: &str = "/system/state/config.yaml";
+
+/// Validate the operator-supplied retention bound and return the two env entries
+/// (`PROTOCORE_LOG_MAX_BYTES` / `PROTOCORE_LOG_MAX_FILES`) plus the byte bound.
+/// `max_megabytes` caps the log size and `max_files` caps the rotated-file
+/// count; both must be sane. These entries are merged into the node's existing
+/// `ExtensionServiceConfig` document by `merge_log_retention_into_config`.
+fn build_log_retention_env(
     max_megabytes: u32,
     max_files: u32,
-) -> Result<(String, u64), TalosError> {
+) -> Result<(u64, u32, u64), TalosError> {
     if max_megabytes == 0 {
         return Err(TalosError::InvalidLogRetention(
             "max size must be at least 1 MB".to_string(),
@@ -3348,28 +3358,265 @@ fn build_log_retention_patch(
         ));
     }
     let max_bytes = max_megabytes as u64 * 1_048_576;
-    // Patch the protocore ExtensionServiceConfig env with the retention bounds.
-    // This is the Talos-blessed way to change immutable-node config: a strategic
-    // ExtensionServiceConfig patch the node applies and reports on. The bound is
-    // expressed as PROTOCORE_LOG_MAX_BYTES/PROTOCORE_LOG_MAX_FILES so the
-    // protocore extension's log writer can enforce rotation at the source.
-    let patch = format!(
-        "apiVersion: v1alpha1\n\
-         kind: ExtensionServiceConfig\n\
-         name: protocore\n\
-         environment:\n    \
-         - PROTOCORE_LOG_MAX_BYTES={max_bytes}\n    \
-         - PROTOCORE_LOG_MAX_FILES={max_files}\n"
-    );
-    Ok((patch, max_bytes))
+    Ok((max_bytes, max_files, max_bytes))
+}
+
+/// Result of merging the retention bound into a node's machine config.
+struct LogRetentionMerge {
+    /// The COMPLETE machine config (multi-document YAML) to re-apply.
+    config: String,
+    /// The byte bound recorded (`PROTOCORE_LOG_MAX_BYTES`).
+    max_bytes: u64,
+    /// The rotated-file cap recorded (`PROTOCORE_LOG_MAX_FILES`).
+    max_files: u32,
+}
+
+/// Merge the protocore log-retention env (`PROTOCORE_LOG_MAX_BYTES` /
+/// `PROTOCORE_LOG_MAX_FILES`) into the node's CURRENT machine config and return
+/// the COMPLETE multi-document config to re-apply.
+///
+/// Why a full merge-and-reapply instead of a bare partial apply: Talos's
+/// `ApplyConfiguration` replaces the whole config document set. Applying just an
+/// `ExtensionServiceConfig` document is rejected ("the applied machine
+/// configuration doesn't contain v1alpha1 config, did you mean to patch the
+/// machine config instead?") because a full apply must carry the v1alpha1
+/// `Config` document. So we read the node's persisted config, set the two env
+/// keys inside the EXISTING `protocore` `ExtensionServiceConfig` document
+/// (preserving every other document, key, and comment byte-for-byte), and hand
+/// back the complete config. If the config has no `protocore`
+/// `ExtensionServiceConfig` document yet, one is appended as a new document so
+/// the result still carries the original v1alpha1 `Config`.
+///
+/// The edit is deliberately line-scoped rather than a YAML round-trip: the Talos
+/// machine config embeds PEM certs and ordered fields that a parse/re-emit cycle
+/// would reorder or reflow, so we touch only the protocore environment list.
+fn merge_log_retention_into_config(
+    current: &str,
+    max_megabytes: u32,
+    max_files: u32,
+) -> Result<LogRetentionMerge, TalosError> {
+    let (max_bytes, max_files, _) = build_log_retention_env(max_megabytes, max_files)?;
+    if current.trim().is_empty() {
+        return Err(TalosError::InvalidLogRetention(
+            "node returned an empty machine configuration".to_string(),
+        ));
+    }
+    // A valid Talos config to full-apply must carry the v1alpha1 Config document.
+    if !current.contains("version: v1alpha1") {
+        return Err(TalosError::InvalidLogRetention(
+            "node machine configuration is missing its v1alpha1 config document".to_string(),
+        ));
+    }
+
+    // Split into documents on `---` separators (column 0), preserving each
+    // document's exact bytes. Find the `protocore` ExtensionServiceConfig doc.
+    let documents: Vec<&str> = split_yaml_documents(current);
+    let mut rebuilt: Vec<String> = Vec::with_capacity(documents.len() + 1);
+    let mut patched = false;
+    for doc in &documents {
+        if !patched && is_protocore_extension_service_config(doc) {
+            rebuilt.push(set_retention_env_in_extension_doc(doc, max_bytes, max_files));
+            patched = true;
+        } else {
+            rebuilt.push((*doc).to_string());
+        }
+    }
+
+    if !patched {
+        // No protocore ExtensionServiceConfig yet — append a fresh document. The
+        // original v1alpha1 Config is preserved as document 0, so the full apply
+        // is still valid.
+        rebuilt.push(format!(
+            "apiVersion: v1alpha1\n\
+             kind: ExtensionServiceConfig\n\
+             name: protocore\n\
+             environment:\n\
+             \x20\x20- PROTOCORE_LOG_MAX_BYTES={max_bytes}\n\
+             \x20\x20- PROTOCORE_LOG_MAX_FILES={max_files}\n"
+        ));
+    }
+
+    let config = rebuilt.join("---\n");
+    Ok(LogRetentionMerge {
+        config,
+        max_bytes,
+        max_files,
+    })
+}
+
+/// Split a multi-document YAML string on `---` document separators that sit at
+/// column 0 (their own line), keeping each document's bytes intact. A leading
+/// `---` is treated as an empty preamble and dropped from the document list.
+fn split_yaml_documents(text: &str) -> Vec<&str> {
+    let mut docs = Vec::new();
+    let mut start = 0usize;
+    let bytes = text.as_bytes();
+    let mut idx = 0usize;
+    // Walk line by line; a line equal to "---" (optionally with trailing CR /
+    // spaces) starts a new document.
+    while idx <= bytes.len() {
+        let line_end = match text[idx..].find('\n') {
+            Some(off) => idx + off,
+            None => bytes.len(),
+        };
+        let line = text[idx..line_end].trim_end_matches('\r').trim_end();
+        if line == "---" {
+            docs.push(&text[start..idx]);
+            start = (line_end + 1).min(bytes.len());
+        }
+        if line_end >= bytes.len() {
+            break;
+        }
+        idx = line_end + 1;
+    }
+    docs.push(&text[start..]);
+    // Drop an empty leading preamble (when the config begins with `---`).
+    docs.into_iter()
+        .filter(|doc| !doc.trim().is_empty())
+        .collect()
+}
+
+/// True when a single YAML document is the protocore `ExtensionServiceConfig`.
+fn is_protocore_extension_service_config(doc: &str) -> bool {
+    let mut is_ext = false;
+    let mut is_protocore = false;
+    for line in doc.lines() {
+        let t = line.trim();
+        if t == "kind: ExtensionServiceConfig" {
+            is_ext = true;
+        } else if t == "name: protocore" {
+            is_protocore = true;
+        }
+    }
+    is_ext && is_protocore
+}
+
+/// Set `PROTOCORE_LOG_MAX_BYTES` / `PROTOCORE_LOG_MAX_FILES` inside the
+/// `environment:` list of a protocore `ExtensionServiceConfig` document,
+/// replacing any existing entries for those keys in place (so re-applying is
+/// idempotent) and appending the missing ones. Every other line is preserved.
+fn set_retention_env_in_extension_doc(doc: &str, max_bytes: u64, max_files: u32) -> String {
+    let bytes_line = format!("PROTOCORE_LOG_MAX_BYTES={max_bytes}");
+    let files_line = format!("PROTOCORE_LOG_MAX_FILES={max_files}");
+
+    let mut out: Vec<String> = Vec::with_capacity(doc.lines().count() + 4);
+    let mut in_environment = false;
+    let mut env_indent = String::new();
+    let mut item_indent: Option<String> = None;
+    let mut wrote_bytes = false;
+    let mut wrote_files = false;
+
+    // Emit any retention keys not yet written, using the list-item indent we
+    // observed (or two spaces past the `environment:` key when the list is
+    // empty).
+    let flush_missing =
+        |out: &mut Vec<String>, item_indent: &str, wrote_bytes: bool, wrote_files: bool| {
+            if !wrote_bytes {
+                out.push(format!("{item_indent}- {bytes_line}"));
+            }
+            if !wrote_files {
+                out.push(format!("{item_indent}- {files_line}"));
+            }
+        };
+
+    for line in doc.split('\n') {
+        let trimmed = line.trim();
+        let indent: String = line.chars().take_while(|c| *c == ' ').collect();
+
+        if !in_environment {
+            if trimmed == "environment:" {
+                in_environment = true;
+                env_indent = indent.clone();
+            }
+            out.push(line.to_string());
+            continue;
+        }
+
+        // Inside the environment block. A list item is more-indented than the
+        // `environment:` key and starts with `-`.
+        let is_list_item = indent.len() > env_indent.len() && trimmed.starts_with('-');
+        if is_list_item {
+            if item_indent.is_none() {
+                item_indent = Some(indent.clone());
+            }
+            let value = trimmed.trim_start_matches('-').trim();
+            if value.starts_with("PROTOCORE_LOG_MAX_BYTES=") {
+                out.push(format!("{indent}- {bytes_line}"));
+                wrote_bytes = true;
+            } else if value.starts_with("PROTOCORE_LOG_MAX_FILES=") {
+                out.push(format!("{indent}- {files_line}"));
+                wrote_files = true;
+            } else {
+                out.push(line.to_string());
+            }
+            continue;
+        }
+
+        // First line that is NOT part of the environment list ends the block:
+        // append any retention keys we have not yet written, then emit it.
+        let resolved = item_indent
+            .clone()
+            .unwrap_or_else(|| format!("{env_indent}  "));
+        flush_missing(&mut out, &resolved, wrote_bytes, wrote_files);
+        wrote_bytes = true;
+        wrote_files = true;
+        in_environment = false;
+        out.push(line.to_string());
+    }
+
+    // The environment block ran to the end of the document.
+    if in_environment {
+        let resolved = item_indent.unwrap_or_else(|| format!("{env_indent}  "));
+        flush_missing(&mut out, &resolved, wrote_bytes, wrote_files);
+    }
+
+    out.join("\n")
+}
+
+/// Read the node's persisted machine configuration (`/system/state/config.yaml`)
+/// over the Talos `Read` RPC and return it as a UTF-8 string. This is the
+/// current COMPLETE config (v1alpha1 `Config` + any extra documents) that a
+/// `merge`-then-`ApplyConfiguration` re-applies.
+async fn read_machine_config(
+    client: &mut MachineServiceClient<talos_rust_client::Channel>,
+) -> Result<String, TalosError> {
+    let bytes = timeout(TALOS_TIMEOUT, async {
+        let response = client
+            .read(machine::ReadRequest {
+                path: TALOS_MACHINE_CONFIG_PATH.to_string(),
+            })
+            .await?;
+        let mut stream = response.into_inner();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            bytes.extend(chunk?.bytes);
+        }
+        Ok::<Vec<u8>, talos_rust_client::tonic::Status>(bytes)
+    })
+    .await
+    .map_err(|_| TalosError::Timeout)?
+    .map_err(|e| {
+        TalosError::Config(format!(
+            "could not read machine config at {TALOS_MACHINE_CONFIG_PATH}: {}",
+            e.message()
+        ))
+    })?;
+    String::from_utf8(bytes)
+        .map_err(|e| TalosError::Config(format!("machine config is not valid UTF-8: {e}")))
 }
 
 /// Install / refresh the protocore log retention policy on a running node.
 ///
 /// Talos is immutable — you cannot edit a unit file in place — so retention is
-/// set the Talos-blessed way: an authenticated `ApplyConfiguration` patch of the
-/// protocore `ExtensionServiceConfig` env (`PROTOCORE_LOG_MAX_BYTES` /
-/// `PROTOCORE_LOG_MAX_FILES`), applied with `NoReboot` so the node does not
+/// set the Talos-blessed way. `ApplyConfiguration` replaces the node's WHOLE
+/// config document set, and a full apply must carry the v1alpha1 `Config`
+/// document, so we cannot send a bare `ExtensionServiceConfig` (Talos rejects
+/// that with "the applied machine configuration doesn't contain v1alpha1
+/// config, did you mean to patch the machine config instead?"). Instead we read
+/// the node's current config, set `PROTOCORE_LOG_MAX_BYTES` /
+/// `PROTOCORE_LOG_MAX_FILES` inside its existing protocore
+/// `ExtensionServiceConfig` document (preserving every other document and key),
+/// and re-apply the COMPLETE merged config with `NoReboot` so the node does not
 /// cycle. The node's own apply warnings/messages are returned verbatim (real
 /// success/failure), and `talos_clean_protocore_logs` restarts ext-protocore so
 /// the new bound takes effect on the running process. HONEST: this records the
@@ -3382,8 +3629,8 @@ pub async fn talos_set_log_retention(
     max_files: u32,
     dry_run: Option<bool>,
 ) -> Result<TalosTextResult, String> {
-    let (patch, max_bytes) =
-        build_log_retention_patch(max_megabytes, max_files).map_err(|e| e.to_string())?;
+    // Validate the bound up front so a bad request never touches the node.
+    build_log_retention_env(max_megabytes, max_files).map_err(|e| e.to_string())?;
     let dry_run = dry_run.unwrap_or(false);
 
     let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
@@ -3397,10 +3644,21 @@ pub async fn talos_set_log_retention(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Read the node's CURRENT machine config and merge the retention bound into
+    // its existing protocore ExtensionServiceConfig document — the apply below
+    // ships the complete config, not a partial.
+    let current = read_machine_config(&mut client)
+        .await
+        .map_err(|e| e.to_string())?;
+    let merged = merge_log_retention_into_config(&current, max_megabytes, max_files)
+        .map_err(|e| e.to_string())?;
+    let max_bytes = merged.max_bytes;
+    let max_files = merged.max_files;
+
     let response = timeout(
         TALOS_TIMEOUT,
         client.apply_configuration(machine::ApplyConfigurationRequest {
-            data: patch.into_bytes(),
+            data: merged.config.into_bytes(),
             // NoReboot — a retention patch must not cycle the node.
             mode: machine::apply_configuration_request::Mode::NoReboot as i32,
             dry_run,
@@ -3486,14 +3744,14 @@ pub async fn talos_clean_protocore_logs(
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_paths, build_log_retention_patch, classify_protocore_readiness, endpoint_url,
+        backup_paths, build_log_retention_env, classify_protocore_readiness, endpoint_url,
         enforce_privileged_control_plane, format_fingerprint, is_post_dispatch_reboot_drop,
-        node_address, normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64,
-        parse_service_action, parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
-        service_allows_offline_backup, summarize_service_state, sync_status_is_synced,
-        talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
-        TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
-        UPGRADE_REBOOTING_MARKER,
+        merge_log_retention_into_config, node_address, normalize_private_key_pem, parse_reboot_mode,
+        parse_rpc_u64, parse_service_action, parse_u64_string, protocore_rpc_endpoint,
+        sanitize_backup_component, service_allows_offline_backup, summarize_service_state,
+        sync_status_is_synced, talos_logs_request, validate_service_name, validate_upgrade_image,
+        ProtocoreRpcProbe, TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode,
+        TalosServiceInfo, UPGRADE_REBOOTING_MARKER,
     };
     use serde_json::json;
     use talos_rust_client::tonic::{Code, Status};
@@ -3573,21 +3831,127 @@ mod tests {
     }
 
     #[test]
-    fn log_retention_patch_encodes_bytes_and_targets_extension() {
-        let (patch, max_bytes) = build_log_retention_patch(512, 5).unwrap();
+    fn log_retention_env_encodes_bytes_and_files() {
+        let (max_bytes, max_files, bound) = build_log_retention_env(512, 5).unwrap();
         assert_eq!(max_bytes, 512 * 1_048_576);
-        assert!(patch.contains("kind: ExtensionServiceConfig"));
-        assert!(patch.contains("name: protocore"));
-        assert!(patch.contains(&format!("PROTOCORE_LOG_MAX_BYTES={}", 512 * 1_048_576)));
-        assert!(patch.contains("PROTOCORE_LOG_MAX_FILES=5"));
+        assert_eq!(bound, 512 * 1_048_576);
+        assert_eq!(max_files, 5);
     }
 
     #[test]
-    fn log_retention_patch_rejects_out_of_range() {
-        assert!(build_log_retention_patch(0, 5).is_err());
-        assert!(build_log_retention_patch(512, 0).is_err());
-        assert!(build_log_retention_patch(512, 65).is_err());
-        assert!(build_log_retention_patch(2_000_000, 5).is_err());
+    fn log_retention_env_rejects_out_of_range() {
+        assert!(build_log_retention_env(0, 5).is_err());
+        assert!(build_log_retention_env(512, 0).is_err());
+        assert!(build_log_retention_env(512, 65).is_err());
+        assert!(build_log_retention_env(2_000_000, 5).is_err());
+    }
+
+    // A minimal-but-realistic two-document machine config: the v1alpha1 Config
+    // document plus the protocore ExtensionServiceConfig the installer bakes in.
+    const SAMPLE_MACHINE_CONFIG: &str = "version: v1alpha1\n\
+machine:\n\
+\x20\x20type: controlplane\n\
+\x20\x20install:\n\
+\x20\x20\x20\x20disk: /dev/sda\n\
+cluster:\n\
+\x20\x20id: abc\n\
+---\n\
+apiVersion: v1alpha1\n\
+kind: ExtensionServiceConfig\n\
+name: protocore\n\
+environment:\n\
+\x20\x20- PROTOCORE_NODE_MODE=operator\n\
+\x20\x20- PROTOCORE_P2P_LISTEN=/ip4/0.0.0.0/tcp/29898\n";
+
+    #[test]
+    fn merge_log_retention_produces_complete_v1alpha1_config_not_a_partial() {
+        let merged = merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 512, 5).unwrap();
+        // The applied payload is the COMPLETE config: it MUST carry the
+        // v1alpha1 Config document so Talos's full apply accepts it. This is the
+        // regression guard for the "doesn't contain v1alpha1 config" rejection.
+        assert!(merged.config.contains("version: v1alpha1"));
+        assert!(merged.config.contains("machine:"));
+        assert!(merged.config.contains("cluster:"));
+        // It is NOT a bare ExtensionServiceConfig document.
+        assert!(merged.config.starts_with("version: v1alpha1"));
+        // The original protocore env is preserved...
+        assert!(merged.config.contains("PROTOCORE_NODE_MODE=operator"));
+        assert!(merged
+            .config
+            .contains("PROTOCORE_P2P_LISTEN=/ip4/0.0.0.0/tcp/29898"));
+        // ...and the retention bound is recorded inside that same document.
+        assert!(merged
+            .config
+            .contains(&format!("PROTOCORE_LOG_MAX_BYTES={}", 512 * 1_048_576)));
+        assert!(merged.config.contains("PROTOCORE_LOG_MAX_FILES=5"));
+        assert_eq!(merged.max_bytes, 512 * 1_048_576);
+        assert_eq!(merged.max_files, 5);
+        // Exactly one document separator (two documents total).
+        assert_eq!(merged.config.matches("\n---\n").count(), 1);
+    }
+
+    #[test]
+    fn merge_log_retention_replaces_existing_keys_idempotently() {
+        let with_existing = format!(
+            "{}\x20\x20- PROTOCORE_LOG_MAX_BYTES=1\n\x20\x20- PROTOCORE_LOG_MAX_FILES=1\n",
+            SAMPLE_MACHINE_CONFIG
+        );
+        let merged = merge_log_retention_into_config(&with_existing, 256, 9).unwrap();
+        // Old values are gone, replaced in place (no duplicates).
+        assert_eq!(
+            merged
+                .config
+                .matches("PROTOCORE_LOG_MAX_BYTES=")
+                .count(),
+            1
+        );
+        assert_eq!(
+            merged
+                .config
+                .matches("PROTOCORE_LOG_MAX_FILES=")
+                .count(),
+            1
+        );
+        assert!(merged
+            .config
+            .contains(&format!("PROTOCORE_LOG_MAX_BYTES={}", 256 * 1_048_576)));
+        assert!(merged.config.contains("PROTOCORE_LOG_MAX_FILES=9"));
+        // Applying the SAME bound again is a no-op on the key set.
+        let again = merge_log_retention_into_config(&merged.config, 256, 9).unwrap();
+        assert_eq!(again.config, merged.config);
+    }
+
+    #[test]
+    fn merge_log_retention_appends_extension_doc_when_absent() {
+        let only_v1alpha1 = "version: v1alpha1\nmachine:\n  type: controlplane\ncluster:\n  id: x\n";
+        let merged = merge_log_retention_into_config(only_v1alpha1, 64, 3).unwrap();
+        // Original v1alpha1 Config preserved...
+        assert!(merged.config.contains("version: v1alpha1"));
+        assert!(merged.config.contains("machine:"));
+        // ...and a fresh protocore ExtensionServiceConfig document was appended.
+        assert!(merged.config.contains("kind: ExtensionServiceConfig"));
+        assert!(merged.config.contains("name: protocore"));
+        assert!(merged
+            .config
+            .contains(&format!("PROTOCORE_LOG_MAX_BYTES={}", 64 * 1_048_576)));
+        assert!(merged.config.contains("PROTOCORE_LOG_MAX_FILES=3"));
+        assert_eq!(merged.config.matches("\n---\n").count(), 1);
+    }
+
+    #[test]
+    fn merge_log_retention_rejects_config_without_v1alpha1() {
+        // A bare ExtensionServiceConfig (no v1alpha1 Config) must be rejected —
+        // re-applying it as a full config is exactly the bug we are fixing.
+        let bare = "apiVersion: v1alpha1\nkind: ExtensionServiceConfig\nname: protocore\nenvironment:\n  - PROTOCORE_NODE_MODE=operator\n";
+        assert!(merge_log_retention_into_config(bare, 512, 5).is_err());
+        assert!(merge_log_retention_into_config("", 512, 5).is_err());
+    }
+
+    #[test]
+    fn merge_log_retention_validates_bound_before_touching_config() {
+        assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 0, 5).is_err());
+        assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 512, 0).is_err());
+        assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 512, 65).is_err());
     }
 
     #[test]

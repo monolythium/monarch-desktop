@@ -202,7 +202,7 @@ export const DEFAULT_LOG_RETENTION: LogRetentionInput = {
   maxFiles: 5,
 };
 
-// Bounds the Rust bridge enforces (kept in sync with build_log_retention_patch).
+// Bounds the Rust bridge enforces (kept in sync with build_log_retention_env).
 export const LOG_RETENTION_LIMITS = {
   minMegabytes: 1,
   maxMegabytes: 1_048_576,

@@ -92,7 +92,13 @@ export type StreamStatus =
   | { kind: "connecting"; target: LogTarget }
   | { kind: "streaming"; target: LogTarget; sessionId: number }
   | { kind: "error"; target: LogTarget; error: string }
-  | { kind: "ended"; target: LogTarget };
+  | { kind: "ended"; target: LogTarget }
+  // Talos answered (the node is reachable and serving its log API) but the
+  // service log has next to nothing in it yet — a freshly restarted /
+  // freshly upgraded node that has not written much. This is HONEST: it is
+  // NOT a stream failure, so the view must not tell the operator to check
+  // the connection.
+  | { kind: "talos-quiet"; target: LogTarget; sessionId: number };
 
 /// Module-level cache of the currently-connected target. The Rust side
 /// only holds one session at a time today; we mirror that here so the
@@ -310,6 +316,66 @@ export type LogStream = {
   status: StreamStatus;
 };
 
+/// What we have proven about a Talos log session so far. Used to decide,
+/// honestly, whether a follow-stream hiccup is a real failure or a benign
+/// close on a reachable node.
+export type TalosStreamEvidence = {
+  /// The one-shot tail reached Talos and returned (the node + its log API
+  /// answered), regardless of whether the buffer had any lines.
+  primeReached: boolean;
+  /// At least one parseable log line has been seen (prime or live).
+  sawAnyLine: boolean;
+  /// The one-shot tail's failure reason, if it failed.
+  primeError: string | null;
+};
+
+/// Decide the status to show when the OPEN follow stream emits an error or
+/// closes. After we have proven the node serves logs, a follow error is a
+/// benign close — NOT "Log stream failed. Check the connection", which would be
+/// a lie. Only an unproven session surfaces the hard error.
+export function resolveTalosFollowError(
+  target: LogTarget,
+  evidence: TalosStreamEvidence,
+  message: string,
+): StreamStatus {
+  if (evidence.primeReached || evidence.sawAnyLine) {
+    return { kind: "ended", target };
+  }
+  return { kind: "error", target, error: message };
+}
+
+/// Decide the status once the follow stream is OPEN. A reachable node that has
+/// logged nothing yet is "quiet" (honest, not an error); once any line is seen
+/// it is "streaming".
+export function resolveTalosOpenStatus(
+  target: LogTarget,
+  sessionId: number,
+  evidence: TalosStreamEvidence,
+): StreamStatus {
+  return evidence.sawAnyLine
+    ? { kind: "talos-streaming", target, sessionId }
+    : { kind: "talos-quiet", target, sessionId };
+}
+
+/// Decide the status when the follow stream could NOT be opened. If the one-shot
+/// prime reached the node, the node is fine — show a benign close. Otherwise
+/// surface the real error, preferring the prime's reason over a generic follow
+/// error.
+export function resolveTalosOpenFailure(
+  target: LogTarget,
+  evidence: TalosStreamEvidence,
+  followMessage: string,
+): StreamStatus {
+  if (evidence.primeReached) {
+    return { kind: "ended", target };
+  }
+  return {
+    kind: "error",
+    target,
+    error: evidence.primeError ?? followMessage,
+  };
+}
+
 /**
  * `filter` is a hint, not a constraint — the view still applies its
  * own regex / level pills over the returned `lines`. The hook accepts
@@ -354,6 +420,13 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
       let unlisten: (() => void) | null = null;
       let sessionId: number | null = null;
       let cancelled = false;
+      // Did the one-shot tail reach Talos and come back? That alone proves the
+      // node + its log API are reachable, even when the buffer is empty. Once
+      // proven, a later follow-stream hiccup is reported as a benign close, not
+      // as "Log stream failed. Check the connection." — which would be a lie.
+      let primeReached = false;
+      let primeError: string | null = null;
+      let sawAnyLine = false;
 
       (async () => {
         try {
@@ -365,18 +438,23 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
           // immediately; the follow session below then appends new lines.
           try {
             const snapshot = await talosLogs("ext-protocore", BUFFER_LIMIT);
+            // The call returning at all means Talos answered — reachable.
+            primeReached = true;
             if (!cancelled && aliveRef.current && snapshot.output) {
               const seeded = snapshot.output
                 .split("\n")
                 .map((raw) => parseJournaldLine(raw))
                 .filter((entry): entry is LogEntry => entry !== null);
               if (seeded.length > 0) {
+                sawAnyLine = true;
                 setLines(seeded.slice(-BUFFER_LIMIT));
               }
             }
-          } catch {
-            // Non-fatal: priming is best-effort. If the one-shot tail is
-            // unavailable the follow stream below still drives the panel.
+          } catch (err) {
+            // Record why the one-shot tail failed. It is still best-effort —
+            // the follow stream below may succeed — but if BOTH fail this is
+            // the real, honest reason to show the operator.
+            primeError = (err as Error)?.message ?? String(err);
           }
           if (cancelled) return;
 
@@ -387,6 +465,14 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
               if (!aliveRef.current || cancelled) return;
               const parsed = parseJournaldLine(raw);
               if (!parsed) return;
+              sawAnyLine = true;
+              // First live line on a previously-quiet stream promotes the halo
+              // to "Live logs".
+              setStatus((prev) =>
+                prev.kind === "talos-quiet"
+                  ? { kind: "talos-streaming", target, sessionId: prev.sessionId }
+                  : prev,
+              );
               setLines((prev) => {
                 const next =
                   prev.length >= BUFFER_LIMIT
@@ -398,11 +484,24 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
             },
             () => {
               if (!aliveRef.current || cancelled) return;
+              // The follow stream closed. If we ever proved the node serves
+              // logs (prime reached or a line arrived), this is a normal close,
+              // not a failure.
               setStatus({ kind: "ended", target });
             },
             (message) => {
               if (!aliveRef.current || cancelled) return;
-              setStatus({ kind: "error", target, error: message });
+              // A follow-stream error AFTER we proved reachability is not a hard
+              // failure — the node is up and we have (or had) its logs. Degrade
+              // to a benign close so the view doesn't tell the operator to go
+              // check a connection that is fine.
+              setStatus(
+                resolveTalosFollowError(
+                  target,
+                  { primeReached, sawAnyLine, primeError },
+                  message,
+                ),
+              );
             },
           );
           // Small follow tail: the one-shot prime already showed recent
@@ -414,12 +513,32 @@ export function useLogStream(filter: string, target: LogTarget): LogStream {
             return;
           }
           sessionId = id;
-          setStatus({ kind: "talos-streaming", target, sessionId: id });
+          // The stream is open. If the node has logged anything (prime or live),
+          // call it streaming; otherwise it is reachable-but-quiet — an honest
+          // state that is NOT an error.
+          setStatus(
+            resolveTalosOpenStatus(target, id, {
+              primeReached,
+              sawAnyLine,
+              primeError,
+            }),
+          );
         } catch (err) {
           if (cancelled || !aliveRef.current) return;
           unlisten?.();
-          const msg = (err as Error)?.message ?? String(err);
-          setStatus({ kind: "error", target, error: msg });
+          // The follow stream could not be opened. If the one-shot prime
+          // reached the node, the node itself is fine — surface a benign close
+          // rather than a scary failure. Otherwise show the real error: prefer
+          // the prime's failure reason (the first transport error we saw) when
+          // the follow error is generic.
+          const followMsg = (err as Error)?.message ?? String(err);
+          setStatus(
+            resolveTalosOpenFailure(
+              target,
+              { primeReached, sawAnyLine, primeError },
+              followMsg,
+            ),
+          );
         }
       })();
 
