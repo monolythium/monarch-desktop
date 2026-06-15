@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.40",
+    date: "2026-06-15",
+    highlights: [
+      "Health: a healthy, synced node no longer shows as \"Booting / Ready: false\" or a red ext-protocore card when your RPC profile disables the eth_* methods — any JSON-RPC answer (even \"method disabled\") now counts as serving, with a lyth_chainStatus / lyth_syncStatus fallback.",
+      "Operations: restarting a relay / non-consensus node no longer shows cluster-0 quorum math or a \"seat not matched\" note — it now says plainly that the node has no committee/quorum impact.",
+      "Logs: the panel now actually streams your node's protocore logs instead of sitting on \"Waiting for logs\" — it reads ext-protocore as a Talos service log and renders protocore's JSON and plain-text lines.",
+      "Logs: a log management strip shows the real size of /var/lib/protocore/logs, with \"Set log retention\" to cap its growth and \"Clean up logs\" to apply the cap and restart the node service.",
+      "Node version: an unreleased/dev build now shows honestly as \"node: dev <commit>\" (it still offers the latest signed release to apply) instead of the alarming \"could not match\" error.",
+    ],
+  },
+  {
     version: "0.0.39",
     date: "2026-06-14",
     highlights: [

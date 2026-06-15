@@ -22,9 +22,11 @@ import {
   rpcEndpoint,
   sshExec,
   talosBootstrap,
+  talosCleanProtocoreLogs,
   talosExportProtocoreBackup,
   talosRollback,
   talosServiceAction,
+  talosSetLogRetention,
   talosStatus,
   talosUpgrade,
   talosWipeProtocore,
@@ -80,6 +82,7 @@ import type {
   ClusterVoteAdmitInput,
   ClusterResignationInput,
   OtaApplyInput,
+  LogRetentionInput,
   OperatorDisplayInput,
   OperatorSealKeyInput,
   PendingChangeInput,
@@ -87,6 +90,7 @@ import type {
   RegisterInput,
   RestoreInput,
 } from "./types";
+import { DEFAULT_LOG_RETENTION } from "./types";
 
 type OpsState = {
   request: OpRequest | null;
@@ -138,6 +142,9 @@ type OpsContextValue = OpsState & {
   setEmergencyKeyRotationInput: (patch: Partial<EmergencyKeyRotationInput>) => void;
   /** Update the in-flight request's `otaApplyInput` from the OS upgrade form. */
   setOtaApplyInput: (patch: Partial<OtaApplyInput>) => void;
+  /** Update the in-flight request's `logRetentionInput` from the log
+   *  retention / clean-up form. */
+  setLogRetentionInput: (patch: Partial<LogRetentionInput>) => void;
 };
 
 const OpsContext = createContext<OpsContextValue | null>(null);
@@ -1221,6 +1228,90 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  const runSetLogRetentionFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.logRetentionInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "No retention bounds were provided." },
+          { transport: "talos", action: "set-log-retention" },
+        );
+        return;
+      }
+      try {
+        const result = await talosSetLogRetention(input.maxMegabytes, input.maxFiles);
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: summarize(
+              result.output,
+              `${req.title} applied via Talos ApplyConfiguration. Restart ext-protocore for the new bound to take effect.`,
+            ),
+          },
+          {
+            transport: "talos",
+            action: "set-log-retention",
+            endpoint: result.endpoint,
+            nodeAddress: result.nodeAddress,
+            command: result.command,
+          },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "talos", action: "set-log-retention" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runCleanLogsFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.logRetentionInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "No retention bounds were provided." },
+          { transport: "talos", action: "clean-protocore-logs" },
+        );
+        return;
+      }
+      try {
+        const result = await talosCleanProtocoreLogs(input.maxMegabytes, input.maxFiles);
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: summarize(
+              result.output,
+              `${req.title}: retention applied and ext-protocore restarted via Talos. Existing bytes are reclaimed by the extension's rotation under the new bound — Talos has no file-truncate RPC.`,
+            ),
+          },
+          {
+            transport: "talos",
+            action: "clean-protocore-logs",
+            endpoint: result.endpoint,
+            nodeAddress: result.nodeAddress,
+            command: result.command,
+          },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "talos", action: "clean-protocore-logs" },
+        );
+      }
+    },
+    [settleOperation],
+  );
+
   const runBootstrapFlow = useCallback(
     async (req: OpRequest) => {
       try {
@@ -1429,6 +1520,22 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "set-log-retention") {
+      if (inTauri()) {
+        await runSetLogRetentionFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "clean-protocore-logs") {
+      if (inTauri()) {
+        await runCleanLogsFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     const action = talosActionFor(req);
     if (!action) {
       const cmd = commandFor(req);
@@ -1497,10 +1604,12 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runOperatorSealKeyFlow,
     runPendingChangeFlow,
     runBootstrapFlow,
+    runCleanLogsFlow,
     runRedelegateFlow,
     runRegisterFlow,
     runReprovisionFlow,
     runRestoreFlow,
+    runSetLogRetentionFlow,
     runSshFlow,
     settleOperation,
   ]);
@@ -1835,6 +1944,30 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setLogRetentionInput = useCallback(
+    (patch: Partial<LogRetentionInput>) => {
+      setState((s) => {
+        if (
+          !s.request ||
+          (s.request.kind !== "set-log-retention" &&
+            s.request.kind !== "clean-protocore-logs")
+        ) {
+          return s;
+        }
+        const base: LogRetentionInput = s.request.logRetentionInput ?? {
+          maxMegabytes: DEFAULT_LOG_RETENTION.maxMegabytes,
+          maxFiles: DEFAULT_LOG_RETENTION.maxFiles,
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, logRetentionInput: next },
+        };
+      });
+    },
+    [],
+  );
+
   const value = useMemo<OpsContextValue>(
     () => ({
       ...state,
@@ -1859,6 +1992,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,
       setOtaApplyInput,
+      setLogRetentionInput,
     }),
     [
       state,
@@ -1883,6 +2017,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,
       setOtaApplyInput,
+      setLogRetentionInput,
     ],
   );
 

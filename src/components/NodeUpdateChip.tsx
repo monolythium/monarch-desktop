@@ -221,9 +221,12 @@ export function NodeUpdateChip() {
 
   const releases = feed.data;
   const hasReleases = releases.length > 0;
-  // Muted label when we cannot name the node's build; the tag otherwise.
-  const labelKnown = summary.current !== null;
-  const label = labelKnown ? summary.label : "unknown";
+  // Three states: a matched release tag, a named dev/unreleased build
+  // (`dev <commit>`), or a truly unidentified node. Only the last is muted as
+  // "unknown" — a dev build is a known build and is shown honestly.
+  const isDevBuild = summary.kind === "dev-build";
+  const isUnidentified = summary.kind === "unidentified";
+  const label = isUnidentified ? "unknown" : summary.label;
   const showBadge = summary.updateAvailable;
   const currentTag = summary.current?.tag ?? null;
   const newerTags = useMemo(() => {
@@ -254,11 +257,13 @@ export function NodeUpdateChip() {
         }}
         aria-label="Protocore node version and updates"
         title={
-          labelKnown
-            ? showBadge
-              ? `Node is running ${label}. A newer signed release is available.`
-              : `Node is running ${label} — the latest signed release.`
-            : "Could not match the node's build to a signed release."
+          isUnidentified
+            ? "Could not match the node's build to a signed release."
+            : isDevBuild
+              ? `Node is running an unreleased build (${summary.nodeCommit}). A newer signed release is available — open to apply it.`
+              : showBadge
+                ? `Node is running ${label}. A newer signed release is available.`
+                : `Node is running ${label} — the latest signed release.`
         }
       >
         <span style={{ color: "var(--fg-500)" }}>node</span>
@@ -269,7 +274,7 @@ export function NodeUpdateChip() {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: labelKnown ? undefined : "var(--fg-400)",
+            color: isUnidentified ? "var(--fg-400)" : undefined,
           }}
         >
           {label}
@@ -315,13 +320,19 @@ export function NodeUpdateChip() {
           </div>
 
           <p style={{ fontSize: 11, color: "var(--fg-400)", margin: "6px 0 4px", lineHeight: 1.5 }}>
-            {labelKnown ? (
+            {isUnidentified ? (
+              "Could not match the node's running build to a published signed release."
+            ) : isDevBuild ? (
+              <>
+                Node running an unreleased build <b className="mono">{summary.nodeCommit}</b> — not a
+                published signed release. Apply the latest signed release below to move onto a signed
+                build.
+              </>
+            ) : (
               <>
                 Node running <b className="mono">{currentTag}</b>
                 {showBadge ? " — a newer signed release is available." : " — latest signed release."}
               </>
-            ) : (
-              "Could not match the node's running build to a published signed release."
             )}
           </p>
 

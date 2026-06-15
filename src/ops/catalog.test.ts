@@ -175,6 +175,30 @@ describe("operation catalog", () => {
     expect(prose(emergency)).toContain("emergencyKeyRotation(bytes,uint64,uint64)");
   });
 
+  it("surfaces protocore log management ops in the system category", () => {
+    const retention = OP_CATALOG.find((entry) => entry.kind === "set-log-retention");
+    const cleanup = OP_CATALOG.find((entry) => entry.kind === "clean-protocore-logs");
+
+    expect(retention).toMatchObject({
+      title: "Set log retention",
+      category: "system",
+      destructive: false,
+    });
+    expect(prose(retention)).toContain("PROTOCORE_LOG_MAX_BYTES");
+    expect(retention?.effects).toContain(
+      "Applied in NoReboot mode — the node is not cycled.",
+    );
+
+    expect(cleanup).toMatchObject({
+      title: "Clean up logs",
+      category: "system",
+      destructive: true,
+      confirmLabel: "Apply retention & restart",
+    });
+    // HONEST: the cleanup op never claims a file truncate Talos cannot do.
+    expect(cleanup?.intro.toLowerCase()).toContain("no file-truncate");
+  });
+
   it("keeps intros plain-language — spec prose lives in technical details", () => {
     const specTokens = /\b0x1[0-9a-fA-F]{3}\b|\(bytes|\(uint|bytes32|uint64|ML-DSA|ML-KEM|PQM-1/u;
     for (const entry of OP_CATALOG) {

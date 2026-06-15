@@ -218,6 +218,27 @@ export type TalosTextResult = {
   service: TalosServiceInfo | null;
 };
 
+/** One regular file under the protocore log directory, from the Talos `List`
+ *  RPC. Sizes/timestamps are the node's own — never synthesised. */
+export type TalosLogFile = {
+  name: string;
+  /** Bytes. */
+  size: number;
+  /** UNIX seconds of last modification, or null when the node didn't report. */
+  modified: number | null;
+};
+
+/** Disk usage of the protocore log directory (`/var/lib/protocore/logs`), from
+ *  the Talos `DiskUsage` + `List` RPCs. Pure read. */
+export type TalosLogDiskUsage = {
+  endpoint: string;
+  nodeAddress: string;
+  path: string;
+  /** Total bytes under `path` as reported by `du`. */
+  totalBytes: number;
+  files: TalosLogFile[];
+};
+
 export type TalosBackupResult = {
   endpoint: string;
   nodeAddress: string;
@@ -588,6 +609,54 @@ export async function talosLogStream(
 export async function talosLogCancel(sessionId: number): Promise<void> {
   if (!inTauri()) return;
   await invoke<void>("talos_log_cancel", { sessionId });
+}
+
+/** Read the protocore log directory's disk usage (size + per-file breakdown)
+ *  over the Talos `DiskUsage`/`List` RPCs. Pure read — the `append:` redirect
+ *  never rotates, so this is how an operator sees the file has ballooned. */
+export async function talosLogDiskUsage(): Promise<TalosLogDiskUsage> {
+  if (!inTauri()) {
+    throw new Error("talos_log_disk_usage unavailable — running outside Tauri");
+  }
+  return await invoke<TalosLogDiskUsage>("talos_log_disk_usage");
+}
+
+/** Install / refresh the protocore log retention bound on a running node via an
+ *  `ApplyConfiguration` patch of the protocore extension env. `maxMegabytes`
+ *  caps the log size; `maxFiles` caps the rotated-file count. Returns the node's
+ *  own apply messages. Set `dryRun` to validate without committing. */
+export async function talosSetLogRetention(
+  maxMegabytes: number,
+  maxFiles: number,
+  dryRun = false,
+): Promise<TalosTextResult> {
+  if (!inTauri()) {
+    throw new Error("talos_set_log_retention unavailable — running outside Tauri");
+  }
+  recordE2eCommand("talos_set_log_retention");
+  return await invoke<TalosTextResult>("talos_set_log_retention", {
+    maxMegabytes,
+    maxFiles,
+    dryRun,
+  });
+}
+
+/** Bound the protocore logs and restart ext-protocore so the appender re-opens
+ *  under the new retention policy. HONEST: Talos has no file-truncate RPC, so
+ *  this does not zero the existing file directly — the extension's rotation
+ *  reclaims the bytes under the new bound. */
+export async function talosCleanProtocoreLogs(
+  maxMegabytes: number,
+  maxFiles: number,
+): Promise<TalosTextResult> {
+  if (!inTauri()) {
+    throw new Error("talos_clean_protocore_logs unavailable — running outside Tauri");
+  }
+  recordE2eCommand("talos_clean_protocore_logs");
+  return await invoke<TalosTextResult>("talos_clean_protocore_logs", {
+    maxMegabytes,
+    maxFiles,
+  });
 }
 
 /**

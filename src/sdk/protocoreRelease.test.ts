@@ -60,16 +60,21 @@ describe("protocore update status", () => {
     });
   });
 
-  it("reports update-available when the commits differ", () => {
+  it("reports a dev-build when the node commit matches no signed release", () => {
     const status = protocoreUpdateStatus({
       release: release(),
       provenance: provenance(NODE_COMMIT_DIFFER),
     });
-    expect(status.state).toBe("update-available");
-    expect(status.className).toBe("halo halo--warn");
+    // The node reported a real commit that matches no release → honest
+    // "unreleased build", not the alarming "could not match".
+    expect(status.state).toBe("dev-build");
+    expect(status.className).toBe("halo halo--info");
+    expect(status.nodeCommit).toBe(NODE_COMMIT_DIFFER.slice(0, 12));
+    expect(status.text).toContain("unreleased build");
+    expect(status.text).toContain(NODE_COMMIT_DIFFER.slice(0, 12));
     // HONEST: never asserts "outdated".
     expect(status.title.toLowerCase()).not.toContain("outdated");
-    expect(status.title.toLowerCase()).toContain("differs");
+    expect(status.title.toLowerCase()).toContain("unreleased build");
   });
 
   it("is unknown when the release is missing", () => {
@@ -117,7 +122,9 @@ describe("protocore node release summary", () => {
   it("labels the running release and reports no update when node is on the newest", () => {
     // Node commit shares the first 12 chars of the newest release.
     const summary = protocoreNodeReleaseSummary(list(), provenance("aaaaaaaaaaaa9999"));
+    expect(summary.kind).toBe("matched");
     expect(summary.label).toBe("v0.1.52-testnet");
+    expect(summary.nodeCommit).toBe("aaaaaaaaaaaa");
     expect(summary.current?.tag).toBe("v0.1.52-testnet");
     expect(summary.updateAvailable).toBe(false);
     expect(summary.latest?.tag).toBe("v0.1.52-testnet");
@@ -136,32 +143,42 @@ describe("protocore node release summary", () => {
     expect(summary.updateAvailable).toBe(true);
   });
 
-  it("unknown build (still offers a move) when no listed release matches", () => {
+  it("names a dev build (still offers a move) when no listed release matches", () => {
     const summary = protocoreNodeReleaseSummary(list(), provenance("ffffffffffff0000"));
+    expect(summary.kind).toBe("dev-build");
     expect(summary.current).toBeNull();
-    expect(summary.label).toBe("unknown build");
+    expect(summary.nodeCommit).toBe("ffffffffffff");
+    // The build is named honestly by its commit, not collapsed into "unknown".
+    expect(summary.label).toBe("dev ffffffffffff");
     // A newer signed build exists to move to, since the list is non-empty.
     expect(summary.updateAvailable).toBe(true);
     expect(summary.latest?.tag).toBe("v0.1.52-testnet");
   });
 
-  it("never claims an update when provenance is missing", () => {
+  it("is unidentified (never claims an update) when provenance is missing", () => {
     const summary = protocoreNodeReleaseSummary(list(), null);
+    expect(summary.kind).toBe("unidentified");
     expect(summary.current).toBeNull();
+    expect(summary.nodeCommit).toBeNull();
     expect(summary.label).toBe("unknown build");
     expect(summary.updateAvailable).toBe(false);
   });
 
-  it("never claims an update when the node reports no git commit", () => {
+  it("is unidentified (never claims an update) when the node reports no git commit", () => {
     const summary = protocoreNodeReleaseSummary(list(), provenance(null));
+    expect(summary.kind).toBe("unidentified");
+    expect(summary.nodeCommit).toBeNull();
     expect(summary.label).toBe("unknown build");
     expect(summary.updateAvailable).toBe(false);
   });
 
-  it("empty release list yields unknown with no update and no latest", () => {
+  it("empty release list with a node commit yields a dev build, no update, no latest", () => {
     const summary = protocoreNodeReleaseSummary([], provenance(NEWEST));
+    expect(summary.kind).toBe("dev-build");
     expect(summary.current).toBeNull();
-    expect(summary.label).toBe("unknown build");
+    expect(summary.nodeCommit).toBe(NEWEST.slice(0, 12));
+    expect(summary.label).toBe(`dev ${NEWEST.slice(0, 12)}`);
+    // No release to move to.
     expect(summary.updateAvailable).toBe(false);
     expect(summary.latest).toBeNull();
   });

@@ -90,13 +90,21 @@ export async function fetchRecentProtocoreReleases(
   }
 }
 
-export type ProtocoreUpdateState = "current" | "update-available" | "unknown";
+export type ProtocoreUpdateState =
+  | "current"
+  | "update-available"
+  | "dev-build"
+  | "unknown";
 
 export type ProtocoreUpdateStatus = {
   state: ProtocoreUpdateState;
   className: string;
   text: string;
   title: string;
+  /** The running node's git commit (first 12), when it reported one. Present
+   *  for the `dev-build`/`current`/`update-available` states; `null` when the
+   *  node did not report an identity (the `unknown` state). */
+  nodeCommit: string | null;
 };
 
 export type ProtocoreUpdateStatusInput = {
@@ -105,13 +113,16 @@ export type ProtocoreUpdateStatusInput = {
 };
 
 /** Compare the running node's git commit against the latest signed release.
- *  Pure. HONEST: we never assert the node is "outdated" — only that the build
- *  "differs from / an update is available", because the commit is the single
- *  cross-release identity we can trust. */
+ *  Pure. HONEST: we never assert the node is "outdated". When the node reports
+ *  a real commit that matches no signed release, it is named a `dev-build`
+ *  (running an unreleased build) rather than collapsed into "unknown" — the two
+ *  are genuinely different states. */
 export function protocoreUpdateStatus({
   release,
   provenance,
 }: ProtocoreUpdateStatusInput): ProtocoreUpdateStatus {
+  const nodeCommit = shortCommit(provenance?.runtime.gitCommit);
+
   if (!release || !provenance) {
     return {
       state: "unknown",
@@ -120,6 +131,17 @@ export function protocoreUpdateStatus({
       title: !release
         ? "Could not read the latest signed protocore release."
         : "Runtime provenance is not available from the connected node.",
+      nodeCommit,
+    };
+  }
+
+  if (!nodeCommit) {
+    return {
+      state: "unknown",
+      className: "halo halo--info",
+      text: "release check unavailable",
+      title: "The running node did not report a git commit in lyth_runtimeProvenance.",
+      nodeCommit: null,
     };
   }
 
@@ -130,16 +152,7 @@ export function protocoreUpdateStatus({
       className: "halo halo--info",
       text: "release check unavailable",
       title: `${release.tag} has no manifest commit to compare against the running node.`,
-    };
-  }
-
-  const nodeCommit = shortCommit(provenance.runtime.gitCommit);
-  if (!nodeCommit) {
-    return {
-      state: "unknown",
-      className: "halo halo--info",
-      text: "release check unavailable",
-      title: "The running node did not report a git commit in lyth_runtimeProvenance.",
+      nodeCommit,
     };
   }
 
@@ -149,25 +162,44 @@ export function protocoreUpdateStatus({
       className: "halo halo--ok",
       text: "node is current",
       title: `Node is running the latest signed release (${release.tag}, commit ${releaseCommit}).`,
+      nodeCommit,
     };
   }
 
+  // The node reported a real commit that does not match the latest signed
+  // release. This is an unreleased / dev build — name it honestly instead of
+  // the alarming "could not match". The latest signed release is still offered
+  // to apply so the operator can move onto a signed build.
   return {
-    state: "update-available",
-    className: "halo halo--warn",
-    text: "update available",
-    title: `Node build differs from the latest signed release — ${release.tag} available (release ${releaseCommit}, node ${nodeCommit}).`,
+    state: "dev-build",
+    className: "halo halo--info",
+    text: `running unreleased build ${nodeCommit}`,
+    title: `Node is running an unreleased build (${nodeCommit}); the latest signed release is ${release.tag} (commit ${releaseCommit}). Apply it to move onto a signed build.`,
+    nodeCommit,
   };
 }
+
+/** What kind of build the running node is on, relative to the signed releases:
+ *   - `matched`     — the node's commit matches a listed release,
+ *   - `dev-build`   — the node reported a commit that matches no release
+ *                     (a known but unreleased / dev build),
+ *   - `unidentified`— the node reported no commit at all (truly unknown). */
+export type NodeReleaseKind = "matched" | "dev-build" | "unidentified";
 
 /** The running node's position within a list of recent releases. PURE so the
  *  topbar dropdown and tests share one source of truth. */
 export type NodeReleaseSummary = {
+  /** Discriminant for the three states above. */
+  kind: NodeReleaseKind;
   /** Release the running node is on (its `monoCoreCommit` first-12 matches
    *  `runtime.gitCommit`), or `null` when no listed release matches. */
   current: LatestProtocoreRelease | null;
-  /** Display label for the running node's build: the matching release tag, or
-   *  "unknown build" when nothing matches / provenance is missing. */
+  /** The running node's git commit (first 12), or `null` when the node did not
+   *  report one. Lets the chip name a dev build (`node: dev <commit>`). */
+  nodeCommit: string | null;
+  /** Display label for the running node's build: the matching release tag,
+   *  `dev <commit>` for an unreleased build, or "unknown build" when the node
+   *  reported no identity at all. */
   label: string;
   /** Whether the list contains a release NEWER than the node's current one.
    *  Newest-first ordering means: any release ahead of the matched index, or —
@@ -190,19 +222,29 @@ export function protocoreNodeReleaseSummary(
   const nodeCommit = shortCommit(provenance?.runtime.gitCommit);
 
   if (!nodeCommit) {
-    // No node identity to compare — never claim an update is available.
-    return { current: null, label: "unknown build", updateAvailable: false, latest };
+    // No node identity to compare — truly unidentified. Never claim an update
+    // is available, since we can't reason about what the node runs.
+    return {
+      kind: "unidentified",
+      current: null,
+      nodeCommit: null,
+      label: "unknown build",
+      updateAvailable: false,
+      latest,
+    };
   }
 
   const current =
     releases.find((r) => shortCommit(r.monoCoreCommit) === nodeCommit) ?? null;
   if (!current) {
-    // The node build matches no listed release. A newer signed build exists to
-    // move to as long as the list is non-empty, but we cannot name the node's
-    // own release, so the label stays "unknown build".
+    // The node reported a real commit that matches no listed release — a known
+    // dev / unreleased build. Name it honestly (`dev <commit>`); a newer signed
+    // build exists to move to as long as the list is non-empty.
     return {
+      kind: "dev-build",
       current: null,
-      label: "unknown build",
+      nodeCommit,
+      label: `dev ${nodeCommit}`,
       updateAvailable: latest !== null,
       latest,
     };
@@ -211,7 +253,9 @@ export function protocoreNodeReleaseSummary(
   // Newest-first: anything before the matched index is newer than the node.
   const index = releases.indexOf(current);
   return {
+    kind: "matched",
     current,
+    nodeCommit,
     label: current.tag,
     updateAvailable: index > 0,
     latest,

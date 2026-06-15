@@ -12,10 +12,16 @@
 //     `talos_protocore_readiness` / `talos_host_telemetry` /
 //     `talos_upgrade` / `talos_rollback` / `talos_service_action` /
 //     `talos_export_protocore_backup` / `talos_logs` /
-//     `talos_log_stream` / `rpc_runtime_provenance` / `rpc_call_json` —
+//     `talos_log_stream` / `talos_log_disk_usage` /
+//     `talos_set_log_retention` / `talos_clean_protocore_logs` /
+//     `rpc_runtime_provenance` / `rpc_call_json` —
 //     Monarch OS control
 //     and release evidence bridge. Talos API calls use mTLS via the
 //     operator's `talosconfig`; runtime provenance is read over JSON-RPC.
+//     `talos_log_disk_usage` reads the protocore log directory size
+//     (`DiskUsage`/`List`); `talos_set_log_retention` /
+//     `talos_clean_protocore_logs` bound it via an `ApplyConfiguration`
+//     patch of the protocore extension env + a service restart.
 //   * `ask_monarch` / `set_ai_config` / `get_ai_config` — advisory
 //     bridge. Streams a configured hosted endpoint or a local chat endpoint
 //     replies to the React side as Tauri events on
@@ -102,6 +108,9 @@ pub fn run() {
             talos::talos_log_stream,
             talos::talos_log_cancel,
             talos::talos_protocore_restart,
+            talos::talos_log_disk_usage,
+            talos::talos_set_log_retention,
+            talos::talos_clean_protocore_logs,
             talos_maintenance::talos_maintenance_probe,
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,

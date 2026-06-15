@@ -256,6 +256,10 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "ota-rollback",
   "operator-reprovision",
   "operator-bootstrap",
+  // Protocore log management — disk-usage read + retention/cleanup ops. A
+  // product extension beyond the original design's operation set.
+  "set-log-retention",
+  "clean-protocore-logs",
 ] satisfies ReadonlyArray<OpKind>;
 
 export type DesignAuditStatus =

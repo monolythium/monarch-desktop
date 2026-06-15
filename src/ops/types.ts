@@ -27,6 +27,8 @@ export const OP_KINDS = [
   "ota-rollback",
   "operator-reprovision",
   "operator-bootstrap",
+  "clean-protocore-logs",
+  "set-log-retention",
 ] as const;
 
 export type OpKind = (typeof OP_KINDS)[number];
@@ -184,6 +186,51 @@ export type OtaApplyInput = {
   rebootMode: OtaRebootMode;
 };
 
+// Inputs for the protocore log retention ops (`set-log-retention` and
+// `clean-protocore-logs`). `maxMegabytes` caps the log size and `maxFiles` caps
+// the rotated-file count; the Rust bridge validates both ranges before patching
+// the protocore extension config.
+export type LogRetentionInput = {
+  maxMegabytes: number;
+  maxFiles: number;
+};
+
+// Default retention the drawer pre-fills: 512 MB across 5 rotated files. A sane
+// starting bound for a node whose append-only log otherwise grows to many GB.
+export const DEFAULT_LOG_RETENTION: LogRetentionInput = {
+  maxMegabytes: 512,
+  maxFiles: 5,
+};
+
+// Bounds the Rust bridge enforces (kept in sync with build_log_retention_patch).
+export const LOG_RETENTION_LIMITS = {
+  minMegabytes: 1,
+  maxMegabytes: 1_048_576,
+  minFiles: 1,
+  maxFiles: 64,
+} as const;
+
+export function isLogRetentionInputComplete(
+  input: LogRetentionInput | undefined,
+): boolean {
+  if (!input) return false;
+  if (
+    !Number.isInteger(input.maxMegabytes) ||
+    input.maxMegabytes < LOG_RETENTION_LIMITS.minMegabytes ||
+    input.maxMegabytes > LOG_RETENTION_LIMITS.maxMegabytes
+  ) {
+    return false;
+  }
+  if (
+    !Number.isInteger(input.maxFiles) ||
+    input.maxFiles < LOG_RETENTION_LIMITS.minFiles ||
+    input.maxFiles > LOG_RETENTION_LIMITS.maxFiles
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export type OpStage = "preview" | "auth" | "executing" | "done" | "error";
 
 export type OpField = { key: string; label: string; value: string };
@@ -251,6 +298,9 @@ export type OpRequest = {
   /** Present only when `kind === "ota-apply"`. Carries the Talos image
    *  reference and non-secret upgrade switches. */
   otaApplyInput?: OtaApplyInput;
+  /** Present only when `kind` is `clean-protocore-logs` or
+   *  `set-log-retention`. Carries the validated retention bounds. */
+  logRetentionInput?: LogRetentionInput;
 };
 
 export type OpResult = {

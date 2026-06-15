@@ -62,6 +62,11 @@ export function commandFor(op: OpRequest): string | null {
     // Bootstrap is a dedicated Talos etcd-bootstrap path
     // (`OpsContext.runBootstrapFlow`).
     case "operator-bootstrap":
+    // Log retention / cleanup are dedicated Talos ApplyConfiguration +
+    // ServiceRestart paths (`OpsContext.runSetLogRetentionFlow` /
+    // `runCleanLogsFlow`); never shell-fallback them.
+    case "set-log-retention":
+    case "clean-protocore-logs":
       return null;
     default: {
       // Exhaustiveness guard. If a new OpKind is added we want this to

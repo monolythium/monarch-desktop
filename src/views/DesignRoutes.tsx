@@ -1444,7 +1444,11 @@ function LatestSignedReleaseCard({
   }
 
   const installerOk = isValidUpgradeImage(release.installerImage);
-  const applyEnabled = status.state === "update-available" && installerOk;
+  // Offer Apply when a newer signed release exists to move to — both when the
+  // node is on an older signed release ("update-available") and when it is on
+  // an unreleased/dev build ("dev-build"). Both can move onto the signed build.
+  const applyEnabled =
+    (status.state === "update-available" || status.state === "dev-build") && installerOk;
   const nodeCommit = provenance?.runtime.gitCommit ?? null;
 
   const applyUpdate = () => {
@@ -1547,7 +1551,9 @@ function LatestSignedReleaseCard({
                 ? "Cannot compare the node build against this release."
                 : !installerOk
                   ? "The derived installer image reference is not a valid upgrade image."
-                  : "Open the guarded OS upgrade drawer pre-filled with this release."
+                  : status.state === "dev-build"
+                    ? "Apply the latest signed release to move this node off its unreleased build onto a signed build."
+                    : "Open the guarded OS upgrade drawer pre-filled with this release."
           }
         >
           Apply this update

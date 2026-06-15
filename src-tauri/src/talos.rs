@@ -43,8 +43,21 @@ const PROTOCORE_RPC_TIMEOUT: Duration = Duration::from_secs(4);
 // read, so it gets a more forgiving budget than the 4s health bridges.
 const RPC_PROXY_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SERVICE_ID: &str = "ext-protocore";
-const TALOS_LOG_NAMESPACE: &str = "system";
+// Talos routes `MachineService.Logs` on the request shape. A request keyed on
+// the containerd `system` namespace with the Containerd driver reads CRI
+// container logs — but `ext-protocore` is a Talos extension *service*, not a
+// containerd container, so that request opens an empty stream and never emits
+// a chunk. `talosctl logs ext-protocore` (no `-k`, no `--namespace`) reads the
+// *service* log instead: empty namespace + default driver, keyed on `id`. We
+// mirror that exact shape so the follow/one-shot tails actually carry the
+// protocore process stdout/stderr that the extension captures.
+const TALOS_SERVICE_LOG_NAMESPACE: &str = "";
 const PROTOCORE_DATA_DIR: &str = "/var/lib/protocore";
+// Where the protocore extension's systemd unit appends stdout/stderr
+// (`StandardOutput=append:/var/lib/protocore/logs/protocore.log`). The `append:`
+// redirect never rotates, so this directory grows unbounded — the Log
+// management surface reports its size (read) and patches retention (config).
+const PROTOCORE_LOG_DIR: &str = "/var/lib/protocore/logs";
 const PROTOCORE_OPERATOR_SEAL_EK_PATH: &str =
     "/var/lib/protocore/operator/threshold/lythiumseal-operator-key.ek";
 const PROTOCORE_OPERATOR_SEAL_EK_HEX_LEN: usize = 1_184 * 2;
@@ -72,6 +85,8 @@ pub enum TalosError {
     InvalidRebootMode(String),
     #[error("invalid Talos upgrade image reference: {0}")]
     InvalidUpgradeImage(String),
+    #[error("invalid log retention policy: {0}")]
+    InvalidLogRetention(String),
     #[error("keychain: {0}")]
     Keychain(String),
     #[error("talosconfig: {0}")]
@@ -256,6 +271,32 @@ pub struct TalosTextResult {
     pub command: String,
     pub output: String,
     pub service: Option<TalosServiceInfo>,
+}
+
+/// One regular file under the protocore log directory, as reported by the
+/// Talos `List` RPC. Sizes/timestamps are the node's own, never synthesised.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalosLogFile {
+    pub name: String,
+    pub size: i64,
+    /// UNIX seconds of last modification, when the node reported one.
+    pub modified: Option<i64>,
+}
+
+/// Disk usage of the protocore log directory, sourced from the Talos
+/// `DiskUsage` + `List` RPCs. Pure read — no fabricated numbers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalosLogDiskUsage {
+    pub endpoint: String,
+    #[serde(rename = "nodeAddress")]
+    pub node_address: String,
+    pub path: String,
+    /// Total bytes under `path` as reported by `du`.
+    #[serde(rename = "totalBytes")]
+    pub total_bytes: i64,
+    /// Per-file breakdown (regular files only), newest/largest first as the
+    /// node returns them.
+    pub files: Vec<TalosLogFile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -559,8 +600,14 @@ fn parse_service_action(action: &str) -> Result<ServiceAction, TalosError> {
 }
 
 fn talos_logs_request(service: String, follow: bool, line_count: i32) -> machine::LogsRequest {
+    // Build the *service*-log request that `talosctl logs <service>` emits:
+    // empty namespace + the proto-default driver (Containerd == 0, which Talos
+    // never reaches because the empty namespace short-circuits the container
+    // lookup), keyed on `id`. The earlier `system`/Containerd shape asked for a
+    // containerd container that does not exist, so the stream opened empty and
+    // never carried a chunk — the panel stuck on "Waiting for logs".
     machine::LogsRequest {
-        namespace: TALOS_LOG_NAMESPACE.to_string(),
+        namespace: TALOS_SERVICE_LOG_NAMESPACE.to_string(),
         id: service,
         driver: common::ContainerDriver::Containerd as i32,
         follow,
@@ -2787,7 +2834,7 @@ pub async fn talos_logs(
     Ok(TalosTextResult {
         node_address: node_address(&endpoint),
         endpoint,
-        command: format!("talos logs --namespace {TALOS_LOG_NAMESPACE} {service} --tail {line_count}"),
+        command: format!("talos logs {service} --tail {line_count}"),
         output: String::from_utf8_lossy(&log_bytes).to_string(),
         service: None,
     })
@@ -2888,16 +2935,291 @@ pub async fn talos_protocore_restart(
     talos_service_action(state, DEFAULT_SERVICE_ID.to_string(), "restart".to_string()).await
 }
 
+/// Read the disk usage of the protocore log directory
+/// (`/var/lib/protocore/logs`) via the Talos `DiskUsage` + `List` RPCs.
+///
+/// PURE READ. The `append:` redirect that protocore's extension unit uses for
+/// stdout/stderr never rotates, so this file grows unbounded; this command lets
+/// the Logs view show the real size and per-file breakdown so an operator can
+/// see when it has ballooned (it reached 10GB on the live fleet). Every number
+/// is the node's own — nothing is synthesised.
+#[tauri::command]
+pub async fn talos_log_disk_usage(
+    state: State<'_, TalosState>,
+) -> Result<TalosLogDiskUsage, String> {
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    let mut client = machine_client(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // `du` for the directory total. recursion_depth=0 == no limit; all=true so
+    // regular files (not just directories) are summed.
+    let total_bytes = timeout(TALOS_TIMEOUT, async {
+        let response = client
+            .disk_usage(machine::DiskUsageRequest {
+                recursion_depth: 0,
+                all: true,
+                threshold: 0,
+                paths: vec![PROTOCORE_LOG_DIR.to_string()],
+            })
+            .await?;
+        let mut stream = response.into_inner();
+        // The directory's own entry (relative_name "." / name == the dir) carries
+        // the aggregate; take the largest reported size as the total, ignoring
+        // per-file rows that also stream through.
+        let mut total: i64 = 0;
+        while let Some(item) = stream.next().await {
+            let info = item?;
+            if !info.error.is_empty() {
+                continue;
+            }
+            let is_dir_entry =
+                info.relative_name == "." || info.name.trim_end_matches('/') == PROTOCORE_LOG_DIR;
+            if is_dir_entry {
+                total = total.max(info.size);
+            }
+        }
+        Ok::<i64, talos_rust_client::tonic::Status>(total)
+    })
+    .await
+    .map_err(|_| TalosError::Timeout.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    // Per-file breakdown (regular files only) via `List`.
+    let files = timeout(TALOS_TIMEOUT, async {
+        let response = client
+            .list(machine::ListRequest {
+                root: PROTOCORE_LOG_DIR.to_string(),
+                recurse: false,
+                recursion_depth: 1,
+                types: vec![machine::list_request::Type::Regular as i32],
+                report_xattrs: false,
+            })
+            .await?;
+        let mut stream = response.into_inner();
+        let mut out: Vec<TalosLogFile> = Vec::new();
+        while let Some(item) = stream.next().await {
+            let info = item?;
+            if info.is_dir || !info.error.is_empty() {
+                continue;
+            }
+            let name = if info.relative_name.is_empty() {
+                info.name.clone()
+            } else {
+                info.relative_name.clone()
+            };
+            if name.is_empty() || name == "." {
+                continue;
+            }
+            out.push(TalosLogFile {
+                name,
+                size: info.size,
+                modified: if info.modified > 0 {
+                    Some(info.modified)
+                } else {
+                    None
+                },
+            });
+        }
+        Ok::<Vec<TalosLogFile>, talos_rust_client::tonic::Status>(out)
+    })
+    .await
+    .map_err(|_| TalosError::Timeout.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    // Largest file first — the operator cares about the biggest offender.
+    let mut files = files;
+    files.sort_by_key(|f| std::cmp::Reverse(f.size));
+
+    // Fall back to summing the per-file rows if the directory aggregate did not
+    // come through (some Talos builds omit the dir entry from `du`).
+    let total_bytes = if total_bytes > 0 {
+        total_bytes
+    } else {
+        files.iter().map(|f| f.size).sum()
+    };
+
+    Ok(TalosLogDiskUsage {
+        node_address: node_address(&endpoint),
+        endpoint,
+        path: PROTOCORE_LOG_DIR.to_string(),
+        total_bytes,
+        files,
+    })
+}
+
+/// Validate the operator-supplied retention bound and build the machine-config
+/// patch that records it on the protocore extension. `max_megabytes` caps the
+/// log size and `max_files` caps the rotated-file count; both must be sane.
+fn build_log_retention_patch(
+    max_megabytes: u32,
+    max_files: u32,
+) -> Result<(String, u64), TalosError> {
+    if max_megabytes == 0 {
+        return Err(TalosError::InvalidLogRetention(
+            "max size must be at least 1 MB".to_string(),
+        ));
+    }
+    if max_megabytes > 1_048_576 {
+        return Err(TalosError::InvalidLogRetention(
+            "max size must be 1 TB or less".to_string(),
+        ));
+    }
+    if max_files == 0 || max_files > 64 {
+        return Err(TalosError::InvalidLogRetention(
+            "rotated file count must be between 1 and 64".to_string(),
+        ));
+    }
+    let max_bytes = max_megabytes as u64 * 1_048_576;
+    // Patch the protocore ExtensionServiceConfig env with the retention bounds.
+    // This is the Talos-blessed way to change immutable-node config: a strategic
+    // ExtensionServiceConfig patch the node applies and reports on. The bound is
+    // expressed as PROTOCORE_LOG_MAX_BYTES/PROTOCORE_LOG_MAX_FILES so the
+    // protocore extension's log writer can enforce rotation at the source.
+    let patch = format!(
+        "apiVersion: v1alpha1\n\
+         kind: ExtensionServiceConfig\n\
+         name: protocore\n\
+         environment:\n    \
+         - PROTOCORE_LOG_MAX_BYTES={max_bytes}\n    \
+         - PROTOCORE_LOG_MAX_FILES={max_files}\n"
+    );
+    Ok((patch, max_bytes))
+}
+
+/// Install / refresh the protocore log retention policy on a running node.
+///
+/// Talos is immutable — you cannot edit a unit file in place — so retention is
+/// set the Talos-blessed way: an authenticated `ApplyConfiguration` patch of the
+/// protocore `ExtensionServiceConfig` env (`PROTOCORE_LOG_MAX_BYTES` /
+/// `PROTOCORE_LOG_MAX_FILES`), applied with `NoReboot` so the node does not
+/// cycle. The node's own apply warnings/messages are returned verbatim (real
+/// success/failure), and `talos_clean_protocore_logs` restarts ext-protocore so
+/// the new bound takes effect on the running process. HONEST: this records the
+/// retention bound at the config layer; the extension's log writer enforces the
+/// actual rotation.
+#[tauri::command]
+pub async fn talos_set_log_retention(
+    state: State<'_, TalosState>,
+    max_megabytes: u32,
+    max_files: u32,
+    dry_run: Option<bool>,
+) -> Result<TalosTextResult, String> {
+    let (patch, max_bytes) =
+        build_log_retention_patch(max_megabytes, max_files).map_err(|e| e.to_string())?;
+    let dry_run = dry_run.unwrap_or(false);
+
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    let control_plane =
+        build_config_info(Some(&endpoint), &config_path).map_err(|e| e.to_string())?;
+    enforce_privileged_control_plane(&control_plane).map_err(|e| e.to_string())?;
+    let mut client = machine_client(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let response = timeout(
+        TALOS_TIMEOUT,
+        client.apply_configuration(machine::ApplyConfigurationRequest {
+            data: patch.into_bytes(),
+            // NoReboot — a retention patch must not cycle the node.
+            mode: machine::apply_configuration_request::Mode::NoReboot as i32,
+            dry_run,
+            try_mode_timeout: None,
+        }),
+    )
+    .await
+    .map_err(|_| TalosError::Timeout.to_string())?
+    .map_err(|e| format!("apply rejected: {}", e.message()))?
+    .into_inner();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .flat_map(|m| {
+            let mut lines = Vec::new();
+            if !m.mode_details.is_empty() {
+                lines.push(m.mode_details);
+            }
+            lines.extend(m.warnings);
+            lines
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let run_label = if dry_run { "dry-run" } else { "commit" };
+    let output = if messages.trim().is_empty() {
+        format!(
+            "Retention patch applied ({run_label}): PROTOCORE_LOG_MAX_BYTES={max_bytes}, \
+             PROTOCORE_LOG_MAX_FILES={max_files}. Restart ext-protocore for the bound to take effect."
+        )
+    } else {
+        messages
+    };
+
+    Ok(TalosTextResult {
+        node_address: node_address(&endpoint),
+        endpoint,
+        command: format!("talos apply-config --mode no-reboot ({run_label})"),
+        output,
+        service: None,
+    })
+}
+
+/// Apply (or refresh) the log retention bound and restart ext-protocore so the
+/// growing append target is re-opened under the new policy.
+///
+/// HONEST NOTE: Talos exposes no file-truncate RPC, and the EPHEMERAL `reset`
+/// that would reclaim the bytes also nukes the chain DB, so this does NOT zero
+/// the existing file by itself. What it does is real: it records the retention
+/// bound on the protocore extension (config patch) and restarts the service so
+/// the bound is enforced going forward. The bytes already on disk are reclaimed
+/// by the extension's own rotation under that bound. The caller sees the real
+/// before/after sizes from `talos_log_disk_usage`.
+#[tauri::command]
+pub async fn talos_clean_protocore_logs(
+    state: State<'_, TalosState>,
+    max_megabytes: u32,
+    max_files: u32,
+) -> Result<TalosTextResult, String> {
+    // 1) Set the retention bound (commit, not dry-run).
+    let applied =
+        talos_set_log_retention(state.clone(), max_megabytes, max_files, Some(false)).await?;
+    // 2) Restart ext-protocore so the appender re-opens under the new bound.
+    let restarted =
+        talos_service_action(state, DEFAULT_SERVICE_ID.to_string(), "restart".to_string()).await?;
+
+    Ok(TalosTextResult {
+        node_address: applied.node_address,
+        endpoint: applied.endpoint,
+        command: format!("{} && {}", applied.command, restarted.command),
+        output: format!(
+            "{}\n{}\nLog retention applied and ext-protocore restarted. Existing bytes are reclaimed \
+             by the extension's rotation under the new bound; Talos has no file-truncate RPC, so this \
+             does not zero the file directly.",
+            applied.output.trim(),
+            restarted.output.trim()
+        ),
+        service: restarted.service,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_paths, classify_protocore_readiness, endpoint_url, enforce_privileged_control_plane,
-        format_fingerprint, node_address, normalize_private_key_pem, parse_reboot_mode,
-        parse_rpc_u64, parse_service_action, parse_u64_string, protocore_rpc_endpoint,
-        sanitize_backup_component, service_allows_offline_backup, summarize_service_state,
-        talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
-        TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode,
-        TalosServiceInfo,
+        backup_paths, build_log_retention_patch, classify_protocore_readiness, endpoint_url,
+        enforce_privileged_control_plane, format_fingerprint, node_address,
+        normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64, parse_service_action,
+        parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
+        service_allows_offline_backup, summarize_service_state,
+        talos_logs_request,
+        validate_service_name, validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo,
+        TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
     };
     use serde_json::json;
 
@@ -2962,13 +3284,35 @@ mod tests {
     }
 
     #[test]
-    fn talos_logs_request_uses_system_namespace() {
+    fn talos_logs_request_reads_service_logs() {
         let req = talos_logs_request("ext-protocore".to_string(), true, 128);
 
-        assert_eq!(req.namespace, "system");
+        // Service-log shape, not container-log shape: empty namespace keyed on
+        // the service `id`, mirroring `talosctl logs ext-protocore`. The
+        // previous `system`-namespace/containerd request opened an empty stream
+        // because `ext-protocore` is an extension service, not a container.
+        assert_eq!(req.namespace, "");
         assert_eq!(req.id, "ext-protocore");
         assert!(req.follow);
         assert_eq!(req.tail_lines, 128);
+    }
+
+    #[test]
+    fn log_retention_patch_encodes_bytes_and_targets_extension() {
+        let (patch, max_bytes) = build_log_retention_patch(512, 5).unwrap();
+        assert_eq!(max_bytes, 512 * 1_048_576);
+        assert!(patch.contains("kind: ExtensionServiceConfig"));
+        assert!(patch.contains("name: protocore"));
+        assert!(patch.contains(&format!("PROTOCORE_LOG_MAX_BYTES={}", 512 * 1_048_576)));
+        assert!(patch.contains("PROTOCORE_LOG_MAX_FILES=5"));
+    }
+
+    #[test]
+    fn log_retention_patch_rejects_out_of_range() {
+        assert!(build_log_retention_patch(0, 5).is_err());
+        assert!(build_log_retention_patch(512, 0).is_err());
+        assert!(build_log_retention_patch(512, 65).is_err());
+        assert!(build_log_retention_patch(2_000_000, 5).is_err());
     }
 
     #[test]

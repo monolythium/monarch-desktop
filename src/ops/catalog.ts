@@ -254,6 +254,63 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "set-log-retention",
+    category: "system",
+    icon: "LR",
+    risk: "low",
+    title: "Set log retention",
+    sub: "Bound protocore log growth",
+    intro:
+      "Caps how large the node's protocore log can grow. The protocore log file appends without rotating, so it grows unbounded — this installs a size and rotated-file limit so it can no longer fill the disk.",
+    technical:
+      "Patches the protocore ExtensionServiceConfig env (PROTOCORE_LOG_MAX_BYTES / PROTOCORE_LOG_MAX_FILES) via the Talos ApplyConfiguration RPC in NoReboot mode — the immutable-node-correct way to change extension config. The node's own apply warnings/messages are returned verbatim. Restart ext-protocore (or use Clean up logs) for the new bound to take effect on the running process.",
+    destructive: false,
+    needsPasskey: true,
+    keywords: ["log", "logs", "retention", "rotate", "rotation", "size", "disk", "cap", "limit"],
+    effects: [
+      "ApplyConfiguration patches the protocore extension env with the size/file caps.",
+      "Applied in NoReboot mode — the node is not cycled.",
+      "Takes effect on the running process after the next ext-protocore restart.",
+    ],
+    diff: [
+      { key: "maxBytes", label: "PROTOCORE_LOG_MAX_BYTES", value: "+ operator-supplied cap" },
+      { key: "maxFiles", label: "PROTOCORE_LOG_MAX_FILES", value: "+ operator-supplied count" },
+    ],
+    fields: [
+      { key: "maxSize", label: "Max size", value: "operator-supplied MB" },
+      { key: "maxFiles", label: "Rotated files", value: "1..64" },
+    ],
+  },
+  {
+    kind: "clean-protocore-logs",
+    category: "system",
+    icon: "CL",
+    risk: "high",
+    title: "Clean up logs",
+    sub: "Apply retention + restart",
+    intro:
+      "Bounds the protocore log and restarts the node service so the new limit takes effect. Note: Talos exposes no file-truncate, so this does not instantly zero the file — the bytes already on disk are reclaimed by the extension's rotation under the limit you set.",
+    technical:
+      "Applies the retention bound (PROTOCORE_LOG_MAX_BYTES / PROTOCORE_LOG_MAX_FILES) via ApplyConfiguration, then issues a Talos ServiceRestart on ext-protocore so the append target re-opens under the new policy. The append: redirect re-opens the same file, so a restart alone does not shrink it; reclamation happens through the extension's rotation. The EPHEMERAL reset that would force-reclaim the bytes also nukes the chain DB, so it is deliberately NOT used here.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Apply retention & restart",
+    keywords: ["log", "logs", "clean", "cleanup", "truncate", "rotate", "disk", "space", "restart"],
+    effects: [
+      "ApplyConfiguration sets the protocore log size/file caps.",
+      "ext-protocore is restarted so the appender re-opens under the new bound.",
+      "Existing bytes are reclaimed by the extension's rotation, not by a file truncate.",
+    ],
+    diff: [
+      { key: "retention", label: "Log retention", value: "+ applied" },
+      { key: "service", label: "Service", value: "+ restart ext-protocore" },
+    ],
+    fields: [
+      { key: "maxSize", label: "Max size", value: "operator-supplied MB" },
+      { key: "maxFiles", label: "Rotated files", value: "1..64" },
+    ],
+  },
+  {
     kind: "operator-stop",
     category: "system",
     icon: "ST",

@@ -445,6 +445,9 @@ export {
   talosExportProtocoreBackup,
   talosHostTelemetry,
   talosLogCancel,
+  talosLogDiskUsage,
+  talosCleanProtocoreLogs,
+  talosSetLogRetention,
   talosLogStream,
   talosLogs,
   talosBootstrap,
@@ -493,6 +496,8 @@ export type {
   TalosServiceInfo,
   TalosStatus,
   TalosTextResult,
+  TalosLogDiskUsage,
+  TalosLogFile,
   TalosUpgradeInput,
 } from "./bridge";
 export {

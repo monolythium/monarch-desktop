@@ -141,6 +141,30 @@ function priorityToLevel(priority: string | number | undefined): LogLevel {
   return "INFO";
 }
 
+/// Map a tracing-subscriber level name (`INFO`/`WARN`/...) to a pill
+/// class. protocore runs with `--log-format json`, whose lines carry a
+/// `level` string rather than a numeric journald PRIORITY.
+function levelNameToLevel(level: string | undefined): LogLevel {
+  switch (level?.trim().toUpperCase()) {
+    case "ERROR":
+    case "FATAL":
+    case "CRIT":
+    case "CRITICAL":
+      return "ERROR";
+    case "WARN":
+    case "WARNING":
+      return "WARN";
+    case "DEBUG":
+    case "TRACE":
+      return "DEBUG";
+    case "INFO":
+    case "NOTICE":
+      return "INFO";
+    default:
+      return "INFO";
+  }
+}
+
 /// Format a journald `__REALTIME_TIMESTAMP` (microseconds since epoch
 /// as a string) into the UI's `HH:MM:SS.mmm` shape.
 function formatTimestamp(realtimeUs: string | undefined): string {
@@ -148,6 +172,21 @@ function formatTimestamp(realtimeUs: string | undefined): string {
   const us = Number.parseInt(realtimeUs, 10);
   if (!Number.isFinite(us)) return "--:--:--.---";
   const ms = Math.floor(us / 1000);
+  const date = new Date(ms);
+  const hh = date.getUTCHours().toString().padStart(2, "0");
+  const mm = date.getUTCMinutes().toString().padStart(2, "0");
+  const ss = date.getUTCSeconds().toString().padStart(2, "0");
+  const mss = date.getUTCMilliseconds().toString().padStart(3, "0");
+  return `${hh}:${mm}:${ss}.${mss}`;
+}
+
+/// Format an RFC3339 / ISO-8601 timestamp string (what tracing-subscriber
+/// JSON emits in its `timestamp` field) into the UI's `HH:MM:SS.mmm`
+/// shape. Returns the placeholder when the value can't be parsed.
+function formatIsoTimestamp(value: string | undefined): string {
+  if (!value) return "--:--:--.---";
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return "--:--:--.---";
   const date = new Date(ms);
   const hh = date.getUTCHours().toString().padStart(2, "0");
   const mm = date.getUTCMinutes().toString().padStart(2, "0");
@@ -165,15 +204,52 @@ type JournaldEntry = {
   _COMM?: string;
 };
 
-/// Parse one stream line into a `LogEntry`. Empty journald payloads are
-/// ignored so the UI does not fill with placeholder rows.
+/// tracing-subscriber `--log-format json` shape (with `flatten_event`):
+/// a `timestamp`, a `level` name, a `target`, and a flattened `message`.
+/// Some builds nest the message under `fields.message`, so both are
+/// accepted. This is what protocore writes to its stdout/stderr, which
+/// Talos captures as the `ext-protocore` service log.
+type ProtocoreJsonEntry = {
+  timestamp?: string;
+  time?: string;
+  ts?: string;
+  level?: string;
+  lvl?: string;
+  target?: string;
+  message?: string;
+  msg?: string;
+  fields?: { message?: string; msg?: string };
+};
+
+/// Pull a message string out of a protocore JSON entry, checking the
+/// flattened key first, then the legacy `fields.message`.
+function protocoreMessage(entry: ProtocoreJsonEntry): string {
+  return (
+    entry.message ??
+    entry.msg ??
+    entry.fields?.message ??
+    entry.fields?.msg ??
+    ""
+  );
+}
+
+/// Parse one stream line into a `LogEntry`. Handles three shapes:
+///   1. journald JSON (MESSAGE/PRIORITY/__REALTIME_TIMESTAMP) — kept for
+///      SSH `journalctl --output=json` diagnostics,
+///   2. protocore tracing-subscriber JSON (`--log-format json`), the
+///      shape the Talos `ext-protocore` service log carries, and
+///   3. plain text — raw Talos service-log lines that are not JSON.
+/// Only a genuinely empty line is dropped, so a quiet-but-correct stream
+/// no longer leaves the panel stuck on "Waiting for logs".
 export function parseJournaldLine(raw: string): LogEntry | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  let entry: JournaldEntry;
+  let entry: JournaldEntry & ProtocoreJsonEntry;
   try {
-    entry = JSON.parse(trimmed) as JournaldEntry;
+    entry = JSON.parse(trimmed) as JournaldEntry & ProtocoreJsonEntry;
   } catch {
+    // Plain (non-JSON) service-log line — render it verbatim rather than
+    // dropping it.
     return {
       ts: "--:--:--.---",
       lvl: "INFO",
@@ -181,20 +257,49 @@ export function parseJournaldLine(raw: string): LogEntry | null {
       msg: trimmed.slice(0, 512),
     };
   }
-  const message = Array.isArray(entry.MESSAGE)
-    ? entry.MESSAGE.join("\n")
-    : (entry.MESSAGE ?? "");
-  if (!message.trim()) return null;
-  const src =
-    entry.SYSLOG_IDENTIFIER ??
-    entry._SYSTEMD_UNIT?.replace(/\.service$/, "") ??
-    entry._COMM ??
-    "node";
+  // journald JSON path (SSH diagnostics). A journald entry is recognised by
+  // its journald-specific keys; an empty MESSAGE on such an entry is a true
+  // empty payload and is dropped so the panel doesn't fill with blank rows.
+  const looksJournald =
+    "MESSAGE" in entry ||
+    "PRIORITY" in entry ||
+    "__REALTIME_TIMESTAMP" in entry ||
+    "SYSLOG_IDENTIFIER" in entry ||
+    "_SYSTEMD_UNIT" in entry;
+  if (looksJournald) {
+    const journaldMessage = Array.isArray(entry.MESSAGE)
+      ? entry.MESSAGE.join("\n")
+      : (entry.MESSAGE ?? "");
+    if (!journaldMessage.trim()) return null;
+    const src =
+      entry.SYSLOG_IDENTIFIER ??
+      entry._SYSTEMD_UNIT?.replace(/\.service$/, "") ??
+      entry._COMM ??
+      "node";
+    return {
+      ts: formatTimestamp(entry.__REALTIME_TIMESTAMP),
+      lvl: priorityToLevel(entry.PRIORITY),
+      src,
+      msg: journaldMessage.trim(),
+    };
+  }
+  // protocore tracing-subscriber JSON path (the Talos service log).
+  const appMessage = protocoreMessage(entry);
+  if (appMessage.trim()) {
+    return {
+      ts: formatIsoTimestamp(entry.timestamp ?? entry.time ?? entry.ts),
+      lvl: levelNameToLevel(entry.level ?? entry.lvl),
+      src: entry.target ?? "protocore",
+      msg: appMessage.trim(),
+    };
+  }
+  // Parsed as JSON but not a recognised journald/protocore shape with a
+  // message — render the raw JSON text rather than silently dropping it.
   return {
-    ts: formatTimestamp(entry.__REALTIME_TIMESTAMP),
-    lvl: priorityToLevel(entry.PRIORITY),
-    src,
-    msg: message.trim(),
+    ts: "--:--:--.---",
+    lvl: "INFO",
+    src: "raw",
+    msg: trimmed.slice(0, 512),
   };
 }
 

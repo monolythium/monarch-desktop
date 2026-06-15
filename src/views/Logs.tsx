@@ -7,20 +7,63 @@
 // indexer halo continues to read from `lyth_indexerStatus` so operators
 // see at a glance whether the indexer that backs log search is current.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_TARGETS,
   LOCAL_TARGET,
   MONARCH_OS_TARGET,
+  inTauri,
+  talosLogDiskUsage,
   type LogTarget,
   type StreamStatus,
+  type TalosLogDiskUsage,
   useIndexerStatus,
   useLogStream,
 } from "../sdk";
+import { useOps } from "../ops/OpsContext";
+import { OP_CATALOG } from "../ops/catalog";
+import { DEFAULT_LOG_RETENTION, type OpKind, type OpRequest } from "../ops/types";
 
 const LEVELS = ["all", "info", "warn", "error"] as const;
 type Level = (typeof LEVELS)[number];
 const PIN_STORE_KEY = "monarch:log-pins";
+
+/** Human-readable byte size for the log disk-usage stat. Binary units. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+}
+
+/** Build an OpRequest from a catalog entry, mirroring the Operations view. */
+function logCatalogRequest(kind: OpKind, overrides: Partial<OpRequest> = {}): OpRequest | null {
+  const entry = OP_CATALOG.find((candidate) => candidate.kind === kind);
+  if (!entry) return null;
+  return {
+    kind: entry.kind,
+    title: entry.title,
+    sub: entry.sub,
+    intro: entry.intro,
+    technical: entry.technical,
+    fields: entry.fields,
+    effects: entry.effects,
+    diff: entry.diff,
+    icon: entry.icon,
+    risk: entry.risk,
+    destructive: entry.destructive,
+    needsPasskey: entry.needsPasskey,
+    confirmLabel: entry.confirmLabel,
+    ...overrides,
+  };
+}
 
 function streamHalo(status: StreamStatus): { cls: string; text: string; title: string } {
   switch (status.kind) {
@@ -74,8 +117,54 @@ export function Logs() {
   const [pinned, setPinned] = useState<string[]>(() => readPins());
   const indexer = useIndexerStatus();
   const { lines, status } = useLogStream(query, target);
+  const ops = useOps();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Real protocore log disk usage (read over Talos DiskUsage/List). Never
+  // fabricated: outside Tauri or on error it stays null and the stat hides.
+  const [diskUsage, setDiskUsage] = useState<TalosLogDiskUsage | null>(null);
+  const [diskUsageError, setDiskUsageError] = useState<string | null>(null);
+  const [diskUsageLoading, setDiskUsageLoading] = useState(false);
+
+  const refreshDiskUsage = useCallback(async () => {
+    if (!inTauri() || target.transport !== "talos") {
+      setDiskUsage(null);
+      setDiskUsageError(null);
+      return;
+    }
+    setDiskUsageLoading(true);
+    try {
+      const usage = await talosLogDiskUsage();
+      setDiskUsage(usage);
+      setDiskUsageError(null);
+    } catch (err) {
+      setDiskUsage(null);
+      setDiskUsageError((err as Error)?.message ?? String(err));
+    } finally {
+      setDiskUsageLoading(false);
+    }
+  }, [target.transport]);
+
+  // Fetch on mount / when the Talos target is selected. Not polled — the file
+  // grows slowly and the operator can re-check from the panel.
+  useEffect(() => {
+    void refreshDiskUsage();
+  }, [refreshDiskUsage]);
+
+  const openLogOp = useCallback(
+    (kind: OpKind) => {
+      const request = logCatalogRequest(kind, {
+        logRetentionInput: { ...DEFAULT_LOG_RETENTION },
+      });
+      if (request) ops.requestOp(request);
+    },
+    [ops],
+  );
+
+  // The biggest log file (the files list is already largest-first from Rust;
+  // `.at(0)` keeps `noUncheckedIndexedAccess` happy).
+  const largestLogFile = diskUsage?.files.at(0) ?? null;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -322,7 +411,89 @@ export function Logs() {
         <span className={indexerHalo.cls} title={indexer.error ?? indexerHalo.text}>
           <span className="dot" /> {indexerHalo.text}
         </span>
+        {target.transport === "talos" && inTauri() ? (
+          <span
+            className="halo halo--info"
+            title={
+              diskUsageError
+                ? `could not read log size: ${diskUsageError}`
+                : diskUsage
+                  ? `protocore logs at ${diskUsage.path}`
+                  : "protocore log directory size"
+            }
+          >
+            <span className="dot" />{" "}
+            {diskUsageLoading && !diskUsage
+              ? "Logs …"
+              : diskUsageError
+                ? "Logs size n/a"
+                : diskUsage
+                  ? `Logs ${formatBytes(diskUsage.totalBytes)}`
+                  : "Logs —"}
+          </span>
+        ) : null}
       </div>
+
+      {target.transport === "talos" && inTauri() ? (
+        <div
+          className="card"
+          style={{
+            padding: "12px 18px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 220 }}>
+            <span className="cap">log disk usage · {diskUsage?.path ?? "/var/lib/protocore/logs"}</span>
+            <span className="mono" style={{ fontSize: 13 }}>
+              {diskUsageError
+                ? "unavailable"
+                : diskUsage
+                  ? `${formatBytes(diskUsage.totalBytes)}${
+                      diskUsage.files.length > 0 ? ` · ${diskUsage.files.length} file(s)` : ""
+                    }`
+                  : diskUsageLoading
+                    ? "reading…"
+                    : "—"}
+            </span>
+            {largestLogFile ? (
+              <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+                largest: {largestLogFile.name} ({formatBytes(largestLogFile.size)})
+              </span>
+            ) : null}
+            {diskUsageError ? (
+              <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>{diskUsageError}</span>
+            ) : null}
+          </div>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void refreshDiskUsage()}
+            disabled={diskUsageLoading}
+          >
+            {diskUsageLoading ? "Reading…" : "Refresh size"}
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => openLogOp("set-log-retention")}
+            title="Bound how large the protocore log can grow (ApplyConfiguration patch)."
+          >
+            Set log retention
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => openLogOp("clean-protocore-logs")}
+            title="Apply retention and restart ext-protocore so the bound takes effect."
+          >
+            Clean up logs
+          </button>
+        </div>
+      ) : null}
 
       {pinnedLines.length > 0 ? (
         <div className="card logs-pinned">
