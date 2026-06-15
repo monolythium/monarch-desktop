@@ -68,7 +68,7 @@ pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 /// `:8545` never serves. Pinned to the protocore release the chain runs; bump
 /// alongside the OS/protocore version.
 pub const MONARCH_OS_INSTALLER_IMAGE: &str =
-    "ghcr.io/monolythium/monarch-os-installer:v0.1.56-testnet";
+    "ghcr.io/monolythium/monarch-os-installer:v0.1.59-testnet";
 
 /// CA validity mirroring `talosctl gen secrets` (10 years).
 const CA_VALIDITY_DAYS: i64 = 3650;

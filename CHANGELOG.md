@@ -4,6 +4,43 @@ All notable changes to Monarch Desktop are recorded here. This project adheres
 to semantic-ish versioning while pre-1.0 (patch bumps for fixes and small
 features, minor bumps for larger surface changes).
 
+## 0.0.41 — 2026-06-15
+
+### Fixed
+
+- **"Apply OS upgrade" no longer false-fails on a reachable node.** The upgrade
+  drawer's reachability pre-check used `eth_chainId` as its anchor, so an
+  operator running an RPC profile with the `eth_*` namespace disabled (the node
+  answers `-32045` "method disabled") was wrongly told *"Could not reach the
+  node. Check that it is running and that the RPC endpoint is correct."* — even
+  though pairing worked. The probe now applies the same rule as the readiness
+  fix in 0.0.40: a node that returns *any* well-formed JSON-RPC answer (a result,
+  or a `-32045`/`-32601` "method disabled"/"method not found" error) is
+  REACHABLE; only a transport failure (connection refused / timeout / no
+  response) reads as down. A reachable-but-`eth_*`-restricted node is no longer
+  blocked from upgrading; the chain id is simply reported as unknown on that
+  profile, and it can never be misclassified as "wrong chain".
+
+- **The post-upgrade reboot is no longer reported as a failure.** A Talos image
+  upgrade reboots the node into the new image, so the `talosconfig`/gRPC control
+  connection legitimately drops mid-call — which surfaced as a scary
+  *"talosconfig: Connection error: transport error"* even though the upgrade had
+  already been accepted. The native side now distinguishes a PRE-dispatch failure
+  (the request never reached the node → genuine "could not reach") from a
+  POST-dispatch transport drop on an already-connected channel (the node took the
+  request and is rebooting). The latter is reported as success — *"Upgrade
+  dispatched — the node is rebooting into the new image"* — and Monarch then
+  polls the node back via the robust reachability signal and flips the topbar
+  node chip live the moment it returns on the new image. A clean Talos
+  `UpgradeResponse` before the reboot is still treated as success; a `--stage`d
+  upgrade (which does not reboot) still surfaces real errors verbatim.
+
+### Changed
+
+- New-node in-app provisioning now targets the
+  `ghcr.io/monolythium/monarch-os-installer:v0.1.59-testnet` installer image
+  (was `v0.1.56-testnet`), matching the protocore release the chain runs.
+
 ## 0.0.40 — 2026-06-15
 
 ### Fixed

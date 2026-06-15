@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.41",
+    date: "2026-06-15",
+    highlights: [
+      "OS upgrade: \"Apply OS upgrade\" no longer false-fails with \"Could not reach the node\" when your RPC profile disables the eth_* methods — a node that answers anything (even \"method disabled\") now counts as reachable, so the upgrade is allowed.",
+      "OS upgrade: the node reboot after an image upgrade is no longer reported as a failure. The \"transport error\" you saw was the node rebooting into the new image — the upgrade was already accepted. Monarch now says \"Upgrade dispatched — node is rebooting\" and reconnects automatically once it is back.",
+      "Provisioning: new nodes are now installed with the v0.1.59-testnet protocore / Monarch OS image (was v0.1.56).",
+    ],
+  },
+  {
     version: "0.0.40",
     date: "2026-06-15",
     highlights: [
