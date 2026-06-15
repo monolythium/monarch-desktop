@@ -1163,6 +1163,37 @@ fn metadata_host(metadata: Option<&common::Metadata>) -> String {
         .unwrap_or_else(|| "node".to_string())
 }
 
+/// Marker the upgrade command stamps into `TalosTextResult.output` when the
+/// upgrade request was dispatched but the control connection dropped because the
+/// node started rebooting into the new image. The TS layer recognises this
+/// prefix and drives a reconnect-poll instead of surfacing a hard failure.
+/// A Talos image upgrade ALWAYS reboots, so a post-dispatch transport drop is
+/// the expected, successful outcome — not "could not reach the node".
+pub const UPGRADE_REBOOTING_MARKER: &str = "upgrade dispatched: node is rebooting into the new image";
+
+/// Classify the error returned by `client.upgrade(...)` AFTER the gRPC channel
+/// was already established (so the node was reachable when we sent the request).
+///
+/// A Talos image upgrade tears the machine down and reboots, so the unary call
+/// frequently never receives a clean response — the connection is reset, the
+/// stream is cancelled, or the call times out as the node goes away. Once the
+/// request has been written to an established channel, every one of those is the
+/// signature of the reboot, NOT a node that was never reached. Returns `true`
+/// when the error is a post-dispatch reboot drop that should be reported as
+/// "dispatched — rebooting".
+fn is_post_dispatch_reboot_drop(status: &talos_rust_client::tonic::Status) -> bool {
+    use talos_rust_client::tonic::Code;
+    matches!(
+        status.code(),
+        Code::Unavailable
+            | Code::Cancelled
+            | Code::Unknown
+            | Code::Aborted
+            | Code::DeadlineExceeded
+            | Code::Internal
+    )
+}
+
 fn format_upgrade_response(response: machine::UpgradeResponse) -> String {
     let mut lines = Vec::new();
     for msg in response.messages {
@@ -2752,7 +2783,23 @@ pub async fn talos_upgrade(
         TalosRebootMode::Default => machine::upgrade_request::RebootMode::Default as i32,
         TalosRebootMode::Powercycle => machine::upgrade_request::RebootMode::Powercycle as i32,
     };
-    let response = timeout(
+
+    let stage_arg = if stage { " --stage" } else { "" };
+    let reboot_arg = match reboot_mode {
+        TalosRebootMode::Default => "",
+        TalosRebootMode::Powercycle => " --reboot-mode powercycle",
+    };
+    let command = format!("talos upgrade --image {image} --preserve{stage_arg}{reboot_arg}");
+
+    // The gRPC channel is already established (`machine_client` connected), so
+    // the node WAS reachable when we sent this request. A Talos image upgrade
+    // then reboots the node — so the connection legitimately drops as the box
+    // restarts into the new image. The output we hand back distinguishes:
+    //   * clean `UpgradeResponse`        -> accepted, formatted as usual.
+    //   * post-dispatch transport drop   -> dispatched, node rebooting (marker).
+    //   * outer timeout after dispatch   -> dispatched, node rebooting (marker).
+    // A `--stage`d upgrade does NOT reboot, so its errors are reported verbatim.
+    let output = match timeout(
         TALOS_TIMEOUT,
         client.upgrade(machine::UpgradeRequest {
             image: image.clone(),
@@ -2763,21 +2810,36 @@ pub async fn talos_upgrade(
         }),
     )
     .await
-    .map_err(|_| TalosError::Timeout.to_string())?
-    .map_err(|e| e.to_string())?
-    .into_inner();
-
-    let stage_arg = if stage { " --stage" } else { "" };
-    let reboot_arg = match reboot_mode {
-        TalosRebootMode::Default => "",
-        TalosRebootMode::Powercycle => " --reboot-mode powercycle",
+    {
+        // The node acknowledged the upgrade before rebooting — clean success.
+        Ok(Ok(response)) => format_upgrade_response(response.into_inner()),
+        // The node answered with a gRPC error. If we staged (no reboot), that is
+        // a genuine failure. Otherwise a transport-class drop is the reboot.
+        Ok(Err(status)) => {
+            if !stage && is_post_dispatch_reboot_drop(&status) {
+                format!(
+                    "{UPGRADE_REBOOTING_MARKER}\n(control connection dropped: {})",
+                    status.message()
+                )
+            } else {
+                return Err(TalosError::from(status).to_string());
+            }
+        }
+        // The call timed out. After a successful connect+dispatch, a non-staged
+        // upgrade timing out means the node went away mid-reboot, not unreachable.
+        Err(_) => {
+            if stage {
+                return Err(TalosError::Timeout.to_string());
+            }
+            UPGRADE_REBOOTING_MARKER.to_string()
+        }
     };
 
     Ok(TalosTextResult {
         node_address: node_address(&endpoint),
         endpoint,
-        command: format!("talos upgrade --image {image} --preserve{stage_arg}{reboot_arg}"),
-        output: format_upgrade_response(response),
+        command,
+        output,
         service: None,
     })
 }
@@ -3425,15 +3487,16 @@ pub async fn talos_clean_protocore_logs(
 mod tests {
     use super::{
         backup_paths, build_log_retention_patch, classify_protocore_readiness, endpoint_url,
-        enforce_privileged_control_plane, format_fingerprint, node_address,
-        normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64, parse_service_action,
-        parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
+        enforce_privileged_control_plane, format_fingerprint, is_post_dispatch_reboot_drop,
+        node_address, normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64,
+        parse_service_action, parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
         service_allows_offline_backup, summarize_service_state, sync_status_is_synced,
-        talos_logs_request,
-        validate_service_name, validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo,
-        TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
+        talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
+        TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
+        UPGRADE_REBOOTING_MARKER,
     };
     use serde_json::json;
+    use talos_rust_client::tonic::{Code, Status};
 
     #[test]
     fn endpoint_url_adds_scheme_and_default_port() {
@@ -3981,6 +4044,57 @@ mod tests {
     #[test]
     fn privileged_control_plane_accepts_matched_pin_and_valid_certs() {
         assert!(enforce_privileged_control_plane(&config_info()).is_ok());
+    }
+
+    #[test]
+    fn post_dispatch_transport_drops_classify_as_reboot() {
+        // A Talos image upgrade reboots the node, so the control connection drops
+        // AFTER the request was dispatched on an already-connected channel. Every
+        // transport-class gRPC status here is the signature of that reboot, not a
+        // node that was never reached — they must read as "dispatched, rebooting".
+        for code in [
+            Code::Unavailable,
+            Code::Cancelled,
+            Code::Unknown,
+            Code::Aborted,
+            Code::DeadlineExceeded,
+            Code::Internal,
+        ] {
+            assert!(
+                is_post_dispatch_reboot_drop(&Status::new(code, "connection reset")),
+                "{code:?} should classify as a post-dispatch reboot drop"
+            );
+        }
+    }
+
+    #[test]
+    fn post_dispatch_application_errors_are_not_reboots() {
+        // A genuine application-level rejection (the node answered with a real
+        // error, e.g. an invalid image) is NOT the reboot path — it must surface
+        // as a failure, not be masked as "rebooting".
+        for code in [
+            Code::InvalidArgument,
+            Code::PermissionDenied,
+            Code::Unauthenticated,
+            Code::NotFound,
+            Code::FailedPrecondition,
+        ] {
+            assert!(
+                !is_post_dispatch_reboot_drop(&Status::new(code, "rejected")),
+                "{code:?} must not be masked as a reboot drop"
+            );
+        }
+    }
+
+    #[test]
+    fn upgrade_rebooting_marker_is_stable_and_recognisable() {
+        // The TS layer keys off this exact text — keep it byte-stable and on the
+        // "rebooting into the new image" phrasing the front-end also matches.
+        assert_eq!(
+            UPGRADE_REBOOTING_MARKER,
+            "upgrade dispatched: node is rebooting into the new image"
+        );
+        assert!(UPGRADE_REBOOTING_MARKER.contains("rebooting into the new image"));
     }
 
     fn service(display_state: &str, severity: &str) -> TalosServiceInfo {

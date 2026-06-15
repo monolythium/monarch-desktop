@@ -13,7 +13,7 @@
 // `http(s)://host:port` URL. It throws a clear message for genuinely
 // malformed input so the field can show why.
 
-import { RpcClient } from "@monolythium/core-sdk";
+import { RpcClient, SdkError } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 
 /** Default operator RPC port — matches the chain's `8545`. */
@@ -97,6 +97,38 @@ function isConnectionRefused(err: unknown): boolean {
   );
 }
 
+/**
+ * True when the node *answered the request* but the method itself failed —
+ * a well-formed JSON-RPC error (`SdkError.kind === "rpc"`), most commonly
+ * `-32045` "method disabled" or `-32601` "method not found". Operators routinely
+ * run an RPC profile with the whole `eth_*` namespace disabled, so `eth_chainId`
+ * comes back as a `-32045` error. A node that produced ANY structured JSON-RPC
+ * answer is up and serving RPC — it is REACHABLE, even though we couldn't read
+ * the chain id. This mirrors the Rust readiness signal in `talos.rs` (a
+ * well-formed JSON-RPC answer, result OR `-32045`/`-32601`, means "serving"; only
+ * a transport failure means "down").
+ *
+ * The error code is inspected first (authoritative when present); the message
+ * fallback covers transports that surface the same condition without the
+ * structured `SdkError` shape (e.g. a relayed proxy string).
+ */
+export function isMethodRestricted(err: unknown): boolean {
+  if (err instanceof SdkError) {
+    // Any JSON-RPC-kind error reached the node and came back — it answered.
+    if (err.kind === "rpc") return true;
+  }
+  const code = (err as { code?: number } | null)?.code;
+  if (code === -32045 || code === -32601) return true;
+  const msg = ((err as { message?: string } | null)?.message ?? "").toLowerCase();
+  return (
+    msg.includes("-32045") ||
+    msg.includes("-32601") ||
+    msg.includes("method disabled") ||
+    msg.includes("method not found") ||
+    msg.includes("rpc error")
+  );
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
@@ -134,33 +166,42 @@ export async function probeNodeEndpoint(
     return { ...base, error: (err as Error)?.message ?? String(err) };
   }
 
-  // chain id is the reachability anchor — if it fails the node is down.
-  let chainId: bigint;
+  // `eth_chainId` is the reachability anchor — but "anchor" means "did the node
+  // ANSWER", not "did it return a chain id". A node that replies with a
+  // well-formed JSON-RPC error (`-32045` "method disabled" when the operator
+  // runs an RPC profile with the `eth_*` namespace turned off, `-32601` "method
+  // not found") still ANSWERED — it is up and serving RPC, so it is reachable.
+  // Only a transport failure (refused / timed out / no response) means down.
+  // `null` here = reachable but the chain id is unreadable on this profile.
+  let chainIdNum: number | null;
   try {
-    chainId = await withTimeout(probe.ethChainId(), timeoutMs);
+    chainIdNum = Number(await withTimeout(probe.ethChainId(), timeoutMs));
   } catch (err) {
-    if (isTimeout(err)) {
+    if (isMethodRestricted(err)) {
+      // The node answered, it just won't serve `eth_chainId` on this profile.
+      // Reachable — fall through to the best-effort enrichment below with a
+      // null chain id rather than reporting the node "down".
+      chainIdNum = null;
+    } else if (isTimeout(err)) {
       return {
         ...base,
         outcome: "unreachable",
         error: "Timed out — no response from that endpoint. Check the IP, port, and that the node RPC is up.",
       };
-    }
-    if (isConnectionRefused(err)) {
+    } else if (isConnectionRefused(err)) {
       return {
         ...base,
         outcome: "unreachable",
         error: "Connection refused — nothing is listening there. Check the host/port and that protocore's RPC is exposed.",
       };
+    } else {
+      return {
+        ...base,
+        outcome: "unreachable",
+        error: (err as Error)?.message ?? String(err),
+      };
     }
-    return {
-      ...base,
-      outcome: "unreachable",
-      error: (err as Error)?.message ?? String(err),
-    };
   }
-
-  const chainIdNum = Number(chainId);
 
   // The rest are best-effort enrichment; a node that answered chain id is
   // reachable even if these individually fail.
@@ -176,7 +217,11 @@ export async function probeNodeEndpoint(
   // catching up. `undefined` here means the call itself failed — unknown.
   const synced = sync === undefined ? null : sync === null;
 
+  // Only a chain id we actually READ can be wrong. When the `eth_*` namespace is
+  // restricted (`chainIdNum === null`) there is no chain id to compare against,
+  // so the node is treated as reachable, not "wrong-chain".
   if (
+    chainIdNum !== null &&
     opts.expectedChainId !== undefined &&
     opts.expectedChainId !== null &&
     chainIdNum !== opts.expectedChainId

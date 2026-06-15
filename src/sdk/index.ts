@@ -28,10 +28,17 @@ export { useNodeStatus, nodeReadiness } from "./useNodeStatus";
 export type { NodeStatus, NodeReadiness } from "./useNodeStatus";
 export {
   DEFAULT_RPC_PORT,
+  isMethodRestricted,
   normalizeNodeEndpoint,
   probeNodeEndpoint,
 } from "./setupProbe";
 export type { NodeProbeResult, ProbeOutcome } from "./setupProbe";
+export {
+  awaitNodeReconnect,
+  isUpgradeRebooting,
+  UPGRADE_REBOOTING_MARKER,
+} from "./talosUpgradeReboot";
+export type { AwaitReconnectOptions, ReconnectOutcome } from "./talosUpgradeReboot";
 export {
   normalizeDevice,
   validateDevice,

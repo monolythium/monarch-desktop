@@ -31,6 +31,10 @@ import {
   talosUpgrade,
   talosWipeProtocore,
 } from "../sdk";
+import {
+  awaitNodeReconnect,
+  isUpgradeRebooting,
+} from "../sdk/talosUpgradeReboot";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
 import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
 import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
@@ -1092,6 +1096,33 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       try {
         const result = await talosUpgrade(input);
+        // A Talos image upgrade reboots the node into the new image, so the
+        // control connection drops mid-call. The native side detects that
+        // post-dispatch drop and reports "rebooting" instead of a hard failure.
+        // That is a SUCCESS: the upgrade was accepted; the node is restarting.
+        if (isUpgradeRebooting(result.output)) {
+          settleOperation(
+            req,
+            {
+              ok: true,
+              message:
+                "Upgrade dispatched - the node is rebooting into the new image. Monarch will reconnect automatically once it is back; this usually takes a minute or two.",
+            },
+            {
+              transport: "talos",
+              action: "upgrade",
+              endpoint: result.endpoint,
+              nodeAddress: result.nodeAddress,
+              command: result.command,
+            },
+          );
+          // Poll the node back via the robust reachability signal so the topbar
+          // node chip and node-status reads flip live the moment it returns on
+          // the new image. Best-effort and non-blocking — the success above is
+          // already recorded; the drawer never waits out the reboot.
+          void awaitNodeReconnect(result.endpoint).catch(() => undefined);
+          return;
+        }
         settleOperation(
           req,
           {
@@ -1107,6 +1138,10 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           },
         );
       } catch (err) {
+        // A genuine PRE-dispatch failure: the upgrade request never reached the
+        // node (couldn't open the control channel, staged-upgrade rejection).
+        // The native side only raises here when the request did NOT land, so
+        // surfacing "could not reach" is correct.
         const message = (err as Error)?.message ?? String(err);
         settleOperation(req, { ok: false, message }, { transport: "talos", action: "upgrade" });
       }
