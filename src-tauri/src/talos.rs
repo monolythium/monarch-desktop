@@ -1694,6 +1694,14 @@ struct ProtocoreRpcProbe {
     listening_error: Option<String>,
     syncing: Option<bool>,
     syncing_error: Option<String>,
+    /// `true` once *any* probed method got a well-formed JSON-RPC answer from
+    /// the node — a result OR a structured error (e.g. `-32045` "method
+    /// disabled"). It stays `false` only when every call failed at the
+    /// transport layer, i.e. the node never responded at all. This is the
+    /// profile-independent "the node is up and serving RPC" signal: an
+    /// operator that disables the whole `eth_*` namespace still answers, and
+    /// must not be misread as "Booting".
+    rpc_answered: bool,
 }
 
 fn parse_rpc_u64(value: &Value) -> Option<u64> {
@@ -1731,12 +1739,48 @@ fn parse_rpc_syncing(value: &Value) -> Option<bool> {
     }
 }
 
+/// Failure mode of a single JSON-RPC call.
+///
+/// The distinction matters for readiness: a node that returns a well-formed
+/// JSON-RPC *error* (e.g. `-32045` "method disabled" / `-32601` "method not
+/// found") received and answered the request — it is up and serving — whereas
+/// a transport failure (connection refused / timeout / no HTTP response) means
+/// the node is genuinely unreachable. Only the latter should read as "down".
+#[derive(Debug)]
+enum RpcCallError {
+    /// The node never produced a usable HTTP/JSON-RPC response (connection
+    /// refused, timeout, malformed body). The node is unreachable.
+    Transport(String),
+    /// The node answered with a structured JSON-RPC error or a non-success
+    /// HTTP status carrying a body. The node is up; the method just failed.
+    Answered(String),
+}
+
+impl RpcCallError {
+    /// Whether the node produced *any* well-formed answer (result or error).
+    fn answered(&self) -> bool {
+        matches!(self, RpcCallError::Answered(_))
+    }
+
+    fn message(&self) -> String {
+        match self {
+            RpcCallError::Transport(msg) | RpcCallError::Answered(msg) => msg.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for RpcCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
 async fn rpc_call_with_params(
     client: &reqwest::Client,
     endpoint: &str,
     method: &str,
     params: Value,
-) -> Result<Value, String> {
+) -> Result<Value, RpcCallError> {
     let response = timeout(
         PROTOCORE_RPC_TIMEOUT,
         client
@@ -1750,27 +1794,40 @@ async fn rpc_call_with_params(
             .send(),
     )
     .await
-    .map_err(|_| format!("{method} timed out"))?
-    .map_err(|err| format!("{method} transport failed: {err}"))?;
+    .map_err(|_| RpcCallError::Transport(format!("{method} timed out")))?
+    .map_err(|err| RpcCallError::Transport(format!("{method} transport failed: {err}")))?;
 
     let status = response.status();
-    let body = response
-        .json::<Value>()
-        .await
-        .map_err(|err| format!("{method} returned invalid JSON: {err}"))?;
+    let body = response.json::<Value>().await.map_err(|err| {
+        // The connection succeeded but the payload was not parseable JSON —
+        // treat it as a transport-level failure: we have no JSON-RPC answer to
+        // trust, so this must not count as "the node answered".
+        RpcCallError::Transport(format!("{method} returned invalid JSON: {err}"))
+    })?;
 
     if !status.is_success() {
-        return Err(format!("{method} returned HTTP {status}: {body}"));
+        // A non-2xx HTTP status still means the node spoke to us. It answered.
+        return Err(RpcCallError::Answered(format!(
+            "{method} returned HTTP {status}: {body}"
+        )));
     }
     if let Some(error) = body.get("error") {
-        return Err(format!("{method} returned RPC error: {error}"));
+        // A structured JSON-RPC error is an answer: the node received and
+        // processed the request (e.g. the method is disabled on this profile).
+        return Err(RpcCallError::Answered(format!(
+            "{method} returned RPC error: {error}"
+        )));
     }
-    body.get("result")
-        .cloned()
-        .ok_or_else(|| format!("{method} response missing result"))
+    body.get("result").cloned().ok_or_else(|| {
+        RpcCallError::Answered(format!("{method} response missing result"))
+    })
 }
 
-async fn rpc_call(client: &reqwest::Client, endpoint: &str, method: &str) -> Result<Value, String> {
+async fn rpc_call(
+    client: &reqwest::Client,
+    endpoint: &str,
+    method: &str,
+) -> Result<Value, RpcCallError> {
     rpc_call_with_params(client, endpoint, method, json!([])).await
 }
 
@@ -1795,61 +1852,192 @@ async fn fetch_protocore_rpc_probe(endpoint: &str) -> ProtocoreRpcProbe {
     let mut probe = ProtocoreRpcProbe::default();
 
     match rpc_call(&client, endpoint, "web3_clientVersion").await {
-        Ok(value) => match value.as_str() {
-            Some(value) => probe.client_version = Some(value.to_string()),
-            None => {
-                probe.client_version_error =
-                    Some("web3_clientVersion result was not a string".to_string())
+        Ok(value) => {
+            probe.rpc_answered = true;
+            match value.as_str() {
+                Some(value) => probe.client_version = Some(value.to_string()),
+                None => {
+                    probe.client_version_error =
+                        Some("web3_clientVersion result was not a string".to_string())
+                }
             }
-        },
-        Err(err) => probe.client_version_error = Some(err),
+        }
+        Err(err) => {
+            probe.rpc_answered |= err.answered();
+            probe.client_version_error = Some(err.message());
+        }
     }
 
     match rpc_call(&client, endpoint, "eth_chainId").await {
-        Ok(value) => match parse_rpc_u64(&value) {
-            Some(value) => probe.chain_id = Some(value),
-            None => {
-                probe.chain_id_error = Some(format!("eth_chainId result was not numeric: {value}"))
+        Ok(value) => {
+            probe.rpc_answered = true;
+            match parse_rpc_u64(&value) {
+                Some(value) => probe.chain_id = Some(value),
+                None => {
+                    probe.chain_id_error =
+                        Some(format!("eth_chainId result was not numeric: {value}"))
+                }
             }
-        },
-        Err(err) => probe.chain_id_error = Some(err),
+        }
+        Err(err) => {
+            probe.rpc_answered |= err.answered();
+            probe.chain_id_error = Some(err.message());
+        }
     }
 
     match rpc_call(&client, endpoint, "eth_blockNumber").await {
-        Ok(value) => match parse_rpc_u64(&value) {
-            Some(value) => probe.block_number = Some(value),
-            None => {
-                probe.block_number_error =
-                    Some(format!("eth_blockNumber result was not numeric: {value}"))
+        Ok(value) => {
+            probe.rpc_answered = true;
+            match parse_rpc_u64(&value) {
+                Some(value) => probe.block_number = Some(value),
+                None => {
+                    probe.block_number_error =
+                        Some(format!("eth_blockNumber result was not numeric: {value}"))
+                }
             }
-        },
-        Err(err) => probe.block_number_error = Some(err),
+        }
+        Err(err) => {
+            probe.rpc_answered |= err.answered();
+            probe.block_number_error = Some(err.message());
+        }
     }
 
     match rpc_call(&client, endpoint, "eth_syncing").await {
-        Ok(value) => match parse_rpc_syncing(&value) {
-            Some(value) => probe.syncing = Some(value),
-            None => {
-                probe.syncing_error = Some(format!(
-                    "eth_syncing result was not boolean/object: {value}"
-                ))
+        Ok(value) => {
+            probe.rpc_answered = true;
+            match parse_rpc_syncing(&value) {
+                Some(value) => probe.syncing = Some(value),
+                None => {
+                    probe.syncing_error = Some(format!(
+                        "eth_syncing result was not boolean/object: {value}"
+                    ))
+                }
             }
-        },
-        Err(err) => probe.syncing_error = Some(err),
+        }
+        Err(err) => {
+            probe.rpc_answered |= err.answered();
+            probe.syncing_error = Some(err.message());
+        }
     }
 
     match rpc_call(&client, endpoint, "net_listening").await {
-        Ok(value) => match parse_rpc_bool(&value) {
-            Some(value) => probe.listening = Some(value),
-            None => {
-                probe.listening_error =
-                    Some(format!("net_listening result was not boolean: {value}"))
+        Ok(value) => {
+            probe.rpc_answered = true;
+            match parse_rpc_bool(&value) {
+                Some(value) => probe.listening = Some(value),
+                None => {
+                    probe.listening_error =
+                        Some(format!("net_listening result was not boolean: {value}"))
+                }
             }
-        },
-        Err(err) => probe.listening_error = Some(err),
+        }
+        Err(err) => {
+            probe.rpc_answered |= err.answered();
+            probe.listening_error = Some(err.message());
+        }
+    }
+
+    // Profile fallback: an operator node commonly disables the `eth_*` compat
+    // namespace (the canonical "public-read" allow-list keeps it, but operators
+    // routinely narrow their surface), so `eth_chainId` / `eth_blockNumber` /
+    // `eth_syncing` come back as a `-32045`/`-32601` answer with no value. The
+    // node chip reads the same facts from the `lyth_*` namespace, so mirror
+    // that here before classifying. Only attempt this when the node is actually
+    // answering — there is no point re-probing an unreachable endpoint.
+    if probe.rpc_answered {
+        if probe.chain_id.is_none() || probe.block_number.is_none() {
+            match rpc_call(&client, endpoint, "lyth_chainStatus").await {
+                Ok(value) => {
+                    // Shape: { chainId, blockHeight, finalizedHeight } — the
+                    // same object consumed by the node chip (useNodeStatus.ts).
+                    if probe.chain_id.is_none() {
+                        if let Some(chain_id) =
+                            value.get("chainId").and_then(parse_rpc_u64)
+                        {
+                            probe.chain_id = Some(chain_id);
+                            probe.chain_id_error = None;
+                        }
+                    }
+                    if probe.block_number.is_none() {
+                        if let Some(height) = value
+                            .get("blockHeight")
+                            .or_else(|| value.get("finalizedHeight"))
+                            .and_then(parse_rpc_u64)
+                        {
+                            probe.block_number = Some(height);
+                            probe.block_number_error = None;
+                        }
+                    }
+                }
+                Err(err) => {
+                    // `lyth_chainStatus` itself may be disabled. That is fine —
+                    // the `rpc_answered` signal already proves the node is up,
+                    // and the syncing fallback below still runs.
+                    probe.rpc_answered |= err.answered();
+                }
+            }
+        }
+
+        // Mirror the chip's "synced" read when `eth_syncing` was unavailable:
+        // a healthy node is synced when its DAG round trails the committee head
+        // by no more than SYNCED_LAG and has advanced past round 0
+        // (useNodeStatus.ts:136-145).
+        if probe.syncing.is_none() {
+            match rpc_call(&client, endpoint, "lyth_syncStatus").await {
+                Ok(value) => {
+                    if let Some(synced) = sync_status_is_synced(&value) {
+                        probe.syncing = Some(!synced);
+                        probe.syncing_error = None;
+                    }
+                }
+                Err(err) => {
+                    probe.rpc_answered |= err.answered();
+                }
+            }
+        }
     }
 
     probe
+}
+
+/// Within a few rounds of the committee head counts as caught up, mirroring
+/// `SYNCED_LAG` in `useNodeStatus.ts`. The chain advances every few seconds, so
+/// a healthy local round trails the freshest advertised round by a small margin.
+const SYNC_STATUS_SYNCED_LAG: u64 = 5;
+
+/// Decide whether a `lyth_syncStatus` payload reports a caught-up node, using
+/// the same rule the node chip applies (`useNodeStatus.ts` / `SyncStep.tsx`):
+/// synced when `lag <= SYNCED_LAG` and `localRound > 0`. Returns `None` when the
+/// payload carries neither a usable `lag`/round nor an explicit `state` we can
+/// read, so the caller can leave `syncing` unknown rather than guess.
+fn sync_status_is_synced(value: &Value) -> Option<bool> {
+    let local_round = value.get("localRound").and_then(parse_rpc_u64);
+    let peer_max_round = value.get("peerMaxRound").and_then(parse_rpc_u64);
+    let lag = value
+        .get("lag")
+        .and_then(parse_rpc_u64)
+        .or_else(|| match (local_round, peer_max_round) {
+            (Some(local), Some(peer)) => Some(peer.saturating_sub(local)),
+            _ => None,
+        });
+
+    // An explicit "catching"/"syncing" state string is authoritative when present.
+    if let Some(state) = value.get("state").and_then(Value::as_str) {
+        let lowered = state.to_ascii_lowercase();
+        if lowered.contains("catch") || lowered.contains("sync") {
+            return Some(false);
+        }
+    }
+
+    match (lag, local_round) {
+        (Some(lag), Some(local_round)) => {
+            Some(lag <= SYNC_STATUS_SYNCED_LAG && local_round > 0)
+        }
+        // No lag we can compute but the state string didn't flag catching-up:
+        // treat a positive local round as caught up; otherwise unknown.
+        (None, Some(local_round)) if local_round > 0 => Some(true),
+        _ => None,
+    }
 }
 
 fn readiness_check(name: &str, state: &str, message: impl Into<String>) -> TalosReadinessCheck {
@@ -1866,21 +2054,30 @@ fn classify_protocore_readiness(
     rpc: ProtocoreRpcProbe,
 ) -> ProtocoreReadiness {
     let rpc_has_chain = rpc.chain_id.is_some() && rpc.block_number.is_some();
-    let rpc_serving = rpc_has_chain && rpc.syncing != Some(true);
+    // A node that returned ANY well-formed JSON-RPC answer (result OR a
+    // structured error such as -32045 "method disabled") is up and serving the
+    // request — even when every method we asked for is gated off and we could
+    // read no chain data. That is the profile-independent "serving" signal.
+    // The only downgrade we keep is when a *working* method actually reports
+    // syncing=true.
+    let rpc_answered = rpc.rpc_answered;
+    let rpc_serving_chain_data = rpc_has_chain && rpc.syncing != Some(true);
+    let rpc_serving = (rpc_serving_chain_data || rpc_answered) && rpc.syncing != Some(true);
     let p2p_degraded = rpc.listening == Some(false);
 
     if rpc_serving {
         if let Some(service) = service.as_mut() {
-            // The Talos health flag is advisory for ext-protocore: a confirmed
-            // RPC (chain_id + block_number present, not syncing) is authoritative
-            // proof the node is up and serving. Recover the display whether the
-            // health check is still pending (health_unknown) OR has completed with
-            // healthy=false, since a stale/failed Talos health probe must not paint
-            // a serving node "degraded". We deliberately do NOT touch a genuinely
-            // down service: a raw state of failed/stopped/down still wins, because
-            // those mean the process is not running (so the RPC, if it answered,
-            // is some other endpoint and the readiness arms below will treat it as
-            // such).
+            // The Talos health flag is advisory for ext-protocore: a node that
+            // answers RPC is authoritative proof it is up and serving, whether
+            // it returns chain data outright or only proves liveness by
+            // answering a (possibly gated) request. Recover the display whether
+            // the health check is still pending (health_unknown) OR has
+            // completed with healthy=false, since a stale/failed Talos health
+            // probe must not paint a serving node "degraded". We deliberately
+            // do NOT touch a genuinely down service: a raw state of
+            // failed/stopped/down still wins, because those mean the process is
+            // not running (so the RPC, if it answered, is some other endpoint
+            // and the readiness arms below will treat it as such).
             let raw_lower = service.state.to_ascii_lowercase();
             let genuinely_down = raw_lower.contains("fail")
                 || raw_lower.contains("stop")
@@ -1896,14 +2093,16 @@ fn classify_protocore_readiness(
             {
                 service.display_state = "running".to_string();
                 service.severity = "ok".to_string();
+                let rpc_detail = if rpc_serving_chain_data {
+                    "RPC is serving chain data"
+                } else {
+                    "RPC is answering (some namespaces are restricted on this node)"
+                };
                 service.summary = if health_pending {
-                    format!(
-                        "{} is running; Talos health is pending, RPC is serving chain data",
-                        service.id
-                    )
+                    format!("{} is running; Talos health is pending, {rpc_detail}", service.id)
                 } else {
                     format!(
-                        "{} is running; Talos health reports unhealthy but RPC is serving chain data (treating RPC as authoritative)",
+                        "{} is running; Talos health reports unhealthy but {rpc_detail} (treating RPC as authoritative)",
                         service.id
                     )
                 };
@@ -1992,7 +2191,7 @@ fn classify_protocore_readiness(
             "ext-protocore is waiting for service config, secrets, or first-boot enrollment"
                 .to_string(),
         ),
-        _ if rpc_serving && p2p_degraded => (
+        _ if rpc_serving_chain_data && p2p_degraded => (
             "serving-rpc",
             "warn",
             format!(
@@ -2001,7 +2200,7 @@ fn classify_protocore_readiness(
                 rpc.block_number.unwrap_or_default()
             ),
         ),
-        _ if rpc_serving => (
+        _ if rpc_serving_chain_data => (
             "serving-rpc",
             "ok",
             format!(
@@ -2009,6 +2208,15 @@ fn classify_protocore_readiness(
                 rpc.chain_id.unwrap_or_default(),
                 rpc.block_number.unwrap_or_default()
             ),
+        ),
+        // The node answered RPC but the methods we read chain data from are
+        // gated off on this profile. Answering is authoritative proof it is up
+        // and serving, so report serving rather than the raw Talos boot state.
+        _ if rpc_serving => (
+            "serving-rpc",
+            "ok",
+            "Protocore RPC is serving — chain-data RPC namespaces are restricted on this node"
+                .to_string(),
         ),
         _ if rpc.syncing == Some(true) => (
             "syncing",
@@ -2048,7 +2256,9 @@ pub async fn rpc_runtime_provenance(rpc_endpoint: String) -> Result<Value, Strin
         .timeout(PROTOCORE_RPC_TIMEOUT)
         .build()
         .map_err(|err| format!("failed to build RPC client: {err}"))?;
-    rpc_call(&client, &rpc_endpoint, "lyth_runtimeProvenance").await
+    rpc_call(&client, &rpc_endpoint, "lyth_runtimeProvenance")
+        .await
+        .map_err(|err| err.message())
 }
 
 #[tauri::command]
@@ -2079,7 +2289,9 @@ pub async fn rpc_call_json(
         .timeout(PROTOCORE_RPC_TIMEOUT)
         .build()
         .map_err(|err| format!("failed to build RPC client: {err}"))?;
-    rpc_call_with_params(&client, &rpc_endpoint, method, params).await
+    rpc_call_with_params(&client, &rpc_endpoint, method, params)
+        .await
+        .map_err(|err| err.message())
 }
 
 /// General JSON-RPC read proxy for the in-app SDK transport.
@@ -3216,7 +3428,7 @@ mod tests {
         enforce_privileged_control_plane, format_fingerprint, node_address,
         normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64, parse_service_action,
         parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
-        service_allows_offline_backup, summarize_service_state,
+        service_allows_offline_backup, summarize_service_state, sync_status_is_synced,
         talos_logs_request,
         validate_service_name, validate_upgrade_image, ProtocoreRpcProbe, TalosCertificateInfo,
         TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
@@ -3579,6 +3791,128 @@ mod tests {
         );
         assert_eq!(readiness.display_state, "failed");
         assert_eq!(readiness.severity, "err");
+    }
+
+    #[test]
+    fn protocore_readiness_serves_when_node_answers_with_all_namespaces_restricted() {
+        // Regression for the "STAGE Booting / READY False on a healthy node"
+        // report: an operator gates the eth_* (and lyth_chainStatus/syncStatus)
+        // read namespaces off, so every chain-data probe came back as a
+        // structured JSON-RPC error (-32045 "method disabled"). The node still
+        // ANSWERED every request, so it is up and serving and must classify as
+        // serving-rpc/ok -- NOT fall back to the raw Talos boot state.
+        let mut service = service("waiting-for-config", "warn");
+        service.state = "Running".to_string();
+        service.healthy = Some(false);
+        service.health_unknown = Some(true);
+        service.summary =
+            "ext-protocore is waiting for service config (raw state: Running)".to_string();
+
+        let readiness = classify_protocore_readiness(
+            Some(service),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                // The node answered, but every value-bearing method was gated.
+                rpc_answered: true,
+                chain_id_error: Some(
+                    "eth_chainId returned RPC error: method disabled".to_string(),
+                ),
+                block_number_error: Some(
+                    "eth_blockNumber returned RPC error: method disabled".to_string(),
+                ),
+                syncing_error: Some(
+                    "eth_syncing returned RPC error: method disabled".to_string(),
+                ),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(readiness.display_state, "serving-rpc");
+        assert_eq!(readiness.severity, "ok");
+        assert!(readiness.chain_id.is_none());
+        assert!(readiness.block_number.is_none());
+        // The Talos boot-state display must be recovered to running, not left
+        // as the "waiting-for-config" that produced "Booting".
+        assert_eq!(
+            readiness
+                .service
+                .as_ref()
+                .map(|service| service.display_state.as_str()),
+            Some("running")
+        );
+        assert_eq!(
+            readiness
+                .service
+                .as_ref()
+                .map(|service| service.severity.as_str()),
+            Some("ok")
+        );
+    }
+
+    #[test]
+    fn protocore_readiness_booting_only_when_node_never_answers() {
+        // Guard the inverse: a node that answers NOTHING (pure transport
+        // failure, rpc_answered=false) and whose Talos state is the first-boot
+        // "waiting-for-config" must still read as not-yet-serving.
+        let readiness = classify_protocore_readiness(
+            Some(service("waiting-for-config", "warn")),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                rpc_answered: false,
+                chain_id_error: Some("eth_chainId transport failed".to_string()),
+                block_number_error: Some("eth_blockNumber transport failed".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(readiness.display_state, "waiting-for-config");
+        assert_ne!(readiness.display_state, "serving-rpc");
+    }
+
+    #[test]
+    fn protocore_readiness_downgrades_to_syncing_even_when_answered() {
+        // An answering node whose working sync probe reports syncing=true must
+        // still surface as syncing -- rpc_answered does not paper over a real
+        // "catching up" signal.
+        let readiness = classify_protocore_readiness(
+            Some(service("running", "ok")),
+            "http://127.0.0.1:8545".to_string(),
+            ProtocoreRpcProbe {
+                rpc_answered: true,
+                chain_id_error: Some("eth_chainId returned RPC error: method disabled".to_string()),
+                block_number_error: Some(
+                    "eth_blockNumber returned RPC error: method disabled".to_string(),
+                ),
+                syncing: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(readiness.display_state, "syncing");
+    }
+
+    #[test]
+    fn sync_status_synced_rule_matches_node_chip() {
+        // Caught up: small lag, positive local round.
+        assert_eq!(
+            sync_status_is_synced(&json!({ "localRound": 1200, "lag": 2 })),
+            Some(true)
+        );
+        // Behind: lag past the threshold.
+        assert_eq!(
+            sync_status_is_synced(&json!({ "localRound": 1200, "lag": 40 })),
+            Some(false)
+        );
+        // Round 0 with peers ahead is not synced.
+        assert_eq!(
+            sync_status_is_synced(&json!({ "localRound": 0, "peerMaxRound": 1200 })),
+            Some(false)
+        );
+        // Explicit catching-up state wins.
+        assert_eq!(
+            sync_status_is_synced(&json!({ "localRound": 1200, "state": "catching" })),
+            Some(false)
+        );
+        // No usable signal -> unknown.
+        assert_eq!(sync_status_is_synced(&json!({})), None);
     }
 
     #[test]
