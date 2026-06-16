@@ -1166,6 +1166,7 @@ kbd {
 
 /* ============ VIEW SHELLS ============ */
 .view {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 16px;
