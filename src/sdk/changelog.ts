@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.43",
+    date: "2026-06-16",
+    highlights: [
+      "Operations and Settings no longer open to a blank page. A background layer was painting over views whose content didn't sit in a card, so those pages showed nothing — both views now render correctly.",
+    ],
+  },
+  {
     version: "0.0.42",
     date: "2026-06-15",
     highlights: [

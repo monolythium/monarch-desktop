@@ -4,6 +4,19 @@ All notable changes to Monarch Desktop are recorded here. This project adheres
 to semantic-ish versioning while pre-1.0 (patch bumps for fixes and small
 features, minor bumps for larger surface changes).
 
+## 0.0.43 — 2026-06-16
+
+### Fixed
+
+- **The Operations and Settings views no longer render blank.** The page
+  background (`.bg`) was `position: fixed` with `z-index: 0`, so any static
+  descendant painted underneath it. `/home` was unaffected because its content
+  lives inside a `.card` (`position: relative`), but Operations and Settings
+  rendered straight into static containers and so sat below the background and
+  showed nothing. Setting `position: relative` on `.view` re-establishes the
+  stacking context for every view, so all pages paint above the background
+  again. (#6)
+
 ## 0.0.42 — 2026-06-15
 
 ### Fixed
