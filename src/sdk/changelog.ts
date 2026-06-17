@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.49",
+    date: "2026-06-17",
+    highlights: [
+      "Node status: ext-protocore (and any service with no Talos health check) no longer shows a false \"degraded\". With no health probe defined, Talos reports the health as \"unknown\" with a default-false flag, which Monarch was reading as unhealthy. It now shows the real service state (e.g. \"running\") and only says \"degraded\" when Talos actually reports a failing health check.",
+    ],
+  },
+  {
     version: "0.0.48",
     date: "2026-06-17",
     highlights: [

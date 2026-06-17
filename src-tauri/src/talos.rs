@@ -1171,16 +1171,21 @@ fn summarize_service_state(
     let lower = state.to_ascii_lowercase();
     let display = if lower.contains("fail") {
         "failed"
-    } else if matches!(healthy, Some(false)) {
+    } else if matches!(healthy, Some(false)) && !matches!(health_unknown, Some(true)) {
+        // "degraded" only when Talos KNOWS the service is unhealthy. A service
+        // with no health check declared in its Talos spec — like the protocore
+        // extension service — reports health.unknown=true with a default
+        // healthy=false; that is NOT a degraded verdict, so fall through to the
+        // run/state-based label (a Running, serving node must read "running").
         "degraded"
     } else if lower.contains("restart") || lower.contains("start") || lower.contains("pre") {
         "restarting"
     } else if lower.contains("stop") || lower.contains("down") {
         "stopped"
-    } else if matches!(health_unknown, Some(true)) || lower.contains("wait") {
-        "waiting-for-config"
     } else if lower.contains("run") || matches!(healthy, Some(true)) {
         "running"
+    } else if matches!(health_unknown, Some(true)) || lower.contains("wait") {
+        "waiting-for-config"
     } else {
         "unknown"
     };
@@ -4559,6 +4564,32 @@ mod tests {
         assert_eq!(req.id, "ext-protocore");
         assert!(req.follow);
         assert_eq!(req.tail_lines, 128);
+    }
+
+    #[test]
+    fn no_health_check_running_service_is_not_degraded() {
+        // The protocore extension declares no Talos health check, so Talos
+        // reports health.unknown=true with a default healthy=false. A Running,
+        // serving node must read "running" — never the alarming "degraded".
+        let (display, severity, _) =
+            summarize_service_state("ext-protocore", "Running", Some(false), Some(true), &None);
+        assert_eq!(display, "running");
+        assert_eq!(severity, "ok");
+    }
+
+    #[test]
+    fn known_failing_health_still_reads_degraded() {
+        // A service WITH a health check that genuinely fails
+        // (health.unknown=false, healthy=false) still surfaces as degraded.
+        let (display, severity, _) = summarize_service_state(
+            "ext-protocore",
+            "Running",
+            Some(false),
+            Some(false),
+            &Some("rpc probe failed".to_string()),
+        );
+        assert_eq!(display, "degraded");
+        assert_eq!(severity, "err");
     }
 
     #[test]
