@@ -1097,7 +1097,7 @@ mod tests {
     /// generator only checks shape (the front end validates the checksum).
     const TEST_MNEMONIC: &str = "abandon ability able about above absent absorb \
 abstract absurd abuse access accident account accuse achieve acid acoustic \
-acquire across act action actor actress";
+acquire across act action actor actress address";
 
     fn recovery() -> FullNodeConfig {
         generate_recovery_node_config(TEST_HOST, TEST_DISK, TEST_MNEMONIC)

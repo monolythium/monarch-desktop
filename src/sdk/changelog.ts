@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.45",
+    date: "2026-06-17",
+    highlights: [
+      "Recover a node without losing its operator seat: a new \"Re-provision with existing keys\" flow re-installs a node from your operator mnemonic, re-deriving the same ML-DSA signing key so the bonded seat carries over. Use this — not a wipe — when a node needs a clean re-provision.",
+      "Clearer, safer copy on \"Wipe node data & re-provision\": wiping does NOT preserve keys — it destroys the operator key and the bonded seat. The warning now says so plainly.",
+    ],
+  },
+  {
     version: "0.0.43",
     date: "2026-06-16",
     highlights: [

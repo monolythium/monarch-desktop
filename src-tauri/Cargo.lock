@@ -3675,7 +3675,7 @@ dependencies = [
 
 [[package]]
 name = "monarch-desktop"
-version = "0.0.44"
+version = "0.0.45"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
