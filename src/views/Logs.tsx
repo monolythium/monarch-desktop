@@ -14,12 +14,14 @@ import {
   MONARCH_OS_TARGET,
   inTauri,
   talosLogDiskUsage,
+  type LogEntry,
   type LogTarget,
   type StreamStatus,
   type TalosLogDiskUsage,
   useIndexerStatus,
   useLogStream,
 } from "../sdk";
+import { freezeView, newSinceFreeze } from "../sdk/freezeView";
 import { NodeStatusHeader } from "../components/NodeStatusHeader";
 import { useOps } from "../ops/OpsContext";
 import { OP_CATALOG } from "../ops/catalog";
@@ -123,6 +125,10 @@ export function Logs() {
   const [cursor, setCursor] = useState(0);
   const [target, setTarget] = useState<LogTarget>(MONARCH_OS_TARGET);
   const [pinned, setPinned] = useState<string[]>(() => readPins());
+  // Freeze (pause) the live tail: when non-null we snapshot the `lines` array
+  // and render that snapshot so the operator can read fast-scrolling logs. The
+  // stream keeps running in the background (useLogStream is NOT torn down).
+  const [frozen, setFrozen] = useState<LogEntry[] | null>(null);
   const indexer = useIndexerStatus();
   const { lines, status } = useLogStream(query, target);
   const ops = useOps();
@@ -174,9 +180,15 @@ export function Logs() {
   // `.at(0)` keeps `noUncheckedIndexedAccess` happy).
   const largestLogFile = diskUsage?.files.at(0) ?? null;
 
+  // While frozen the view renders the snapshot; the filter (regex + pills)
+  // still applies to it. `newSinceFreeze` counts how many live lines have
+  // arrived since freezing so the banner can show the backlog.
+  const source = freezeView(lines, frozen);
+  const bufferedSinceFreeze = newSinceFreeze(lines, frozen);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return lines.filter((l) => {
+    return source.filter((l) => {
       if (activeLevel !== "all" && l.lvl.toLowerCase() !== activeLevel)
         return false;
       if (!q) return true;
@@ -192,9 +204,16 @@ export function Logs() {
         );
       }
     });
-  }, [query, activeLevel, lines]);
+  }, [query, activeLevel, source]);
 
-  // Vim keys j/k for navigation, / for focus
+  // Freeze: snapshot the current live `lines` (the stream keeps running).
+  // Resume: drop the snapshot and re-attach to the live tail (the auto-scroll
+  // effect below jumps back to the latest once `frozen` clears).
+  const toggleFreeze = useCallback(() => {
+    setFrozen((prev) => (prev === null ? lines.slice() : null));
+  }, [lines]);
+
+  // Vim keys j/k for navigation, / for focus, f to freeze/resume the tail
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement | null)?.tagName;
@@ -202,6 +221,9 @@ export function Logs() {
       if (e.key === "/") {
         e.preventDefault();
         inputRef.current?.focus();
+      } else if (e.key === "f") {
+        e.preventDefault();
+        toggleFreeze();
       } else if (e.key === "j") {
         setCursor((c) => Math.min(c + 1, Math.max(0, filtered.length - 1)));
       } else if (e.key === "k") {
@@ -217,7 +239,7 @@ export function Logs() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cursor, filtered]);
+  }, [cursor, filtered, toggleFreeze]);
 
   // SDK types: currentHeight = bigint, latestHeight = bigint | undefined.
   const indexerHalo = (() => {
@@ -270,6 +292,15 @@ export function Logs() {
   useEffect(() => {
     localStorage.setItem(PIN_STORE_KEY, JSON.stringify(pinned));
   }, [pinned]);
+
+  // Auto-scroll to the latest line as the live tail grows. No-op while frozen
+  // so the operator's read position holds; on Resume (`frozen` clears) the
+  // dependency change fires this once more and jumps back to the bottom.
+  useEffect(() => {
+    if (frozen !== null) return;
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [filtered, frozen]);
 
   useEffect(() => {
     const onFilter = (e: Event) => {
@@ -378,6 +409,31 @@ export function Logs() {
             );
           })}
         </div>
+        <button
+          type="button"
+          onClick={toggleFreeze}
+          aria-pressed={frozen !== null}
+          title={
+            frozen !== null
+              ? "Resume the live tail (f) — jumps back to the latest line"
+              : "Freeze the live tail (f) so you can read — the stream keeps running in the background"
+          }
+          style={{
+            padding: "4px 12px",
+            borderRadius: 999,
+            fontFamily: "var(--f-mono)",
+            fontSize: 10.5,
+            background: frozen !== null ? "rgba(242,180,65,0.14)" : "transparent",
+            color: frozen !== null ? "var(--gold)" : "var(--fg-400)",
+            border: `1px solid ${frozen !== null ? "var(--gold)" : "var(--fg-500)"}`,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {frozen !== null ? "Resume" : "Freeze"}
+        </button>
         <label
           style={{
             display: "flex",
@@ -524,6 +580,36 @@ export function Logs() {
               <span>{l.msg}</span>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {frozen !== null ? (
+        <div
+          className="card"
+          style={{
+            padding: "8px 18px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            borderColor: "var(--gold)",
+          }}
+        >
+          <span className="halo halo--warn" title="The live tail is paused; the stream keeps running in the background.">
+            <span className="dot" /> Frozen
+          </span>
+          <span
+            className="mono"
+            style={{ fontSize: 11.5, color: "var(--fg-300)" }}
+            aria-live="polite"
+          >
+            {bufferedSinceFreeze === 1
+              ? "1 new line buffered"
+              : `${bufferedSinceFreeze} new lines buffered`}
+          </span>
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn btn--ghost btn--sm" onClick={toggleFreeze}>
+            Resume
+          </button>
         </div>
       ) : null}
 

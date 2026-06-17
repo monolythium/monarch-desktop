@@ -25,6 +25,7 @@ const SIDEBAR_PATHS = new Set([
   "/cluster",
   "/operations",
   "/services",
+  "/hardware",
   "/metrics",
   "/logs",
   "/settings",
@@ -32,7 +33,13 @@ const SIDEBAR_PATHS = new Set([
 
 function sidebarGroup(path: string): SidebarGroup {
   if (path === "/setup" || path === "/home") return "Start";
-  if (path === "/services" || path === "/metrics" || path === "/logs") return "Node";
+  if (
+    path === "/services" ||
+    path === "/hardware" ||
+    path === "/metrics" ||
+    path === "/logs"
+  )
+    return "Node";
   if (path === "/settings") return "System";
   return "Operate";
 }

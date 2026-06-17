@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.50",
+    date: "2026-06-17",
+    highlights: [
+      "Logs: a Freeze button (and the `f` key) pauses the live tail so you can read fast-scrolling logs; it shows how many new lines arrived while frozen, and Resume jumps back to the latest.",
+      "Sidebar: the Hardware view (live disk / CPU / memory monitoring) is now in the sidebar under Node — previously it was only reachable via Cmd+K or URL.",
+    ],
+  },
+  {
     version: "0.0.49",
     date: "2026-06-17",
     highlights: [
