@@ -59,6 +59,10 @@ export function commandFor(op: OpRequest): string | null {
     // (`OpsContext.runReprovisionFlow`); never shell-fallback a destructive
     // partition wipe.
     case "operator-reprovision":
+    // Re-provision with existing keys is a dedicated Talos recovery flow
+    // (`OpsContext.runRecoverKeysFlow`); never shell-fallback a wipe that
+    // re-stages the operator mnemonic.
+    case "operator-recover-keys":
     // Bootstrap is a dedicated Talos etcd-bootstrap path
     // (`OpsContext.runBootstrapFlow`).
     case "operator-bootstrap":

@@ -22,6 +22,7 @@ import {
   useNodeStatus,
 } from "../sdk";
 import { MONARCH_OS_ISO_URL } from "../sdk/onboarding";
+import { RecoveryMenu } from "../components/recovery/RecoveryMenu";
 
 type StepStatus = "checking" | "done" | "todo" | "unknown";
 
@@ -195,6 +196,10 @@ export function Install() {
           connect Monarch to an already-provisioned Monolythium operator node · provisioning is done out-of-band with the signed Monarch OS image + talosctl
         </p>
       </header>
+
+      {status.quarantineReason ? (
+        <RecoveryMenu quarantineReason={status.quarantineReason} />
+      ) : null}
 
       <div className="card card--padded" style={{ textAlign: "center", padding: 40 }}>
         <div className="cap">node pairing</div>

@@ -68,7 +68,24 @@ pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 /// `:8545` never serves. Pinned to the protocore release the chain runs; bump
 /// alongside the OS/protocore version.
 pub const MONARCH_OS_INSTALLER_IMAGE: &str =
-    "ghcr.io/monolythium/monarch-os-installer:v0.1.59-testnet";
+    "ghcr.io/monolythium/monarch-os-installer:v0.1.60-testnet";
+
+/// On-node path the operator recovery mnemonic is staged to via `machine.files`
+/// (mode `0600`). The protocore entrypoint reads it through
+/// `PROTOCORE_OPERATOR_MNEMONIC_FILE` and, on the post-wipe first boot,
+/// re-derives the SAME ML-DSA-65 consensus key with
+/// `registry gen-operator-keys --from-mnemonic <file>` — so a quarantined /
+/// forked operator recovers KEEPING their bonded seat instead of minting a
+/// fresh random orphaned key. The entrypoint securely deletes the file after
+/// keygen (success and failure).
+const RECOVERY_MNEMONIC_PATH: &str = "/var/lib/protocore/recovery/operator-mnemonic.txt";
+
+/// Env the entrypoint reads the recovery-mnemonic FILE PATH from. This is a
+/// path (allowed) — the inline `PROTOCORE_OPERATOR_MNEMONIC` stays forbidden in
+/// the apply-path secret-env reject scan. ⚠ Never add this to
+/// [`CLEARED_FILE_ENVS`]: that would clear the path with an empty value and the
+/// entrypoint would skip the re-derive, orphaning the seat.
+const RECOVERY_MNEMONIC_ENV: &str = "PROTOCORE_OPERATOR_MNEMONIC_FILE";
 
 /// CA validity mirroring `talosctl gen secrets` (10 years).
 const CA_VALIDITY_DAYS: i64 = 3650;
@@ -160,6 +177,31 @@ fn validate_disk(disk: &str) -> Result<String, String> {
         return Err(format!("invalid install disk \"{disk}\""));
     }
     Ok(disk.to_string())
+}
+
+/// Validate the recovery mnemonic SHAPE before it is spliced into the machine
+/// config. A BIP-39 / PQM-1 operator mnemonic is exactly 24 lowercase
+/// space-separated words; the front end has already validated the checksum via
+/// `validateOperatorMnemonic`, so this is a defence-in-depth guard that the
+/// value can't smuggle YAML structure (newlines, `:`, `-`, `#`, quotes) into
+/// the `machine.files` content or break the config scan. The trimmed,
+/// single-space-joined form is returned.
+fn validate_recovery_mnemonic(mnemonic: &str) -> Result<String, String> {
+    let words: Vec<&str> = mnemonic.split_whitespace().collect();
+    if words.len() != 24 {
+        return Err(format!(
+            "invalid recovery mnemonic — expected 24 words, got {}",
+            words.len()
+        ));
+    }
+    for word in &words {
+        if word.is_empty() || !word.chars().all(|c| c.is_ascii_lowercase()) {
+            return Err(
+                "invalid recovery mnemonic — words must be lowercase a-z only".to_string(),
+            );
+        }
+    }
+    Ok(words.join(" "))
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +416,39 @@ fn generate_admin_client(
 /// it take a few seconds — run it on a blocking thread (the Tauri command
 /// does). Every call mints a fresh, unique identity.
 pub fn generate_full_node_config(host: &str, disk: &str) -> Result<FullNodeConfig, String> {
+    generate_node_config(host, disk, None)
+}
+
+/// Generate a RECOVERY provisioning bundle: identical to
+/// [`generate_full_node_config`] but the machine config additionally stages the
+/// operator's 24-word recovery mnemonic to [`RECOVERY_MNEMONIC_PATH`] (mode
+/// `0600`) via `machine.files` and points the entrypoint at it with
+/// [`RECOVERY_MNEMONIC_ENV`]. On the post-wipe first boot the entrypoint
+/// re-derives the SAME ML-DSA-65 consensus key from the mnemonic, so a
+/// quarantined / forked operator recovers KEEPING their bonded seat. The
+/// entrypoint securely deletes the staged file after keygen.
+///
+/// ⚠ The plaintext mnemonic lives in the (persisted) machine config + the
+/// `0600` file until first-boot keygen deletes it — see the recovery plan's
+/// security flags. The recovery flow should follow up by removing the
+/// `machine.files` entry after a successful re-sync.
+pub fn generate_recovery_node_config(
+    host: &str,
+    disk: &str,
+    mnemonic: &str,
+) -> Result<FullNodeConfig, String> {
+    let mnemonic = validate_recovery_mnemonic(mnemonic)?;
+    generate_node_config(host, disk, Some(&mnemonic))
+}
+
+/// Shared generation for both the fresh-provision and recovery bundles. When
+/// `recovery_mnemonic` is `Some`, the caller has ALREADY shape-validated it
+/// (see [`validate_recovery_mnemonic`]).
+fn generate_node_config(
+    host: &str,
+    disk: &str,
+    recovery_mnemonic: Option<&str>,
+) -> Result<FullNodeConfig, String> {
     let host = validate_host(host)?;
     let disk = validate_disk(disk)?;
 
@@ -409,6 +484,7 @@ pub fn generate_full_node_config(host: &str, disk: &str) -> Result<FullNodeConfi
         service_account_key: &service_account_key,
         etcd_ca_crt: &etcd_ca.crt_b64,
         etcd_ca_key: &etcd_ca.key_b64,
+        recovery_mnemonic,
     });
 
     let talosconfig_yaml = format!(
@@ -455,6 +531,13 @@ struct RenderInputs<'a> {
     service_account_key: &'a str,
     etcd_ca_crt: &'a str,
     etcd_ca_key: &'a str,
+    /// When `Some`, render the recovery additions: a `machine.files` entry
+    /// staging the (already shape-validated) operator mnemonic to
+    /// [`RECOVERY_MNEMONIC_PATH`] at mode `0600`, plus the
+    /// [`RECOVERY_MNEMONIC_ENV`] entry in the protocore extension env pointing
+    /// the entrypoint at that file. `None` for the standard fresh-provision
+    /// path.
+    recovery_mnemonic: Option<&'a str>,
 }
 
 /// Render the 3-document YAML. The static lines mirror the talosctl v1.13.0
@@ -465,6 +548,26 @@ fn render_config_yaml(i: &RenderInputs<'_>) -> String {
         .iter()
         .map(|env| format!("    - {env}=\n"))
         .collect::<String>();
+
+    // Recovery additions, only when a (shape-validated) mnemonic is supplied:
+    //   * a `machine.files` entry staging the mnemonic to the 0600 recovery
+    //     path (rendered under `machine:`, after `nodeLabels`),
+    //   * the `PROTOCORE_OPERATOR_MNEMONIC_FILE` env pointing the entrypoint at
+    //     that file (rendered into the protocore extension env). NOT cleared —
+    //     it must carry the real path through the merge.
+    // The mnemonic is 24 lowercase words by construction, so a plain YAML
+    // scalar is safe (no newline, `:`, `#`, or quote can appear in it).
+    let (recovery_files, recovery_env) = match i.recovery_mnemonic {
+        Some(mnemonic) => (
+            format!(
+                "    files:\n        - content: {mnemonic}\n          \
+                 permissions: 0o600\n          path: {RECOVERY_MNEMONIC_PATH}\n          \
+                 op: create\n",
+            ),
+            format!("    - {RECOVERY_MNEMONIC_ENV}={RECOVERY_MNEMONIC_PATH}\n"),
+        ),
+        None => (String::new(), String::new()),
+    };
 
     format!(
         "version: v1alpha1
@@ -497,7 +600,7 @@ machine:
             forwardKubeDNSToHost: true
     nodeLabels:
         node.kubernetes.io/exclude-from-external-load-balancers: \"\"
-cluster:
+{recovery_files}cluster:
     id: {cluster_id}
     secret: {cluster_secret}
     controlPlane:
@@ -578,7 +681,7 @@ environment:
     - PROTOCORE_DISCOVERY=hybrid
     - PROTOCORE_CHAIN_ID={PROVISION_CHAIN_ID}
     - PROTOCORE_REGISTRY_NETWORK={PROVISION_REGISTRY_NETWORK}
-",
+{recovery_env}",
         machine_token = i.machine_token,
         machine_ca_crt = i.machine_ca_crt,
         machine_ca_key = i.machine_ca_key,
@@ -596,6 +699,8 @@ environment:
         etcd_ca_crt = i.etcd_ca_crt,
         etcd_ca_key = i.etcd_ca_key,
         file_envs = file_envs,
+        recovery_files = recovery_files,
+        recovery_env = recovery_env,
     )
 }
 
@@ -613,6 +718,24 @@ pub async fn talos_generate_full_node_config(
     tokio::task::spawn_blocking(move || generate_full_node_config(&host, &disk))
         .await
         .map_err(|e| format!("config generation task failed: {e}"))?
+}
+
+/// Generate a RECOVERY provisioning bundle for one node: the same fresh
+/// machine config + talosconfig as [`talos_generate_full_node_config`], plus a
+/// `machine.files` entry staging the operator's 24-word recovery mnemonic to
+/// the `0600` recovery path and the `PROTOCORE_OPERATOR_MNEMONIC_FILE` env so
+/// the post-wipe first boot re-derives the SAME consensus key (seat-preserving
+/// "Re-provision with existing keys"). Runs the CPU-heavy generation on a
+/// blocking thread. The mnemonic is shape-validated before it is rendered.
+#[tauri::command]
+pub async fn talos_generate_recovery_node_config(
+    host: String,
+    disk: String,
+    mnemonic: String,
+) -> Result<FullNodeConfig, String> {
+    tokio::task::spawn_blocking(move || generate_recovery_node_config(&host, &disk, &mnemonic))
+        .await
+        .map_err(|e| format!("recovery config generation task failed: {e}"))?
 }
 
 #[cfg(test)]
@@ -966,6 +1089,101 @@ mod tests {
             assert!(
                 generate_full_node_config(TEST_HOST, disk).is_err(),
                 "disk {disk:?} must be rejected"
+            );
+        }
+    }
+
+    /// A valid-shape 24-word lowercase test mnemonic. Not a real seed — the
+    /// generator only checks shape (the front end validates the checksum).
+    const TEST_MNEMONIC: &str = "abandon ability able about above absent absorb \
+abstract absurd abuse access accident account accuse achieve acid acoustic \
+acquire across act action actor actress";
+
+    fn recovery() -> FullNodeConfig {
+        generate_recovery_node_config(TEST_HOST, TEST_DISK, TEST_MNEMONIC)
+            .expect("recovery generation succeeds")
+    }
+
+    #[test]
+    fn recovery_config_stages_mnemonic_file_and_env() {
+        let yaml = recovery().config_yaml;
+        // machine.files entry writing the mnemonic to the 0600 recovery path.
+        assert!(
+            yaml.contains(&format!("    files:\n        - content: {TEST_MNEMONIC}\n")),
+            "recovery config must stage the mnemonic via machine.files"
+        );
+        assert!(
+            yaml.contains(&format!("          path: {RECOVERY_MNEMONIC_PATH}\n")),
+            "machine.files target must be the recovery path"
+        );
+        assert!(yaml.contains("          permissions: 0o600\n"), "file must be 0600");
+        assert!(yaml.contains("          op: create\n"), "file op must be create");
+        // The env points the entrypoint at the file (NOT cleared to empty).
+        assert!(
+            yaml.contains(&format!(
+                "    - {RECOVERY_MNEMONIC_ENV}={RECOVERY_MNEMONIC_PATH}\n"
+            )),
+            "recovery env must carry the real file path"
+        );
+        assert!(
+            !yaml.contains(&format!("    - {RECOVERY_MNEMONIC_ENV}=\n")),
+            "recovery env must never be blanked (would orphan the seat)"
+        );
+        // Defence-in-depth: the env must NOT be in the cleared-file list.
+        assert!(!CLEARED_FILE_ENVS.contains(&RECOVERY_MNEMONIC_ENV));
+    }
+
+    #[test]
+    fn recovery_config_is_otherwise_a_full_node_config() {
+        let yaml = recovery().config_yaml;
+        // Same three documents + full-node env as the fresh-provision path.
+        assert_eq!(yaml.split("\n---\n").count(), 3, "machine + hostname + extension");
+        for line in [
+            "    - PROTOCORE_NODE_MODE=full\n",
+            "    - PROTOCORE_REQUIRE_ENROLLMENT=false\n",
+            "    - PROTOCORE_CHAIN_ID=69420\n",
+        ] {
+            assert!(yaml.contains(line), "missing full-node env line {line:?}");
+        }
+        assert!(yaml.contains(&format!("        image: {MONARCH_OS_INSTALLER_IMAGE}\n")));
+    }
+
+    #[test]
+    fn fresh_config_has_no_recovery_additions() {
+        let yaml = &generated().config_yaml;
+        assert!(!yaml.contains("    files:\n"), "fresh config has no machine.files");
+        assert!(
+            !yaml.contains(RECOVERY_MNEMONIC_ENV),
+            "fresh config never carries the recovery env"
+        );
+    }
+
+    #[test]
+    fn rejects_bad_recovery_mnemonics() {
+        for bad in [
+            "",
+            "abandon",
+            // 23 words.
+            "abandon ability able about above absent absorb abstract absurd \
+abuse access accident account accuse achieve acid acoustic acquire across \
+act action actor actress",
+            // 25 words.
+            "abandon ability able about above absent absorb abstract absurd \
+abuse access accident account accuse achieve acid acoustic acquire across \
+act action actor actress acid extra",
+            // Uppercase smuggling YAML-relevant material would also be rejected
+            // by the lowercase-only rule.
+            "Abandon ability able about above absent absorb abstract absurd \
+abuse access accident account accuse achieve acid acoustic acquire across \
+act action actor actress",
+            // Embedded YAML break.
+            "abandon\nfiles: ability able about above absent absorb abstract \
+absurd abuse access accident account accuse achieve acid acoustic acquire \
+across act action actor actress",
+        ] {
+            assert!(
+                generate_recovery_node_config(TEST_HOST, TEST_DISK, bad).is_err(),
+                "mnemonic {bad:?} must be rejected"
             );
         }
     }

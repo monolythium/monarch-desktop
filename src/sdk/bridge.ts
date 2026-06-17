@@ -708,6 +708,34 @@ export async function talosGenerateFullNodeConfig(
 }
 
 /**
+ * Generate a RECOVERY provisioning bundle for one node — identical to
+ * `talosGenerateFullNodeConfig` but the machine config additionally stages the
+ * operator's 24-word recovery mnemonic to the `0600`
+ * `/var/lib/protocore/recovery/operator-mnemonic.txt` (via `machine.files`) and
+ * sets `PROTOCORE_OPERATOR_MNEMONIC_FILE`. On the post-wipe first boot the
+ * entrypoint re-derives the SAME ML-DSA-65 consensus key from the mnemonic, so
+ * a quarantined / forked operator recovers KEEPING their bonded seat. Pass the
+ * keychain mnemonic (`keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic)`, already
+ * `validateOperatorMnemonic`-checked); the Rust side shape-validates it again.
+ * Each call mints a fresh identity — call once per (host, disk) and reuse the
+ * bundle for the apply.
+ */
+export async function talosGenerateRecoveryNodeConfig(
+  host: string,
+  disk: string,
+  mnemonic: string,
+): Promise<FullNodeConfig> {
+  if (!inTauri()) {
+    throw new Error("talos_generate_recovery_node_config unavailable — running outside Tauri");
+  }
+  return await invoke<FullNodeConfig>("talos_generate_recovery_node_config", {
+    host,
+    disk,
+    mnemonic,
+  });
+}
+
+/**
  * One-time etcd bootstrap for a freshly provisioned single controlplane node —
  * the in-app `talosctl bootstrap`. Without it the install-path node wedges in
  * "Booting" waiting for etcd and ext-protocore never starts (so :8545 never

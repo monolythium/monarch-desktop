@@ -2079,11 +2079,38 @@ fn readiness_check(name: &str, state: &str, message: impl Into<String>) -> Talos
     }
 }
 
+/// Detect the operator-quarantine signal in a probed RPC error.
+///
+/// A forked/diverged operator self-quarantines and answers chain-data RPC with
+/// a `-32047` `CheckpointStateRootMismatch` (epoch-seed divergence). `-32047`
+/// is OVERLOADED on the fleet — it ALSO means a sealed-mempool envelope
+/// decrypt-failure — so we MUST message-gate on the text, never the bare code.
+/// The RPC errors here are already rendered to `message` form (code is folded
+/// in), so we match the substring case-insensitively.
+fn rpc_error_is_quarantine(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("checkpointstaterootmismatch") || lower.contains("quarantin")
+}
+
 fn classify_protocore_readiness(
     mut service: Option<TalosServiceInfo>,
     rpc_endpoint: String,
     rpc: ProtocoreRpcProbe,
 ) -> ProtocoreReadiness {
+    // Message-gated quarantine detection across the chain-data probes. A
+    // diverged operator answers RPC (so it looks "serving") but every
+    // chain-data method returns the CheckpointStateRootMismatch error — that
+    // is the authoritative "this node is quarantined" signal.
+    let quarantine_message = [
+        rpc.block_number_error.as_deref(),
+        rpc.chain_id_error.as_deref(),
+        rpc.syncing_error.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|err| rpc_error_is_quarantine(err))
+    .map(|err| err.to_string());
+
     let rpc_has_chain = rpc.chain_id.is_some() && rpc.block_number.is_some();
     // A node that returned ANY well-formed JSON-RPC answer (result OR a
     // structured error such as -32045 "method disabled") is up and serving the
@@ -2183,6 +2210,14 @@ fn classify_protocore_readiness(
         _ => readiness_check("p2p-listening", "warn", "net_listening unavailable"),
     });
 
+    if quarantine_message.is_some() {
+        checks.push(readiness_check(
+            "quarantine",
+            "err",
+            "node self-quarantined: CheckpointStateRootMismatch (epoch-seed divergence; node release v0.1.60 carries the fix)",
+        ));
+    }
+
     let service_state = service
         .as_ref()
         .map(|service| service.display_state.as_str())
@@ -2221,6 +2256,17 @@ fn classify_protocore_readiness(
             "warn",
             "ext-protocore is waiting for service config, secrets, or first-boot enrollment"
                 .to_string(),
+        ),
+        // A diverged operator answers RPC (so the serving arms below would
+        // otherwise paint it "ok") but every chain-data method returns the
+        // CheckpointStateRootMismatch error. That self-quarantine is a hard
+        // error and wins over any serving/syncing read. Message-gated above —
+        // never on the bare -32047 code (overloaded with sealed-mempool
+        // decryption).
+        _ if quarantine_message.is_some() => (
+            "quarantined",
+            "err",
+            "Quarantined — CheckpointStateRootMismatch (epoch-seed divergence; node release v0.1.60 carries the fix)".to_string(),
         ),
         _ if rpc_serving_chain_data && p2p_degraded => (
             "serving-rpc",

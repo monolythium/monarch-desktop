@@ -26,6 +26,7 @@ export const OP_KINDS = [
   "ota-apply",
   "ota-rollback",
   "operator-reprovision",
+  "operator-recover-keys",
   "operator-bootstrap",
   "clean-protocore-logs",
   "set-log-retention",
@@ -176,6 +177,26 @@ export type EmergencyKeyRotationInput = {
   intentId: string;
 };
 
+// Inputs for the seat-preserving "Re-provision with existing keys" recovery
+// flow (`operator-recover-keys`). This is the DEFAULT recovery path for a
+// forked/quarantined operator: the consensus ML-DSA-65 key lives sealed at
+// /var/lib/protocore/operator/consensus.key.enc on the EPHEMERAL partition, so
+// a naive wipe DISCARDS it and the node returns with a NEW random key (an
+// orphaned bonded seat). The recovery config stages the keychain mnemonic via
+// `machine.files` + the PROTOCORE_OPERATOR_MNEMONIC_FILE env so first-boot
+// keygen RE-DERIVES the SAME key after the wipe, keeping the bonded seat.
+//
+// `host` is the Talos node address the recovery config is applied to; `disk`
+// is the install disk (resolved from the node's system disk); `operatorId` is
+// the node-registry peer id used to re-publish the regenerated seal key after
+// re-sync. The mnemonic is NOT carried on the input — the flow reads it from
+// the OS keychain at execution time and validates it before staging.
+export type RecoverKeysInput = {
+  host: string;
+  disk: string;
+  operatorId?: string;
+};
+
 export type OtaRebootMode = "default" | "powercycle";
 
 // Inputs for the Talos Upgrade RPC. `preserve=true` is enforced by the
@@ -301,6 +322,11 @@ export type OpRequest = {
   /** Present only when `kind` is `clean-protocore-logs` or
    *  `set-log-retention`. Carries the validated retention bounds. */
   logRetentionInput?: LogRetentionInput;
+  /** Present only when `kind === "operator-recover-keys"`. Carries the Talos
+   *  host, install disk, and node-registry peer id for the seat-preserving
+   *  re-provision-with-existing-keys flow. The keychain mnemonic is read at
+   *  execution time and is NOT stored on the request. */
+  recoverKeysInput?: RecoverKeysInput;
 };
 
 export type OpResult = {

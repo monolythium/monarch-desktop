@@ -720,10 +720,24 @@ pub(crate) fn scan_config(config_yaml: &str) -> Result<(), String> {
     }
 
     for secret in FORBIDDEN_SECRET_ENVS {
-        if lower.contains(&secret.to_ascii_lowercase()) {
-            return Err(format!(
-                "config carries inline secret material ({secret}); use an enrollment/secret file path instead"
-            ));
+        // Token-aware: reject the inline secret env, but NOT a longer env that
+        // merely has it as a prefix (e.g. `PROTOCORE_OPERATOR_MNEMONIC_FILE`,
+        // which carries a 0600 file PATH — the allowed seat-recovery channel —
+        // not the mnemonic itself). Only flag an occurrence whose following
+        // character is not an identifier-continuation char.
+        let needle = secret.to_ascii_lowercase();
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(&needle) {
+            let idx = from + rel;
+            let next = lower[idx + needle.len()..].chars().next();
+            let is_prefix_of_longer_env =
+                matches!(next, Some(c) if c == '_' || c.is_ascii_alphanumeric());
+            if !is_prefix_of_longer_env {
+                return Err(format!(
+                    "config carries inline secret material ({secret}); use an enrollment/secret file path instead"
+                ));
+            }
+            from = idx + needle.len();
         }
     }
 

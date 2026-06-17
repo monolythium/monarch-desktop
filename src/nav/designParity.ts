@@ -244,6 +244,7 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "operator-stop",
   "operator-display",
   "operator-seal-key",
+  "operator-recover-keys",
   "chat-bootstrap-peers",
   "cluster-name-register",
   "cluster-form",

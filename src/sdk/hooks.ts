@@ -584,39 +584,17 @@ function normalizeChainStatus(raw: Partial<ChainStatus>): ChainStatus {
   };
 }
 
-// `lyth_chainStatus` with a basic-RPC composition fallback for nodes
-// that don't expose the native method. `viaFallback` maps onto the
-// slice's `notExposed` so views keep the "some methods not yet exposed"
-// banner — while still carrying the composed data.
-type ChainStatusFetch = { status: ChainStatus; viaFallback: boolean };
+// `lyth_chainStatus` is now served on the public profile, so we call it
+// directly and let real errors propagate (a -32045 here is an actual fault,
+// not a "method disabled" to swallow). `normalizeChainStatus` still composes /
+// zeroes `operatorCount`, `clusterCount`, and `mempoolDepth` when the native
+// payload omits them, so the panel stays honest without a whole-method
+// fallback.
+type ChainStatusFetch = { status: ChainStatus };
 
 async function fetchChainStatus(): Promise<ChainStatusFetch> {
-  try {
-    const data = await rpc.call<Partial<ChainStatus>>("lyth_chainStatus", []);
-    return { status: normalizeChainStatus(data), viaFallback: false };
-  } catch (err) {
-    if (!isMethodNotFound(err)) throw err;
-  }
-
-  const [chainId, block, round, directory] = await Promise.all([
-    rpc.ethChainId().catch(() => null),
-    rpc.ethBlockNumber().catch(() => null),
-    rpc.lythCurrentRound().catch(() => null),
-    rpc.lythClusterDirectory(0, 100).catch(() => null),
-  ]);
-  const operatorCount = directory?.clusters.reduce((sum, c) => sum + c.size, 0) ?? 0;
-  return {
-    status: {
-      chainId: chainId !== null ? Number(chainId) : 0,
-      blockHeight: block !== null ? Number(block) : 0,
-      finalizedHeight: round ? Number(round.height) : 0,
-      operatorCount,
-      clusterCount: directory?.totalClusters ?? directory?.clusters.length ?? 0,
-      mempoolDepth: 0,
-      reachable: chainId !== null && block !== null,
-    },
-    viaFallback: true,
-  };
+  const data = await rpc.call<Partial<ChainStatus>>("lyth_chainStatus", []);
+  return { status: normalizeChainStatus(data) };
 }
 
 export function useChainStatus(): RpcSlice<ChainStatus> {
@@ -633,7 +611,7 @@ export function useChainStatus(): RpcSlice<ChainStatus> {
       data,
       loading: polled.loading,
       error: polled.error,
-      notExposed: polled.data?.viaFallback ?? polled.notExposed,
+      notExposed: polled.notExposed,
       lastUpdatedAt:
         commit && polled.lastUpdatedAt !== null
           ? Math.max(commit.at, polled.lastUpdatedAt)

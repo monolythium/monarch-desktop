@@ -25,6 +25,13 @@ export type NodeStatus = {
   peerMaxRound: number | null;
   /** Raw `lyth_syncStatus.state` (e.g. "synced" / "catching"). */
   syncState: string | null;
+  /**
+   * Set when a chain-data RPC came back with a `-32047`
+   * `CheckpointStateRootMismatch` (operator self-quarantine, epoch-seed
+   * divergence). Message-gated — never the bare code, which is overloaded with
+   * sealed-mempool decryption failures. Carries the raw error message.
+   */
+  quarantineReason: string | null;
   reachable: boolean;
   lastError: string | null;
   lastUpdatedAt: number | null;
@@ -50,8 +57,20 @@ type NodeStatusFetch = {
   lag: number | null;
   peerMaxRound: number | null;
   syncState: string | null;
+  quarantineReason: string | null;
   reachable: boolean;
 };
+
+// `-32047` is OVERLOADED on the fleet: operator self-quarantine
+// (CheckpointStateRootMismatch) AND a sealed-mempool envelope decrypt-failure.
+// Only a message match is the quarantine signal — NEVER the bare code, or a
+// real mempool decrypt rejection would be silently mislabeled "quarantined".
+function quarantineReasonOf(err: unknown): string | null {
+  const e = err as { code?: number; message?: string } | null;
+  if (!e) return null;
+  const msg = e.message ?? "";
+  return /CheckpointStateRootMismatch|quarantin/i.test(msg) ? msg : null;
+}
 
 // Chain id never changes for a connected node; cache the first answer so
 // the fallback path doesn't re-ask every poll.
@@ -69,10 +88,22 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
   // round. The DAG round comes from `lyth_syncStatus.localRound`; the two are
   // decoupled (multiple heights commit per round), so they must NOT be conflated
   // — showing the block height under a "round" label is the bug this fixes.
+  // Capture (don't just swallow) errors so a -32047 CheckpointStateRootMismatch
+  // surfaces as a quarantine reason instead of a silent null. The first
+  // chain-data probe whose message matches wins.
+  let quarantineReason: string | null = null;
+  const probe = async <T>(p: Promise<T>): Promise<T | null> => {
+    try {
+      return await p;
+    } catch (err) {
+      quarantineReason ??= quarantineReasonOf(err);
+      return null;
+    }
+  };
   const [native, height, sync] = await Promise.all([
-    rpc.call<NativeChainStatus>("lyth_chainStatus", []).catch(() => null),
-    rpc.lythCurrentRound().catch(() => null),
-    rpc.call<NativeSyncStatus>("lyth_syncStatus", []).catch(() => null),
+    probe(rpc.call<NativeChainStatus>("lyth_chainStatus", [])),
+    probe(rpc.lythCurrentRound()),
+    probe(rpc.call<NativeSyncStatus>("lyth_syncStatus", [])),
   ]);
   const blockHeight = height !== null ? Number(height.height) : null;
   const dagRound = sync && typeof sync.localRound === "number" ? sync.localRound : null;
@@ -94,6 +125,7 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
       lag,
       peerMaxRound,
       syncState,
+      quarantineReason,
       reachable: native.reachable ?? true,
     };
   }
@@ -115,13 +147,14 @@ async function fetchNodeStatus(): Promise<NodeStatusFetch> {
     lag,
     peerMaxRound,
     syncState,
+    quarantineReason,
     reachable: true,
   };
 }
 
 /** Coarse, at-a-glance node readiness derived from a {@link NodeStatus}. */
 export type NodeReadiness = {
-  state: "unreachable" | "syncing" | "ready";
+  state: "unreachable" | "quarantined" | "syncing" | "ready";
   label: string;
   tone: "ok" | "warn" | "err";
 };
@@ -129,6 +162,17 @@ export type NodeReadiness = {
 export function nodeReadiness(status: NodeStatus): NodeReadiness {
   if (!status.reachable) {
     return { state: "unreachable", label: "Unreachable", tone: "err" };
+  }
+  // A self-quarantined operator answers RPC (so `reachable` is true) but its
+  // chain-data methods return CheckpointStateRootMismatch. This is a hard error
+  // that wins over the syncing/ready reads below.
+  if (status.quarantineReason !== null) {
+    return {
+      state: "quarantined",
+      label:
+        "Quarantined — CheckpointStateRootMismatch (epoch-seed divergence; node release v0.1.60 carries the fix)",
+      tone: "err",
+    };
   }
   // Behind the committee: a far-ahead peer + a small/zero local round, or a
   // raw "catching" state, or a lag past the synced threshold. `lag === null`
@@ -162,6 +206,7 @@ export function useNodeStatus(): NodeStatus {
       lag: polled.data?.lag ?? null,
       peerMaxRound: polled.data?.peerMaxRound ?? null,
       syncState: polled.data?.syncState ?? null,
+      quarantineReason: polled.data?.quarantineReason ?? null,
       reachable: polled.data?.reachable ?? false,
       lastError: polled.error,
       lastUpdatedAt: polled.lastUpdatedAt,
@@ -174,6 +219,9 @@ export function useNodeStatus(): NodeStatus {
         ...base,
         blockNumber: Math.max(base.blockNumber ?? 0, commit.height),
         currentRound: commit.round ?? base.currentRound ?? commit.height,
+        // A live commit proves the node sealed a block — it is producing, not
+        // quarantined — so a fresh push overrides any stale quarantine read.
+        quarantineReason: null,
         reachable: true,
         lastError: null,
         lastUpdatedAt: Math.max(base.lastUpdatedAt ?? 0, commit.at),

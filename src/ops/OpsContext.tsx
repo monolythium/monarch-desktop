@@ -24,6 +24,9 @@ import {
   talosBootstrap,
   talosCleanProtocoreLogs,
   talosExportProtocoreBackup,
+  talosGenerateRecoveryNodeConfig,
+  talosMaintenanceApply,
+  talosOperatorSealEk,
   talosRollback,
   talosServiceAction,
   talosSetLogRetention,
@@ -31,6 +34,7 @@ import {
   talosUpgrade,
   talosWipeProtocore,
 } from "../sdk";
+import { validateOperatorMnemonic } from "../sdk/operatorMnemonic";
 import {
   awaitNodeReconnect,
   isUpgradeRebooting,
@@ -90,6 +94,7 @@ import type {
   OperatorDisplayInput,
   OperatorSealKeyInput,
   PendingChangeInput,
+  RecoverKeysInput,
   RedelegateInput,
   RegisterInput,
   RestoreInput,
@@ -149,6 +154,9 @@ type OpsContextValue = OpsState & {
   /** Update the in-flight request's `logRetentionInput` from the log
    *  retention / clean-up form. */
   setLogRetentionInput: (patch: Partial<LogRetentionInput>) => void;
+  /** Update the in-flight request's `recoverKeysInput` from the recovery
+   *  menu (host/disk/operatorId for the seat-preserving recovery flow). */
+  setRecoverKeysInput: (patch: Partial<RecoverKeysInput>) => void;
 };
 
 const OpsContext = createContext<OpsContextValue | null>(null);
@@ -1263,6 +1271,156 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  // Seat-preserving "Re-provision with existing keys" recovery. Orchestrates the
+  // full SEQUENCE: (1) stage the keychain mnemonic into a fresh recovery machine
+  // config and apply it with a reboot, (2) wipe EPHEMERAL, (3) bootstrap etcd,
+  // (4) wait for the node to come back and re-sync, (5) re-publish the
+  // regenerated ML-KEM seal key so sealed-mempool duty resumes. The consensus
+  // key is re-derived on first boot from the staged mnemonic via the entrypoint's
+  // `gen-operator-keys --from-mnemonic`, so the bonded seat is preserved.
+  const runRecoverKeysFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.recoverKeysInput;
+      if (!input || !input.host || !input.disk) {
+        settleOperation(
+          req,
+          {
+            ok: false,
+            message:
+              "Recovery is missing the node's host or install disk — connect to your Monarch OS node first.",
+          },
+          { transport: "talos", action: "recover-keys" },
+        );
+        return;
+      }
+      try {
+        // Read + validate the operator mnemonic from the OS keychain. Without it
+        // there is nothing to re-derive the consensus key from, so fail closed
+        // (re-enrolling as a new node would orphan the bonded seat).
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message:
+                "No operator mnemonic is saved in this computer's keychain. Import it in Settings → Operator key first, or re-enroll as a new node (which orphans the bonded seat).",
+            },
+            { transport: "talos", action: "recover-keys" },
+          );
+          return;
+        }
+        const check = validateOperatorMnemonic(mnemonic);
+        if (!check.ok) {
+          settleOperation(
+            req,
+            {
+              ok: false,
+              message: `The saved operator mnemonic is not usable for recovery: ${check.text}`,
+            },
+            { transport: "talos", action: "recover-keys" },
+          );
+          return;
+        }
+
+        // (1) Mint the recovery config (stages the mnemonic via machine.files +
+        // the PROTOCORE_OPERATOR_MNEMONIC_FILE env) and apply it with a reboot so
+        // the file lands on STATE before the EPHEMERAL wipe.
+        const recovery = await talosGenerateRecoveryNodeConfig(
+          input.host,
+          input.disk,
+          mnemonic,
+        );
+        await talosMaintenanceApply({
+          host: input.host,
+          configYaml: recovery.configYaml,
+          dryRun: false,
+          mode: "reboot",
+          talosconfigYaml: recovery.talosconfigYaml,
+        });
+
+        // (2) Wipe EPHEMERAL so the stale (forked) chain DB + the old sealed key
+        // are removed; first-boot keygen then re-derives the same key from the
+        // staged mnemonic.
+        const wipe = await talosWipeProtocore();
+
+        // (3) Re-bootstrap etcd (the wipe clears it on a single-node controlplane).
+        let bootstrapNote = "";
+        try {
+          const status = await talosStatus();
+          const host = wipe.nodeAddress || wipe.endpoint || status.nodeAddress || input.host;
+          if (host && status.configPath) {
+            const boot = await talosBootstrap(host, status.configPath);
+            bootstrapNote = ` etcd: ${boot}.`;
+          }
+        } catch {
+          bootstrapNote =
+            " (note: the node may need a one-time etcd bootstrap to leave \"booting\" — use Bootstrap node once it is back).";
+        }
+
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: summarize(
+              wipe.output,
+              `Recovery staged: the node re-derives its consensus key from your keychain mnemonic on first boot, keeping your bonded seat. It wipes the forked data and fast-syncs from a checkpoint.${bootstrapNote} Monarch will re-publish your seal key once it is back and synced.`,
+            ),
+          },
+          {
+            transport: "talos",
+            action: "recover-keys",
+            endpoint: wipe.endpoint,
+            nodeAddress: wipe.nodeAddress,
+            command: wipe.command,
+          },
+        );
+
+        // (4) Wait for the node to reboot + re-sync, then (5) re-publish the
+        // regenerated seal key. Best-effort and non-blocking: the recovery above
+        // is already recorded; this resumes sealed-mempool duty for the operator.
+        void (async () => {
+          try {
+            const back = await awaitNodeReconnect(rpcEndpoint);
+            if (!back.reconnected) return;
+            const ek = await talosOperatorSealEk().catch(() => null);
+            if (!ek || !ek.sealEkHex) return;
+            requestOp({
+              kind: "operator-seal-key",
+              title: "Re-publish seal key",
+              sub: "Resume sealed-mempool duty after recovery",
+              intro:
+                "Re-publishes your public seal key after recovery so your cluster can include you in sealed-mempool duty again. Only your node holds the private half.",
+              icon: "SK",
+              risk: "medium",
+              needsPasskey: true,
+              confirmLabel: "Approve seal key",
+              fields: [
+                { key: "peer-id", label: "Operator ID", value: input.operatorId ?? "your registered operator" },
+                { key: "seal-key", label: "Seal key", value: "regenerated public key from your node" },
+                { key: "private-key", label: "Private key", value: "stays on your node" },
+              ],
+              operatorSealKeyInput: input.operatorId
+                ? { peerIdHex: input.operatorId, sealEkHex: ek.sealEkHex }
+                : undefined,
+            });
+          } catch {
+            // Re-sync timed out or the EK read failed — the operator can
+            // re-publish the seal key manually from the Operator view.
+          }
+        })();
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(
+          req,
+          { ok: false, message },
+          { transport: "talos", action: "recover-keys" },
+        );
+      }
+    },
+    [requestOp, settleOperation],
+  );
+
   const runSetLogRetentionFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.logRetentionInput;
@@ -1555,6 +1713,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "operator-recover-keys") {
+      if (inTauri()) {
+        await runRecoverKeysFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "set-log-retention") {
       if (inTauri()) {
         await runSetLogRetentionFlow(req);
@@ -1643,6 +1809,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runRedelegateFlow,
     runRegisterFlow,
     runReprovisionFlow,
+    runRecoverKeysFlow,
     runRestoreFlow,
     runSetLogRetentionFlow,
     runSshFlow,
@@ -2003,6 +2170,24 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setRecoverKeysInput = useCallback(
+    (patch: Partial<RecoverKeysInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "operator-recover-keys") return s;
+        const base: RecoverKeysInput = s.request.recoverKeysInput ?? {
+          host: "",
+          disk: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, recoverKeysInput: next },
+        };
+      });
+    },
+    [],
+  );
+
   const value = useMemo<OpsContextValue>(
     () => ({
       ...state,
@@ -2028,6 +2213,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setEmergencyKeyRotationInput,
       setOtaApplyInput,
       setLogRetentionInput,
+      setRecoverKeysInput,
     }),
     [
       state,
@@ -2053,6 +2239,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setEmergencyKeyRotationInput,
       setOtaApplyInput,
       setLogRetentionInput,
+      setRecoverKeysInput,
     ],
   );
 

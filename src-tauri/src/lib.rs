@@ -115,6 +115,7 @@ pub fn run() {
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,
             provision::talos_generate_full_node_config,
+            provision::talos_generate_recovery_node_config,
             release_feed::latest_protocore_release,
             release_feed::recent_protocore_releases,
             chat::chat_initialize,

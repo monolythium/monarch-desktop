@@ -459,6 +459,7 @@ export {
   talosLogs,
   talosBootstrap,
   talosGenerateFullNodeConfig,
+  talosGenerateRecoveryNodeConfig,
   talosMaintenanceApply,
   talosMaintenanceDisks,
   talosMaintenanceProbe,
