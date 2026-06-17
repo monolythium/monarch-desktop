@@ -47,12 +47,45 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-const COMMIT_PREFIX = 12;
+export const COMMIT_PREFIX = 12;
 
-function shortCommit(value: string | null | undefined): string | null {
+/** Normalize a git commit to the comparable identity: lowercase + trim, then the
+ *  first {@link COMMIT_PREFIX} chars. The ONLY safe way to compare a release's
+ *  `monoCoreCommit` (often full 40-hex, mixed case) against `runtime.gitCommit`
+ *  (full 40-hex) — never compare the raw strings (length AND case differ). */
+export function shortCommit(value: string | null | undefined): string | null {
   if (!value) return null;
-  const trimmed = value.trim();
+  const trimmed = value.trim().toLowerCase();
   return trimmed ? trimmed.slice(0, COMMIT_PREFIX) : null;
+}
+
+/** True when two commits refer to the same build (normalized first-12 match).
+ *  Both sides go through {@link shortCommit}, so a 40-hex `runtime.gitCommit`
+ *  and a 12-hex target compare equal, case- and whitespace-insensitively. Two
+ *  unreadable commits never match (`null !== null` here is intentional — an
+ *  absent commit is not a confirmation). */
+export function commitMatches(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const left = shortCommit(a);
+  const right = shortCommit(b);
+  return left !== null && right !== null && left === right;
+}
+
+/** Resolve a known commit to its friendly release tag, given the release feed.
+ *  Returns the matching release `tag` when the commit equals some release's
+ *  `monoCoreCommit` (first-12, normalized), else `null`. Use this everywhere a
+ *  version would otherwise render as a bare `dev <commit>` / `0.1.0+<gitsha>`:
+ *  a commit the feed knows always shows as its tag. Pure. */
+export function friendlyTagForCommit(
+  releases: LatestProtocoreRelease[],
+  commit: string | null | undefined,
+): string | null {
+  const target = shortCommit(commit);
+  if (!target) return null;
+  const match = releases.find((r) => shortCommit(r.monoCoreCommit) === target);
+  return match ? match.tag : null;
 }
 
 /** Discover the latest signed protocore release. Returns `null` outside a

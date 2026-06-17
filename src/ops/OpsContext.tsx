@@ -20,6 +20,7 @@ import {
   keychainGet,
   KEYCHAIN_ACCOUNTS,
   rpcEndpoint,
+  rpcRuntimeProvenance,
   sshExec,
   talosBootstrap,
   talosCleanProtocoreLogs,
@@ -39,6 +40,13 @@ import {
   awaitNodeReconnect,
   isUpgradeRebooting,
 } from "../sdk/talosUpgradeReboot";
+import {
+  awaitOtaCommitConfirm,
+  DEFAULT_CONFIRM_DEADLINE_MS,
+  type OtaConfirmState,
+  type ProvenanceReadResult,
+} from "../sdk/otaConfirm";
+import { shortCommit } from "../sdk/protocoreRelease";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
 import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
 import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
@@ -101,12 +109,47 @@ import type {
 } from "./types";
 import { DEFAULT_LOG_RETENTION } from "./types";
 
+/** Live state of the post-upgrade "confirm the node landed the new commit"
+ *  tracker. Drives the node-version chip (shows `targetTag` during the window so
+ *  the operator doesn't see a bare `dev <commit>`) and a one-shot confirm toast.
+ *
+ *  Phases:
+ *   - `confirming`        — reconnected (or still rebooting); polling the running
+ *                           commit. `slow` flips on once it's taking a while.
+ *   - `confirmed`         — the running commit matched the target; honest success.
+ *   - `not-confirmed`     — past the deadline, node up on the OLD commit; offers
+ *                           a Retry. NON-terminal, never red.
+ *   - `reachable-unconfirmed` — node answers but its commit was never readable;
+ *                           SOFT/indeterminate, never red. */
+export type OtaConfirmPhase =
+  | "confirming"
+  | "confirmed"
+  | "not-confirmed"
+  | "reachable-unconfirmed";
+
+export type OtaConfirmTracker = {
+  phase: OtaConfirmPhase;
+  /** Friendly tag the operator just applied (e.g. `v0.1.60-testnet`). */
+  targetTag: string | null;
+  /** Normalized first-12 of the target commit, when the release carried one. */
+  targetCommit: string | null;
+  /** True once the confirm window crosses the slow threshold. */
+  slow: boolean;
+  /** A one-shot toast message to surface (success / soft / not-confirmed),
+   *  cleared by `dismissOtaConfirm`. */
+  toast: string | null;
+  /** Monotonic id so a new upgrade supersedes a stale in-flight confirm. */
+  runId: number;
+};
+
 type OpsState = {
   request: OpRequest | null;
   stage: OpStage;
   result: OpResult | null;
   open: boolean;
   receipts: OperationReceipt[];
+  /** Null until an OS upgrade is dispatched; then tracks the confirm window. */
+  otaConfirm: OtaConfirmTracker | null;
 };
 
 type OpsContextValue = OpsState & {
@@ -115,6 +158,11 @@ type OpsContextValue = OpsState & {
   cancel: () => void;
   reset: () => void;
   clearReceipts: () => void;
+  /** Re-open the IDENTICAL guarded OS-upgrade drawer for the same release after
+   *  an upgrade that did not confirm (the "Retry upgrade" action). */
+  retryOtaUpgrade: () => void;
+  /** Clear the one-shot OTA confirm toast after it has been surfaced. */
+  dismissOtaConfirm: () => void;
   /** Update the in-flight request's `registerInput` from the
    *  operator-register form. No-ops when no request is open or the
    *  current request isn't `operator-register`. */
@@ -167,6 +215,7 @@ const initialState: OpsState = {
   result: null,
   open: false,
   receipts: [],
+  otaConfirm: null,
 };
 
 /** Trim and clip stdout to a one-line summary for the halo. */
@@ -175,6 +224,47 @@ function summarize(output: string, fallback: string): string {
   if (!trimmed) return fallback;
   const firstLine = trimmed.split(/\r?\n/, 1)[0] ?? trimmed;
   return firstLine.length > 140 ? `${firstLine.slice(0, 137)}…` : firstLine;
+}
+
+/** Map the terminal OTA confirm state onto a tracker phase + one-shot toast and
+ *  apply it via the run-id-guarded patcher. Honest copy only: success names the
+ *  tag + landed commit; a stuck/soft state is NEVER framed as a failure. */
+function applyOtaConfirmFinal(
+  runId: number,
+  state: OtaConfirmState,
+  targetTag: string | null,
+  patch: (runId: number, p: Partial<OtaConfirmTracker>) => void,
+): void {
+  const tag = targetTag ?? "the new version";
+  switch (state.kind) {
+    case "confirmed":
+      patch(runId, {
+        phase: "confirmed",
+        slow: false,
+        toast: `Now running ${tag} (commit ${state.nodeCommit}).`,
+      });
+      return;
+    case "stuck": {
+      const on = state.nodeCommit ? `still on ${state.nodeCommit}` : "still on its previous build";
+      patch(runId, {
+        phase: "not-confirmed",
+        slow: false,
+        toast: `Node is ${on} — the ${tag} upgrade was not confirmed. The node is reachable; you can retry the upgrade.`,
+      });
+      return;
+    }
+    case "reachable-unconfirmed":
+      patch(runId, {
+        phase: "reachable-unconfirmed",
+        slow: false,
+        toast: `${tag} — node is reachable, but its running commit could not be read to confirm the version.`,
+      });
+      return;
+    case "keep-polling":
+      // The loop only returns terminal states; a keep-polling here means it was
+      // cancelled/superseded. Leave the tracker as-is.
+      return;
+  }
 }
 
 export function OpsProvider({ children }: { children: ReactNode }) {
@@ -190,6 +280,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   // submits twice — which on register would surface as
   // `duplicate tx already known` / `replace underpriced`.
   const inFlightRef = useRef<OpRequest | null>(null);
+
+  // Monotonic id for the post-upgrade confirm poll. Each OS upgrade bumps it so
+  // a fresh dispatch supersedes a still-running confirm from a previous one
+  // (the stale loop checks `shouldContinue` against this id and bows out).
+  const otaRunIdRef = useRef(0);
+  // The last OS-upgrade request, so "Retry upgrade" can re-open the identical
+  // guarded drawer for the same release without re-deriving the image.
+  const lastOtaRequestRef = useRef<OpRequest | null>(null);
 
   const finishOperation = useCallback(
     (req: OpRequest, result: OpResult, meta: OperationReceiptMeta) => {
@@ -222,32 +320,64 @@ export function OpsProvider({ children }: { children: ReactNode }) {
 
   const requestOp = useCallback((op: OpRequest) => {
     inFlightRef.current = null;
+    // Preserve any in-flight OTA confirm tracker: dispatching another op (or
+    // re-opening the drawer) must not abandon a still-confirming upgrade.
     setState((prev) => ({
       request: op,
       stage: "preview",
       result: null,
       open: true,
       receipts: prev.receipts,
+      otaConfirm: prev.otaConfirm,
     }));
   }, []);
 
   const cancel = useCallback(() => {
     inFlightRef.current = null;
     setState((prev) => ({ ...prev, open: false }));
-    // Detach request after the slide-out finishes so the body doesn't flash empty.
+    // Detach request after the slide-out finishes so the body doesn't flash
+    // empty. Keep the OTA confirm tracker alive — closing the drawer must never
+    // turn a dispatched upgrade into a "failure"; the confirm runs on its own.
     window.setTimeout(
-      () => setState((prev) => ({ ...initialState, receipts: prev.receipts })),
+      () =>
+        setState((prev) => ({
+          ...initialState,
+          receipts: prev.receipts,
+          otaConfirm: prev.otaConfirm,
+        })),
       360,
     );
   }, []);
 
   const reset = useCallback(() => {
     inFlightRef.current = null;
-    setState((prev) => ({ ...initialState, receipts: prev.receipts }));
+    setState((prev) => ({
+      ...initialState,
+      receipts: prev.receipts,
+      otaConfirm: prev.otaConfirm,
+    }));
   }, []);
 
   const clearReceipts = useCallback(() => {
     setState((prev) => ({ ...prev, receipts: clearOperationReceipts() }));
+  }, []);
+
+  // Re-open the IDENTICAL guarded OS-upgrade drawer for the last applied
+  // release. A fresh confirm run is started by the flow when it dispatches, so
+  // the stale tracker is superseded (its run id no longer matches).
+  const retryOtaUpgrade = useCallback(() => {
+    const last = lastOtaRequestRef.current;
+    if (!last) return;
+    requestOp(last);
+  }, [requestOp]);
+
+  // Clear the one-shot OTA confirm toast once surfaced. Keeps the tracker (and
+  // its phase, e.g. `not-confirmed` so a Retry affordance can persist) — only
+  // the toast text is consumed.
+  const dismissOtaConfirm = useCallback(() => {
+    setState((prev) =>
+      prev.otaConfirm ? { ...prev, otaConfirm: { ...prev.otaConfirm, toast: null } } : prev,
+    );
   }, []);
 
   const blockBrowserExecution = useCallback((req: OpRequest) => {
@@ -1091,6 +1221,83 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
+  // Patch the OTA confirm tracker iff the run id still matches (a newer upgrade
+  // supersedes a stale in-flight confirm). Pure setter — owns no async.
+  const patchOtaConfirm = useCallback(
+    (runId: number, patch: Partial<OtaConfirmTracker>) => {
+      setState((s) => {
+        if (!s.otaConfirm || s.otaConfirm.runId !== runId) return s;
+        return { ...s, otaConfirm: { ...s.otaConfirm, ...patch } };
+      });
+    },
+    [],
+  );
+
+  // After an upgrade dispatches and the node reboots, CONFIRM it came back on
+  // the NEW build (not merely that it is reachable). Best-effort and fully
+  // detached from the drawer: the dispatch already recorded `ok:true`; closing
+  // the drawer never turns this into a failure. Honest end states only.
+  const startOtaConfirm = useCallback(
+    (endpoint: string, targetCommit: string | null, targetTag: string | null) => {
+      const runId = (otaRunIdRef.current += 1);
+      const normalizedTarget = shortCommit(targetCommit);
+      setState((s) => ({
+        ...s,
+        otaConfirm: {
+          phase: "confirming",
+          targetTag,
+          targetCommit: normalizedTarget,
+          slow: false,
+          toast: null,
+          runId,
+        },
+      }));
+
+      const shouldContinue = () => otaRunIdRef.current === runId;
+
+      void (async () => {
+        // (1) Wait for the node to answer RPC again. Raise the ceiling to the
+        // full confirm deadline so a slow controlplane reconverge doesn't trip
+        // it. A transport drop here is the expected reboot — keep waiting.
+        const start = Date.now();
+        await awaitNodeReconnect(endpoint, {
+          ceilingMs: DEFAULT_CONFIRM_DEADLINE_MS,
+          shouldContinue,
+        }).catch(() => undefined);
+        if (!shouldContinue()) return;
+
+        // (2) Poll the running git commit until it matches the target (or the
+        // deadline turns this into a non-terminal "not confirmed" / soft state).
+        const readProvenance = async (): Promise<ProvenanceReadResult> => {
+          try {
+            const prov = await rpcRuntimeProvenance(rpcEndpoint);
+            return { readable: true, gitCommit: prov.runtime.gitCommit ?? null };
+          } catch {
+            // Transport down (still rebooting/catching up) OR provenance gated
+            // (-32601 / restricted profile) — both are "not readable, keep
+            // polling"; the deadline branch tells them apart via everReadable.
+            return { readable: false };
+          }
+        };
+
+        const final = await awaitOtaCommitConfirm(normalizedTarget, {
+          readProvenance,
+          startElapsedMs: Date.now() - start,
+          shouldContinue,
+          onState: (st) => {
+            if (st.kind === "keep-polling") {
+              patchOtaConfirm(runId, { slow: st.hint === "slow" });
+            }
+          },
+        });
+        if (!shouldContinue()) return;
+
+        applyOtaConfirmFinal(runId, final, targetTag, patchOtaConfirm);
+      })();
+    },
+    [patchOtaConfirm],
+  );
+
   const runOtaApplyFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.otaApplyInput;
@@ -1102,6 +1309,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         );
         return;
       }
+      // Remember this exact request so "Retry upgrade" can re-open the identical
+      // guarded drawer for the same release.
+      lastOtaRequestRef.current = req;
       try {
         const result = await talosUpgrade(input);
         // A Talos image upgrade reboots the node into the new image, so the
@@ -1114,7 +1324,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             {
               ok: true,
               message:
-                "Upgrade dispatched - the node is rebooting into the new image. Monarch will reconnect automatically once it is back; this usually takes a minute or two.",
+                "Upgrade dispatched - the node is rebooting into the new image. Monarch will confirm it comes back on the new version automatically; a full controlplane reconverge can take up to ~20 minutes.",
             },
             {
               transport: "talos",
@@ -1124,11 +1334,15 @@ export function OpsProvider({ children }: { children: ReactNode }) {
               command: result.command,
             },
           );
-          // Poll the node back via the robust reachability signal so the topbar
-          // node chip and node-status reads flip live the moment it returns on
-          // the new image. Best-effort and non-blocking — the success above is
-          // already recorded; the drawer never waits out the reboot.
-          void awaitNodeReconnect(result.endpoint).catch(() => undefined);
+          // Confirm-by-landed-commit: poll the node back, then verify its running
+          // git commit matches the release we just applied — not just that it is
+          // reachable. Best-effort and non-blocking; the success above is already
+          // recorded and the drawer never waits out the reboot.
+          startOtaConfirm(
+            result.endpoint,
+            input.targetMonoCoreCommit ?? null,
+            input.targetTag ?? null,
+          );
           return;
         }
         settleOperation(
@@ -1154,7 +1368,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         settleOperation(req, { ok: false, message }, { transport: "talos", action: "upgrade" });
       }
     },
-    [settleOperation],
+    [settleOperation, startOtaConfirm],
   );
 
   const runExportBackupFlow = useCallback(
@@ -2196,6 +2410,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       cancel,
       reset,
       clearReceipts,
+      retryOtaUpgrade,
+      dismissOtaConfirm,
       setRegisterInput,
       setRedelegateInput,
       setRestoreInput,
@@ -2222,6 +2438,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       cancel,
       reset,
       clearReceipts,
+      retryOtaUpgrade,
+      dismissOtaConfirm,
       setRegisterInput,
       setRedelegateInput,
       setRestoreInput,

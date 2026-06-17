@@ -383,10 +383,14 @@ export type {
   ReleaseAttestationStatus,
 } from "./releaseAttestation";
 export {
+  COMMIT_PREFIX,
+  commitMatches,
   fetchLatestProtocoreRelease,
   fetchRecentProtocoreReleases,
+  friendlyTagForCommit,
   protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
+  shortCommit,
   useLatestProtocoreRelease,
   useRecentProtocoreReleases,
 } from "./protocoreRelease";
@@ -399,6 +403,18 @@ export type {
   ProtocoreUpdateStatusInput,
   RecentProtocoreReleasesHook,
 } from "./protocoreRelease";
+export {
+  awaitOtaCommitConfirm,
+  DEFAULT_CONFIRM_DEADLINE_MS,
+  DEFAULT_CONFIRM_SLOW_HINT_MS,
+  resolveOtaConfirmState,
+} from "./otaConfirm";
+export type {
+  AwaitOtaConfirmOptions,
+  OtaConfirmState,
+  ProvenanceReadResult,
+  ResolveOtaConfirmInput,
+} from "./otaConfirm";
 export { desktopReleaseReadiness } from "./releaseReadiness";
 export type {
   DesktopReleaseReadinessInput,
@@ -472,6 +488,7 @@ export {
   talosTrustConfig,
   talosUpgrade,
   talosWipeProtocore,
+  rpcRuntimeProvenance,
   EMPTY_TALOS_STATUS,
 } from "./bridge";
 export type {

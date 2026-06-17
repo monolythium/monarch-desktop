@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.46",
+    date: "2026-06-17",
+    highlights: [
+      "OS upgrade: after you apply an upgrade, Monarch now confirms the node came back on the NEW version — not just that it's reachable. It watches the node's running build and shows clear progress (\"upgrading…\") through the reboot and catch-up window (a full controlplane reconverge can take up to ~20 minutes) instead of looking stuck or like it failed. If the node truly does not move onto the new build, you get a plain \"not confirmed\" with a one-click Retry — never a red error.",
+      "Node version: the node now shows its release tag (e.g. v0.1.60-testnet) instead of a bare commit. During an upgrade it shows the tag you just applied, so you don't briefly see the old build's \"dev <commit>\" while the node catches up.",
+      "Logs: when the log stream can't be read, the panel now shows the real reason instead of a generic \"check the connection\" — and notes the node may still be healthy, since other operations use the same API.",
+    ],
+  },
+  {
     version: "0.0.45",
     date: "2026-06-17",
     highlights: [

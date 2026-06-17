@@ -1461,6 +1461,10 @@ function LatestSignedReleaseCard({
           image: release.installerImage,
           stage: false,
           rebootMode: "default",
+          // Carry the target identity so the OTA flow confirms the node came
+          // back on THIS release's build, and shows its friendly tag meanwhile.
+          targetMonoCoreCommit: release.monoCoreCommit ?? undefined,
+          targetTag: release.tag,
         },
       }),
     );

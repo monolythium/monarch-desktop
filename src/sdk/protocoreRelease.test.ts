@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import {
+  commitMatches,
+  friendlyTagForCommit,
   protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
+  shortCommit,
   type LatestProtocoreRelease,
 } from "./protocoreRelease";
 
@@ -186,5 +189,63 @@ describe("protocore node release summary", () => {
   it("HONEST: never describes the node as outdated", () => {
     const summary = protocoreNodeReleaseSummary(list(), provenance(OLDEST));
     expect(JSON.stringify(summary).toLowerCase()).not.toContain("outdated");
+  });
+});
+
+describe("commitMatches (commit normalization)", () => {
+  // The release manifest carries a full 40-hex commit (often mixed case); the
+  // node reports a full 40-hex `runtime.gitCommit`. They must compare equal on
+  // the normalized first-12.
+  const FULL_40 = "B4257F14ABCD9999deadbeefcafef00d12345678"; // 40 hex, upper-ish
+  const SHORT_12 = "b4257f14abcd"; // first 12, lowercase
+
+  it("matches a full 40-hex commit against a 12-hex target (case-insensitive)", () => {
+    expect(commitMatches(FULL_40, SHORT_12)).toBe(true);
+    expect(commitMatches(SHORT_12, FULL_40)).toBe(true);
+  });
+
+  it("ignores surrounding whitespace and case on both sides", () => {
+    expect(commitMatches("  B4257F14ABCD9999  ", "b4257f14abcd")).toBe(true);
+    expect(commitMatches("\tB4257F14ABCDxxxx\n", "B4257F14ABCD")).toBe(true);
+  });
+
+  it("does NOT match when the first 12 differ", () => {
+    expect(commitMatches("b4257f14abcd9999", "000000000000ffff")).toBe(false);
+  });
+
+  it("never matches when either side is absent (absence is not confirmation)", () => {
+    expect(commitMatches(null, SHORT_12)).toBe(false);
+    expect(commitMatches(SHORT_12, undefined)).toBe(false);
+    expect(commitMatches(null, null)).toBe(false);
+    expect(commitMatches("", SHORT_12)).toBe(false);
+    expect(commitMatches("   ", SHORT_12)).toBe(false);
+  });
+
+  it("shortCommit lowercases, trims, then slices to 12", () => {
+    expect(shortCommit("  B4257F14ABCD9999  ")).toBe("b4257f14abcd");
+    expect(shortCommit("abc")).toBe("abc");
+    expect(shortCommit(null)).toBeNull();
+    expect(shortCommit("")).toBeNull();
+  });
+});
+
+describe("friendlyTagForCommit", () => {
+  const releases: LatestProtocoreRelease[] = [
+    release({ tag: "v0.1.60-testnet", monoCoreCommit: "45743855AAAA1111" }),
+    release({ tag: "v0.1.52-testnet", monoCoreCommit: "a40ea06ebbbb2222" }),
+  ];
+
+  it("resolves a known commit (full 40-hex, mixed case) to its release tag", () => {
+    expect(friendlyTagForCommit(releases, "45743855aaaa1111ffffffffffffffffffffffff")).toBe(
+      "v0.1.60-testnet",
+    );
+    expect(friendlyTagForCommit(releases, "A40EA06EBBBB2222")).toBe("v0.1.52-testnet");
+  });
+
+  it("returns null for an unknown commit or an empty/absent commit", () => {
+    expect(friendlyTagForCommit(releases, "ffffffffffff0000")).toBeNull();
+    expect(friendlyTagForCommit(releases, null)).toBeNull();
+    expect(friendlyTagForCommit(releases, "")).toBeNull();
+    expect(friendlyTagForCommit([], "45743855aaaa1111")).toBeNull();
   });
 });

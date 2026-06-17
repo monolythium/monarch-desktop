@@ -42,9 +42,11 @@ function formatReleaseDate(value: string): string {
 }
 
 /** Build the guarded ota-apply OpRequest from a catalog entry + the selected
- *  release's derived installer image. Mirrors `catalogRequest` in
- *  DesignRoutes.tsx — kept local so the chip carries no view-layer import. */
-function otaApplyRequest(image: string): OpRequest | null {
+ *  release. Mirrors `catalogRequest` in DesignRoutes.tsx — kept local so the
+ *  chip carries no view-layer import. Carries the release's `monoCoreCommit` +
+ *  `tag` so the OTA flow can CONFIRM the node came back on this exact build (and
+ *  label the node-version chip with the tag during the reconnect window). */
+function otaApplyRequest(release: LatestProtocoreRelease): OpRequest | null {
   const entry = OP_CATALOG.find((candidate) => candidate.kind === "ota-apply");
   if (!entry) return null;
   return {
@@ -60,7 +62,13 @@ function otaApplyRequest(image: string): OpRequest | null {
     destructive: entry.destructive,
     needsPasskey: entry.needsPasskey,
     confirmLabel: entry.confirmLabel,
-    otaApplyInput: { image, stage: false, rebootMode: "default" },
+    otaApplyInput: {
+      image: release.installerImage,
+      stage: false,
+      rebootMode: "default",
+      targetMonoCoreCommit: release.monoCoreCommit ?? undefined,
+      targetTag: release.tag,
+    },
   };
 }
 
@@ -212,12 +220,24 @@ export function NodeUpdateChip() {
 
   const applyRelease = (release: LatestProtocoreRelease) => {
     if (!isValidUpgradeImage(release.installerImage)) return;
-    const request = otaApplyRequest(release.installerImage);
+    const request = otaApplyRequest(release);
     if (!request) return;
     setOpen(false);
     // Opens the IDENTICAL guarded drawer at preview → passkey → execute.
     ops.requestOp(request);
   };
+
+  // One-shot OTA confirm toast: the flow sets a single message on the tracker
+  // when the confirm resolves (success / soft / not-confirmed). Surface it
+  // floating near the chip, then clear it so it never re-fires.
+  const toast = ops.otaConfirm?.toast ?? null;
+  const toastSuccess = ops.otaConfirm?.phase === "confirmed";
+  const { dismissOtaConfirm } = ops;
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => dismissOtaConfirm(), 12_000);
+    return () => window.clearTimeout(t);
+  }, [toast, dismissOtaConfirm]);
 
   const releases = feed.data;
   const hasReleases = releases.length > 0;
@@ -226,8 +246,25 @@ export function NodeUpdateChip() {
   // "unknown" — a dev build is a known build and is shown honestly.
   const isDevBuild = summary.kind === "dev-build";
   const isUnidentified = summary.kind === "unidentified";
-  const label = isUnidentified ? "unknown" : summary.label;
-  const showBadge = summary.updateAvailable;
+  const baseLabel = isUnidentified ? "unknown" : summary.label;
+
+  // While an OS upgrade is confirming (or just confirmed), label the chip with
+  // the tag the operator literally just applied — until the node reports the new
+  // commit and the feed re-matches, the summary would otherwise leak the OLD
+  // build as `dev <commit>` / a stale tag. Only override while the node has NOT
+  // yet matched the target tag (once it has, the summary already shows it).
+  const confirm = ops.otaConfirm;
+  const confirmTag =
+    confirm &&
+    (confirm.phase === "confirming" || confirm.phase === "confirmed") &&
+    confirm.targetTag &&
+    summary.current?.tag !== confirm.targetTag
+      ? confirm.targetTag
+      : null;
+  const confirming = confirm?.phase === "confirming";
+  const label = confirmTag ?? baseLabel;
+  // A still-confirming upgrade is in-flight, not "an update is available".
+  const showBadge = summary.updateAvailable && !confirmTag;
   const currentTag = summary.current?.tag ?? null;
   const newerTags = useMemo(() => {
     if (!hasReleases) return new Set<string>();
@@ -257,13 +294,17 @@ export function NodeUpdateChip() {
         }}
         aria-label="Protocore node version and updates"
         title={
-          isUnidentified
-            ? "Could not match the node's build to a signed release."
-            : isDevBuild
-              ? `Node is running an unreleased build (${summary.nodeCommit}). A newer signed release is available — open to apply it.`
-              : showBadge
-                ? `Node is running ${label}. A newer signed release is available.`
-                : `Node is running ${label} — the latest signed release.`
+          confirmTag
+            ? confirming
+              ? `Applying ${confirmTag} — the node is rebooting and catching up. Monarch is confirming it comes back on the new version (a full controlplane reconverge can take up to ~20 minutes).`
+              : `Confirmed: the node came back on ${confirmTag}.`
+            : isUnidentified
+              ? "Could not match the node's build to a signed release."
+              : isDevBuild
+                ? `Node is running an unreleased build (${summary.nodeCommit}). A newer signed release is available — open to apply it.`
+                : showBadge
+                  ? `Node is running ${label}. A newer signed release is available.`
+                  : `Node is running ${label} — the latest signed release.`
         }
       >
         <span style={{ color: "var(--fg-500)" }}>node</span>
@@ -274,12 +315,16 @@ export function NodeUpdateChip() {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: isUnidentified ? "var(--fg-400)" : undefined,
+            color: isUnidentified && !confirmTag ? "var(--fg-400)" : undefined,
           }}
         >
           {label}
         </b>
-        {showBadge ? (
+        {confirming ? (
+          <span className="halo halo--info" style={{ padding: "0 6px" }} title="Confirming the upgrade landed on the new version.">
+            <span className="dot" /> upgrading
+          </span>
+        ) : showBadge ? (
           <span className="halo halo--warn" style={{ padding: "0 6px" }}>
             <span className="dot" /> update
           </span>
@@ -318,6 +363,58 @@ export function NodeUpdateChip() {
               {feed.loading ? "Checking…" : "Check for node updates"}
             </button>
           </div>
+
+          {confirm && confirm.phase !== "confirmed" ? (
+            <div
+              className={
+                confirm.phase === "confirming" ? "halo halo--info" : "halo halo--warn"
+              }
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                margin: "10px 0 2px",
+                padding: "8px 10px",
+                lineHeight: 1.5,
+                whiteSpace: "normal",
+              }}
+            >
+              <span style={{ flex: 1, fontSize: 11 }}>
+                {confirm.phase === "confirming" ? (
+                  <>
+                    Applying <b className="mono">{confirm.targetTag ?? "the new version"}</b> — node
+                    rebooting and catching up.{" "}
+                    {confirm.slow
+                      ? "This is taking longer than usual; a full controlplane reconverge can take up to ~20 minutes."
+                      : "Confirming it comes back on the new version."}
+                  </>
+                ) : confirm.phase === "not-confirmed" ? (
+                  <>
+                    The <b className="mono">{confirm.targetTag ?? "upgrade"}</b> upgrade was not
+                    confirmed — the node is reachable but still on its previous build.
+                  </>
+                ) : (
+                  <>
+                    <b className="mono">{confirm.targetTag ?? "The upgrade"}</b> — node is reachable,
+                    but its running commit could not be read to confirm the version.
+                  </>
+                )}
+              </span>
+              {confirm.phase === "not-confirmed" ? (
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={() => {
+                    setOpen(false);
+                    ops.retryOtaUpgrade();
+                  }}
+                  title="Re-open the guarded OS upgrade drawer for the same release."
+                >
+                  Retry upgrade
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <p style={{ fontSize: 11, color: "var(--fg-400)", margin: "6px 0 4px", lineHeight: 1.5 }}>
             {isUnidentified ? (
@@ -363,6 +460,42 @@ export function NodeUpdateChip() {
             pre-filled. You still review and confirm. Signed = cosign assets present on the release,
             not an on-device verification.
           </p>
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div
+          role="status"
+          className={toastSuccess ? "halo halo--ok" : "halo halo--info"}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            right: 0,
+            width: 320,
+            zIndex: 600,
+            padding: "10px 12px",
+            lineHeight: 1.5,
+            whiteSpace: "normal",
+            background: "var(--ink-200)",
+            border: "1px solid var(--glass-stroke-hi)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-3)",
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+          }}
+        >
+          <span className="dot" style={{ marginTop: 4 }} />
+          <span style={{ flex: 1, fontSize: 11.5 }}>{toast}</span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={dismissOtaConfirm}
+            aria-label="Dismiss"
+            style={{ padding: "0 6px" }}
+          >
+            ✕
+          </button>
         </div>
       ) : null}
     </div>

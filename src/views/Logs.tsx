@@ -597,7 +597,7 @@ export function Logs() {
               {status.kind === "connecting"
                 ? "Connecting to the node..."
                 : status.kind === "error"
-                  ? "Log stream failed. Check the Monarch OS connection in Settings."
+                  ? `Log stream failed: ${status.error}${/[.!?]$/.test(status.error.trim()) ? "" : "."} The node may still be healthy (other Talos calls like upgrades use the same API) — if this persists, check the Monarch OS connection in Settings.`
                   : status.kind === "local"
                     ? "No log stream selected."
                     : query.trim()

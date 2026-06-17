@@ -205,6 +205,15 @@ export type OtaApplyInput = {
   image: string;
   stage: boolean;
   rebootMode: OtaRebootMode;
+  /** The applied release's `monoCoreCommit`, carried so the OTA flow can
+   *  CONFIRM the node came back on the NEW build (compare against the node's
+   *  running `runtime.gitCommit`) rather than only that it is reachable.
+   *  Optional: a manually-typed image has no release identity to confirm against. */
+  targetMonoCoreCommit?: string;
+  /** The applied release's friendly tag (e.g. `v0.1.60-testnet`), shown during
+   *  the reconnect/confirm window so the node-version chip reads the tag the
+   *  operator just applied instead of a bare `dev <commit>` / `0.1.0+<gitsha>`. */
+  targetTag?: string;
 };
 
 // Inputs for the protocore log retention ops (`set-log-retention` and
