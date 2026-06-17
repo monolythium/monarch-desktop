@@ -2,47 +2,51 @@
 // `nav/routes.ts` so SideNav, the ⌘K palette, and the `g+letter`
 // nav-keys hook share one registry. Active item gets a gold halo
 // accent (gold-discipline rule: primary action only).
+//
+// Every top-level surface is shown, grouped by the route's own `group`
+// field. Pure sub-flows / one-shot utilities (`/welcome`, `/setup-operator`,
+// `/setup-cluster`) are hidden — they are reached from within a flow, not the
+// rail. Each item renders its real lucide icon (see components/icons).
 
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { getVersion } from "@tauri-apps/api/app";
-import { NAV_ROUTES } from "../nav/routes";
+import { NAV_ROUTES, type NavRoute } from "../nav/routes";
 import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { rpcEndpoint, useChainStatus, useNodeStatus } from "../sdk";
+import { RouteIcon } from "./icons";
 
-type SidebarGroup = "Start" | "Operate" | "Node" | "System";
+type SidebarGroup = NavRoute["group"];
 
-const GROUP_ORDER: readonly SidebarGroup[] = ["Start", "Operate", "Node", "System"];
-const SETUP_FIRST_GROUP_ORDER: readonly SidebarGroup[] = ["Start", "Operate", "Node", "System"];
+// Group display order. Home stays first under Operator (NAV_ROUTES order).
+const GROUP_ORDER: readonly SidebarGroup[] = [
+  "Operator",
+  "Cluster",
+  "Node service",
+  "Chain",
+  "Setup",
+];
 
-// Keep the primary rail calm. All routes remain searchable through Cmd+K and
-// reachable by URL; the sidebar only shows the surfaces a new operator needs
-// every day.
-const SIDEBAR_PATHS = new Set([
-  "/setup",
-  "/home",
-  "/operator",
-  "/cluster",
-  "/operations",
-  "/services",
-  "/hardware",
-  "/metrics",
-  "/logs",
-  "/settings",
+// When no operator key is stored yet, surface Setup FIRST — a brand-new
+// operator should see the wizard / Install / Keys before the dashboards.
+const SETUP_FIRST_GROUP_ORDER: readonly SidebarGroup[] = [
+  "Setup",
+  "Operator",
+  "Cluster",
+  "Node service",
+  "Chain",
+];
+
+// Pure sub-flows and one-shot utilities that are entered from inside another
+// flow, not the rail. The root redirect (`/`) and the headless Ask backing
+// route (`/ask`, if registered) are excluded the same way.
+const HIDDEN_PATHS = new Set([
+  "/",
+  "/ask",
+  "/welcome",
+  "/setup-operator",
+  "/setup-cluster",
 ]);
-
-function sidebarGroup(path: string): SidebarGroup {
-  if (path === "/setup" || path === "/home") return "Start";
-  if (
-    path === "/services" ||
-    path === "/hardware" ||
-    path === "/metrics" ||
-    path === "/logs"
-  )
-    return "Node";
-  if (path === "/settings") return "System";
-  return "Operate";
-}
 
 function sidebarLabel(path: string, label: string): string {
   if (path === "/setup") return "Setup";
@@ -66,16 +70,17 @@ export function SideNav() {
       cancelled = true;
     };
   }, []);
-  // Surface the Setup group FIRST while no operator key is stored — a
-  // brand-new operator should see the wizard / Install / Keys before dashboards.
+  // Surface the Setup group FIRST while no operator key is stored.
   const presence = useKeychainPresence();
   const order =
     !presence.checking && !presence.hasOperatorKey ? SETUP_FIRST_GROUP_ORDER : GROUP_ORDER;
-  const sidebarRoutes = NAV_ROUTES.filter((r) => SIDEBAR_PATHS.has(r.path) && !r.preview);
-  const grouped: { label: SidebarGroup; items: typeof sidebarRoutes }[] = order
+  // Every registered surface except sub-flows / utilities. Preview routes
+  // (mock-data design screens) stay reachable via ⌘K / URL but off the rail.
+  const sidebarRoutes = NAV_ROUTES.filter((r) => !HIDDEN_PATHS.has(r.path) && !r.preview);
+  const grouped: { label: SidebarGroup; items: NavRoute[] }[] = order
     .map((label) => ({
       label,
-      items: sidebarRoutes.filter((r) => sidebarGroup(r.path) === label),
+      items: sidebarRoutes.filter((r) => r.group === label),
     }))
     .filter((group) => group.items.length > 0);
   const chainId = chain.data?.chainId ?? status.chainId;
@@ -109,7 +114,9 @@ export function SideNav() {
                   }
                 >
                   <span className="monarch-sidenav__item-main">
-                    <span className="monarch-sidenav__icon" aria-hidden>{item.icon}</span>
+                    <span className="monarch-sidenav__icon" aria-hidden>
+                      <RouteIcon path={item.path} size={14} />
+                    </span>
                     <span>{sidebarLabel(item.path, item.label)}</span>
                   </span>
                 </NavLink>

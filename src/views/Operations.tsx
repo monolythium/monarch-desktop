@@ -3,29 +3,44 @@
 import { useMemo, useState } from "react";
 import { useKeychainPresence } from "../hooks/useSelfOperator";
 import { OP_CATALOG, useOps } from "../ops";
-import type { OpCatalogEntry, OpCategory } from "../ops/catalog";
+import {
+  OP_BANDS,
+  actionBadge,
+  bandHeading,
+  type OpCatalogEntry,
+  type OpCategory,
+} from "../ops/catalog";
 import { FOUNDATION_OP_KINDS } from "../ops/errors";
 import type { OpKind } from "../ops/types";
+import { OpIcon } from "../components/icons";
 
 type CategoryFilter = "all" | OpCategory;
 
 const CATEGORY_LABELS: Record<CategoryFilter, string> = {
   all: "All",
-  system: "Node",
-  cluster: "Operator",
-  keys: "Keys",
-  treasury: "Funds",
-  emergency: "Recovery",
+  system: OP_BANDS.system.label,
+  cluster: OP_BANDS.cluster.label,
+  keys: OP_BANDS.keys.label,
+  treasury: OP_BANDS.treasury.label,
+  emergency: OP_BANDS.emergency.label,
 };
 
-const CATEGORY_ORDER: CategoryFilter[] = [
-  "all",
+// Bands are shown in numeric order so the page reads 1→100 top to bottom.
+const BAND_ORDER: OpCategory[] = [
   "system",
   "cluster",
   "keys",
   "treasury",
   "emergency",
 ];
+
+const CATEGORY_ORDER: CategoryFilter[] = ["all", ...BAND_ORDER];
+
+// kind → action number, so the (schema-stable) receipt rows can show the
+// reference number without persisting it into the hashed audit payload.
+const ACTION_NUMBER_BY_KIND: Partial<Record<OpKind, number>> = Object.fromEntries(
+  OP_CATALOG.map((entry) => [entry.kind, entry.actionNumber]),
+);
 
 function formatReceiptTime(value: string): string {
   const date = new Date(value);
@@ -48,6 +63,10 @@ function searchableText(v: OpCatalogEntry): string {
     v.sub,
     v.kind,
     v.category,
+    // The reference number, both bare ("49") and badged ("#49"), so typing
+    // either finds the op.
+    String(v.actionNumber),
+    actionBadge(v),
     ...(v.keywords ?? []),
   ].join(" ").toLowerCase();
 }
@@ -86,11 +105,16 @@ function OpRow({
       onClick={() => onSelect(v.kind)}
     >
       <span className="ops-action__pick">
-        <span className="ops-action__icon">{v.icon ?? "OP"}</span>
+        <span className="ops-action__icon">
+          <OpIcon kind={v.kind} size={16} />
+        </span>
         <span className="ops-action__copy">
           <b>{v.title}</b>
           <small>{v.sub}</small>
         </span>
+      </span>
+      <span className="ops-action__num" title={`Action ${v.actionNumber}`}>
+        {actionBadge(v)}
       </span>
       <span className={`ops-action__risk risk risk--${risk}`}>{risk}</span>
     </button>
@@ -177,14 +201,25 @@ export function Operations() {
         <div className="ops-workbench">
           <div className="ops-action-list" aria-label="Available operations">
             {filteredCatalog.length > 0 ? (
-              filteredCatalog.map((v) => (
-                <OpRow
-                  key={v.kind}
-                  selected={selectedEntry?.kind === v.kind}
-                  v={v}
-                  onSelect={(kind) => setSelectedKind(kind)}
-                />
-              ))
+              BAND_ORDER.map((band) => {
+                const items = filteredCatalog
+                  .filter((entry) => entry.category === band)
+                  .sort((a, b) => a.actionNumber - b.actionNumber);
+                if (items.length === 0) return null;
+                return (
+                  <div className="ops-band" key={band}>
+                    <div className="ops-band__head cap">{bandHeading(band)}</div>
+                    {items.map((v) => (
+                      <OpRow
+                        key={v.kind}
+                        selected={selectedEntry?.kind === v.kind}
+                        v={v}
+                        onSelect={(kind) => setSelectedKind(kind)}
+                      />
+                    ))}
+                  </div>
+                );
+              })
             ) : (
               <div className="empty-state">No action matches this search.</div>
             )}
@@ -194,12 +229,20 @@ export function Operations() {
             {selectedEntry ? (
               <>
                 <div className="ops-detail__head">
-                  <span className="ops-action__icon">{selectedEntry.icon ?? "OP"}</span>
+                  <span className="ops-action__icon">
+                    <OpIcon kind={selectedEntry.kind} size={18} />
+                  </span>
                   <div>
-                    <div className="cap">{CATEGORY_LABELS[selectedEntry.category]}</div>
+                    <div className="cap">
+                      {CATEGORY_LABELS[selectedEntry.category]} · action{" "}
+                      {selectedEntry.actionNumber}
+                    </div>
                     <h2>{selectedEntry.title}</h2>
                     <p>{selectedEntry.sub}</p>
                   </div>
+                  <span className="ops-detail__num" title={`Action ${selectedEntry.actionNumber}`}>
+                    {actionBadge(selectedEntry)}
+                  </span>
                 </div>
                 <div className="ops-detail__tags">
                   <span className={`risk risk--${riskLabel(selectedEntry)}`}>
@@ -246,7 +289,17 @@ export function Operations() {
               <div className="ops-receipt" key={receipt.id}>
                 <span className={receipt.status === "ok" ? "dot" : "dot dot--err"} />
                 <div>
-                  <b>{receipt.title}</b>
+                  <b>
+                    {ACTION_NUMBER_BY_KIND[receipt.kind] !== undefined ? (
+                      <span
+                        className="ops-receipt__num"
+                        title={`Action ${ACTION_NUMBER_BY_KIND[receipt.kind]}`}
+                      >
+                        #{ACTION_NUMBER_BY_KIND[receipt.kind]}
+                      </span>
+                    ) : null}
+                    {receipt.title}
+                  </b>
                   <small>
                     {formatReceiptTime(receipt.createdAt)} · {receipt.transport}
                     {receipt.service ? ` · ${receipt.service}` : ""}

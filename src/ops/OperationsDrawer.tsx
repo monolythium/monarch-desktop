@@ -52,6 +52,7 @@ import { isRegisterInputComplete, RegisterForm } from "./RegisterForm";
 import { isRedelegateInputComplete, RedelegateForm } from "./RedelegateForm";
 import { isRestoreInputComplete, RestoreForm } from "./RestoreForm";
 import { OP_CATALOG } from "./catalog";
+import { OpIcon } from "../components/icons";
 import { translateOpError } from "./errors";
 import { liveDiffRows } from "./liveDiff";
 import {
@@ -493,6 +494,13 @@ export function OperationsDrawer() {
     translatedError?.nextStepRoute === "/wallets" && self.status === "ready"
       ? self.address
       : null;
+  // The drawer receives an OpRequest (no actionNumber); look the canonical
+  // catalog entry up by kind so the header can show the stable reference
+  // number an operator might be acting on ("run action 49"). Ask-proposed
+  // actions that aren't in the catalog simply omit the badge.
+  const catalogEntry = request
+    ? OP_CATALOG.find((entry) => entry.kind === request.kind)
+    : undefined;
 
   return (
     <>
@@ -509,7 +517,7 @@ export function OperationsDrawer() {
       >
         <header className="drawer__head">
           <div className="drawer__icon" aria-hidden>
-            {request?.icon ?? "OP"}
+            {request ? <OpIcon kind={request.kind} size={18} /> : "OP"}
           </div>
           <div>
             <h2>{request?.title ?? "Operation"}</h2>
@@ -517,6 +525,11 @@ export function OperationsDrawer() {
             {request ? (
               <span className={`risk risk--${request.risk ?? (request.destructive ? "high" : "low")}`}>
                 {request.risk ?? (request.destructive ? "high" : "low")} risk
+              </span>
+            ) : null}
+            {catalogEntry ? (
+              <span className="drawer__num" title={`Action ${catalogEntry.actionNumber}`}>
+                #{catalogEntry.actionNumber}
               </span>
             ) : null}
           </div>

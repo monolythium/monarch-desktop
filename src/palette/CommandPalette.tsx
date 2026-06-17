@@ -15,11 +15,14 @@
 
 import { Command } from "cmdk";
 import { Title as DialogTitle } from "@radix-ui/react-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { MessagesSquare, Clipboard, Search } from "lucide-react";
 import { NAV_ROUTES } from "../nav/routes";
 import { OP_CATALOG, useOps } from "../ops";
+import { actionBadge } from "../ops/catalog";
 import { FOUNDATION_OP_KINDS } from "../ops/errors";
+import { OpIcon, RouteIcon } from "../components/icons";
 import { rpc, rpcEndpoint } from "../sdk/client";
 import { useKeychainPresence, useSelfOperator } from "../hooks/useSelfOperator";
 import "../styles/livedata.css";
@@ -54,10 +57,10 @@ const ASK_QUERIES: AskQuery[] = [
 ];
 
 type Item =
-  | { kind: "route"; id: string; label: string; sub: string; keywords: string[]; path: string; icon: string }
-  | { kind: "op"; id: string; label: string; sub: string; keywords: string[]; opIndex: number; icon: string }
-  | { kind: "ask"; id: string; label: string; sub: string; keywords: string[]; query: string; icon: string }
-  | { kind: "copy"; id: string; label: string; sub: string; keywords: string[]; text: string; icon: string };
+  | { kind: "route"; id: string; label: string; sub: string; keywords: string[]; path: string; icon: ReactNode }
+  | { kind: "op"; id: string; label: string; sub: string; keywords: string[]; opIndex: number; icon: ReactNode }
+  | { kind: "ask"; id: string; label: string; sub: string; keywords: string[]; query: string; icon: ReactNode }
+  | { kind: "copy"; id: string; label: string; sub: string; keywords: string[]; text: string; icon: ReactNode };
 
 type ChainHit = {
   id: string;
@@ -189,7 +192,7 @@ function buildItems(
     sub: `${r.group} · ${r.hint}`,
     keywords: [...r.keywords, r.label.toLowerCase()],
     path: r.path,
-    icon: r.icon,
+    icon: <RouteIcon path={r.path} size={15} />,
   }));
   const ops: Item[] = OP_CATALOG.flatMap((o, i) =>
     !hasFoundationKey && FOUNDATION_OP_KINDS.has(o.kind)
@@ -197,16 +200,21 @@ function buildItems(
       : [{
           kind: "op" as const,
           id: `op:${o.kind}`,
-          label: o.title,
+          // Surface the stable reference number in the label so an operator
+          // can find "action 49" at a glance.
+          label: `${actionBadge(o)} ${o.title}`,
           sub: `${o.category} · ${o.sub}`,
           keywords: [
             o.category,
             o.kind,
+            // Both bare and badged forms so typing "49" or "#49" matches.
+            String(o.actionNumber),
+            actionBadge(o),
             ...(o.keywords ?? []),
             o.title.toLowerCase(),
           ],
           opIndex: i,
-          icon: o.icon ?? "OP",
+          icon: <OpIcon kind={o.kind} size={15} />,
         }],
   );
   const ask: Item[] = ASK_QUERIES.map((s, i) => ({
@@ -216,8 +224,9 @@ function buildItems(
     sub: s.query,
     keywords: s.keywords,
     query: s.query,
-    icon: "ASK",
+    icon: <MessagesSquare size={15} strokeWidth={1.6} aria-hidden />,
   }));
+  const copyIcon = <Clipboard size={15} strokeWidth={1.6} aria-hidden />;
   const copies: Item[] = [
     {
       kind: "copy",
@@ -226,7 +235,7 @@ function buildItems(
       sub: rpcEndpoint,
       keywords: ["copy", "rpc", "endpoint", "node", "url"],
       text: rpcEndpoint,
-      icon: "CP",
+      icon: copyIcon,
     },
   ];
   if (selfAddress) {
@@ -237,7 +246,7 @@ function buildItems(
       sub: selfAddress,
       keywords: ["copy", "operator", "address", "wallet", "mono1"],
       text: selfAddress,
-      icon: "CP",
+      icon: copyIcon,
     });
   }
   if (selfOperatorId) {
@@ -248,7 +257,7 @@ function buildItems(
       sub: shortId(selfOperatorId),
       keywords: ["copy", "operator", "id", "peer"],
       text: selfOperatorId,
-      icon: "CP",
+      icon: copyIcon,
     });
   }
   return [...routes, ...ops, ...ask, ...copies];
@@ -422,7 +431,9 @@ export function CommandPalette({
               onSelect={() => selectChainHit(hit)}
               className="cmdk-item"
             >
-              <span className="cmdk-item__icon">CH</span>
+              <span className="cmdk-item__icon">
+                <Search size={15} strokeWidth={1.6} aria-hidden />
+              </span>
               <span className="cmdk-item__label">{hit.label}</span>
               <span className="cmdk-item__sub">{hit.sub}</span>
             </Command.Item>

@@ -2153,7 +2153,7 @@ kbd {
 
 .ops-action {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -2162,6 +2162,36 @@ kbd {
   background: transparent;
   color: inherit;
   text-align: left;
+}
+
+/* Stable reference number badge (e.g. #49) shown on each op row. */
+.ops-action__num {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold);
+  border: 1px solid rgba(var(--gold-glow), 0.3);
+  border-radius: 999px;
+  padding: 1px 8px;
+  min-width: 34px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Numbered band group + range header on the Operations list. */
+.ops-band__head {
+  padding: 12px 12px 6px;
+  border-bottom: 1px solid var(--glass-stroke);
+  color: var(--fg-400);
+}
+
+/* Prominent reference number on the selected-op detail head. */
+.ops-detail__num {
+  font-family: var(--f-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gold);
+  align-self: start;
 }
 
 .ops-action:hover,
@@ -2244,7 +2274,7 @@ kbd {
 
 .ops-detail__head {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
 }
@@ -2362,6 +2392,14 @@ kbd {
   color: var(--fg-100);
   font-size: 12.5px;
   font-weight: 500;
+}
+
+.ops-receipt__num {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold);
+  margin-right: 6px;
 }
 
 .ops-receipt small {
@@ -2891,6 +2929,19 @@ kbd {
   font-size: 11px;
   color: var(--fg-400);
   margin-bottom: 8px;
+}
+
+/* Stable reference number (e.g. #49) on the drawer header. */
+.drawer__num {
+  display: inline-block;
+  margin-left: 8px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gold);
+  border: 1px solid rgba(var(--gold-glow), 0.3);
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 .drawer__close {

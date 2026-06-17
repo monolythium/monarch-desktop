@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.51",
+    date: "2026-06-17",
+    highlights: [
+      "Real icons everywhere: the sidebar and Operations now use proper icons instead of the old two-letter placeholders, so each surface and action reads at a glance.",
+      "Every surface is in the sidebar now, grouped by area (Operator, Cluster, Node service, Chain, Setup) — nothing is hidden behind Cmd+K or a URL anymore.",
+      "Operations are numbered so you can reference one directly — e.g. \"run action 49\". Numbers are grouped into bands by area: Node operations 1–20, Operator 21–40, Keys 41–60, Funds 61–80, Recovery 81–100. The number shows on each action, in the command palette, and on the review drawer and receipts; you can also type a number into the Operations search or Cmd+K to jump straight to it.",
+    ],
+  },
+  {
     version: "0.0.50",
     date: "2026-06-17",
     highlights: [

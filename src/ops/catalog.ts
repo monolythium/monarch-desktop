@@ -10,16 +10,52 @@ export type OpCategory =
   | "treasury"
   | "emergency";
 
+// Stable reference numbers. Each category maps to a numbered BAND so an
+// operator can say "run action 49" and find it deterministically. Numbers are
+// assigned EXPLICITLY per op (`actionNumber` below), never derived from array
+// order, so inserting a new op never renumbers an existing one. Add a new op
+// at the next free number in its band's range.
+export type OpBand = {
+  /** Operator-facing section heading, e.g. "Node operations". */
+  label: string;
+  /** Inclusive range for this band. */
+  min: number;
+  max: number;
+};
+
+export const OP_BANDS: Record<OpCategory, OpBand> = {
+  system: { label: "Node operations", min: 1, max: 20 },
+  cluster: { label: "Operator", min: 21, max: 40 },
+  keys: { label: "Keys", min: 41, max: 60 },
+  treasury: { label: "Funds", min: 61, max: 80 },
+  emergency: { label: "Recovery", min: 81, max: 100 },
+};
+
 export type OpCatalogEntry = OpRequest & {
   category: OpCategory;
+  /** Stable, explicit reference number within the category's band (see
+   *  OP_BANDS). Lets an operator reference an op as "action 49". */
+  actionNumber: number;
   /** Short keywords surfaced to the fuzzy matcher. */
   keywords?: string[];
 };
+
+/** Format an op's reference number as a badge string, e.g. `#49`. */
+export function actionBadge(entry: { actionNumber: number }): string {
+  return `#${entry.actionNumber}`;
+}
+
+/** Format a band's range for a section header, e.g. `Node operations · 1–20`. */
+export function bandHeading(category: OpCategory): string {
+  const band = OP_BANDS[category];
+  return `${band.label} · ${band.min}–${band.max}`;
+}
 
 export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-register",
     category: "cluster",
+    actionNumber: 21,
     icon: "RG",
     risk: "high",
     title: "Register operator",
@@ -50,6 +86,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-restore",
     category: "cluster",
+    actionNumber: 22,
     icon: "UJ",
     risk: "medium",
     title: "Restore operator",
@@ -80,6 +117,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-display",
     category: "cluster",
+    actionNumber: 23,
     icon: "ID",
     risk: "medium",
     title: "Set operator name",
@@ -110,6 +148,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-seal-key",
     category: "cluster",
+    actionNumber: 24,
     icon: "SK",
     risk: "medium",
     title: "Publish seal key",
@@ -140,6 +179,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "chat-bootstrap-peers",
     category: "cluster",
+    actionNumber: 25,
     icon: "CP",
     risk: "medium",
     title: "Publish chat peers",
@@ -170,6 +210,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-name-register",
     category: "cluster",
+    actionNumber: 26,
     icon: "CN",
     risk: "medium",
     title: "Set cluster name",
@@ -200,6 +241,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "rotate-keys",
     category: "keys",
+    actionNumber: 41,
     icon: "KY",
     risk: "high",
     title: "Rotate signing share",
@@ -230,6 +272,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-restart",
     category: "system",
+    actionNumber: 1,
     icon: "RS",
     risk: "low",
     title: "Graceful restart",
@@ -256,6 +299,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "set-log-retention",
     category: "system",
+    actionNumber: 2,
     icon: "LR",
     risk: "low",
     title: "Set log retention",
@@ -284,6 +328,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "clean-protocore-logs",
     category: "system",
+    actionNumber: 3,
     icon: "CL",
     risk: "high",
     title: "Clean up logs",
@@ -313,6 +358,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-stop",
     category: "system",
+    actionNumber: 4,
     icon: "ST",
     risk: "high",
     title: "Stop operator node",
@@ -330,6 +376,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-start",
     category: "system",
+    actionNumber: 5,
     icon: "GO",
     risk: "low",
     title: "Start operator node",
@@ -347,6 +394,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "redelegate",
     category: "treasury",
+    actionNumber: 61,
     icon: "RD",
     risk: "high",
     title: "Redelegate stake",
@@ -377,6 +425,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "export-backup",
     category: "keys",
+    actionNumber: 42,
     icon: "BK",
     risk: "medium",
     title: "Export backup",
@@ -407,6 +456,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "ota-apply",
     category: "system",
+    actionNumber: 6,
     icon: "UP",
     risk: "high",
     title: "Apply OS upgrade",
@@ -438,6 +488,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "ota-rollback",
     category: "system",
+    actionNumber: 7,
     icon: "RB",
     risk: "high",
     title: "Rollback OS image",
@@ -467,6 +518,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-reprovision",
     category: "emergency",
+    actionNumber: 81,
     icon: "WP",
     risk: "high",
     title: "Re-enroll as a new node (wipe keys)",
@@ -515,6 +567,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-recover-keys",
     category: "emergency",
+    actionNumber: 82,
     icon: "RK",
     risk: "high",
     title: "Re-provision with existing keys",
@@ -562,6 +615,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "operator-bootstrap",
     category: "emergency",
+    actionNumber: 83,
     icon: "BS",
     risk: "low",
     title: "Bootstrap node (etcd)",
@@ -588,6 +642,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-form",
     category: "cluster",
+    actionNumber: 27,
     icon: "FC",
     risk: "high",
     title: "Form cluster",
@@ -618,6 +673,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-update-charter",
     category: "cluster",
+    actionNumber: 28,
     icon: "UC",
     risk: "high",
     title: "Amend cluster charter",
@@ -649,6 +705,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-request-join",
     category: "cluster",
+    actionNumber: 29,
     icon: "RJ",
     risk: "high",
     title: "Request cluster join",
@@ -679,6 +736,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-vote-admit",
     category: "cluster",
+    actionNumber: 30,
     icon: "VA",
     risk: "high",
     title: "Vote to admit operator",
@@ -709,6 +767,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-resign",
     category: "cluster",
+    actionNumber: 31,
     icon: "RN",
     risk: "high",
     title: "Resign from cluster",
@@ -739,6 +798,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-accept-invite",
     category: "cluster",
+    actionNumber: 32,
     icon: "IN",
     risk: "high",
     title: "Accept cluster invite",
@@ -769,6 +829,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-swap",
     category: "cluster",
+    actionNumber: 33,
     icon: "SW",
     risk: "high",
     title: "Cluster slot change",
@@ -800,6 +861,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "freeze-admission",
     category: "emergency",
+    actionNumber: 84,
     icon: "FR",
     risk: "high",
     title: "Freeze admission",
@@ -830,6 +892,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "emergency-key-rotation",
     category: "emergency",
+    actionNumber: 85,
     icon: "ER",
     risk: "high",
     title: "Emergency key rotation",

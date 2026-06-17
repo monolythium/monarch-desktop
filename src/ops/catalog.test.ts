@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { OP_CATALOG } from "./catalog";
+import { OP_BANDS, OP_CATALOG, actionBadge, bandHeading } from "./catalog";
+import type { OpCategory } from "./catalog";
 import { OP_KINDS } from "./types";
 
 /** Intro + demoted technical-details prose, so executor-signature
@@ -204,5 +205,70 @@ describe("operation catalog", () => {
     for (const entry of OP_CATALOG) {
       expect(specTokens.test(entry.intro), `${entry.kind} intro leaks spec prose`).toBe(false);
     }
+  });
+
+  describe("action-number bands", () => {
+    const EXPECTED_RANGES: Record<OpCategory, [number, number]> = {
+      system: [1, 20],
+      cluster: [21, 40],
+      keys: [41, 60],
+      treasury: [61, 80],
+      emergency: [81, 100],
+    };
+
+    it("declares the documented band ranges", () => {
+      for (const [category, [min, max]] of Object.entries(EXPECTED_RANGES) as [
+        OpCategory,
+        [number, number],
+      ][]) {
+        expect(OP_BANDS[category].min, `${category} min`).toBe(min);
+        expect(OP_BANDS[category].max, `${category} max`).toBe(max);
+      }
+    });
+
+    it("gives every op a number inside its category's band", () => {
+      for (const entry of OP_CATALOG) {
+        const [min, max] = EXPECTED_RANGES[entry.category];
+        expect(
+          entry.actionNumber >= min && entry.actionNumber <= max,
+          `${entry.kind} (#${entry.actionNumber}) must be within ${entry.category} band ${min}–${max}`,
+        ).toBe(true);
+        expect(Number.isInteger(entry.actionNumber), `${entry.kind} number must be an integer`).toBe(true);
+      }
+    });
+
+    it("uses every action number at most once", () => {
+      const numbers = OP_CATALOG.map((entry) => entry.actionNumber);
+      expect(new Set(numbers).size, "action numbers must be unique").toBe(numbers.length);
+    });
+
+    it("assigns numbers sequentially within each band, in catalog order", () => {
+      const byBand = new Map<OpCategory, number[]>();
+      for (const entry of OP_CATALOG) {
+        const list = byBand.get(entry.category) ?? [];
+        list.push(entry.actionNumber);
+        byBand.set(entry.category, list);
+      }
+      for (const [category, numbers] of byBand) {
+        const min = OP_BANDS[category].min;
+        const expected = numbers.map((_, i) => min + i);
+        expect(numbers, `${category} numbers run sequentially from ${min}`).toEqual(expected);
+      }
+    });
+
+    it("formats badges and band headings", () => {
+      const register = OP_CATALOG.find((entry) => entry.kind === "operator-register");
+      expect(register?.actionNumber).toBe(21);
+      expect(actionBadge({ actionNumber: 49 })).toBe("#49");
+      expect(bandHeading("system")).toBe("Node operations · 1–20");
+      expect(bandHeading("emergency")).toBe("Recovery · 81–100");
+    });
+
+    it("keeps operator-seal-key in the Operator band (not moved to Keys)", () => {
+      const sealKey = OP_CATALOG.find((entry) => entry.kind === "operator-seal-key");
+      expect(sealKey?.category).toBe("cluster");
+      expect(sealKey?.actionNumber).toBeGreaterThanOrEqual(OP_BANDS.cluster.min);
+      expect(sealKey?.actionNumber).toBeLessThanOrEqual(OP_BANDS.cluster.max);
+    });
   });
 });
