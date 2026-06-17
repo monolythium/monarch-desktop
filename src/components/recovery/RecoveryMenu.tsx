@@ -29,16 +29,24 @@ type NodeTarget = { host: string | null; disk: string | null };
  *  the connected node's address; the disk is its system disk. Best-effort —
  *  the recover-keys op fails closed with a clear message if either is missing. */
 async function resolveNodeTarget(): Promise<NodeTarget> {
-  const status = await talosStatus().catch(() => null);
-  const host = status?.nodeAddress || status?.endpoint || null;
+  // Host telemetry carries BOTH the host (nodeAddress/endpoint) and the disk
+  // list, so resolve both from it in one shot; fall back to talosStatus for the
+  // host if telemetry is unavailable. Best-effort — the recover-keys op fails
+  // closed with a clear message if either is still missing.
+  let host: string | null = null;
   let disk: string | null = null;
   try {
     const telemetry = await talosHostTelemetry();
+    host = telemetry.nodeAddress || telemetry.endpoint || null;
     const system = telemetry.disks.find((d) => d.systemDisk && !d.readonly);
     const fallback = telemetry.disks.find((d) => !d.readonly);
     disk = (system ?? fallback)?.deviceName ?? null;
   } catch {
-    disk = null;
+    /* telemetry unavailable — fall through to talosStatus for the host */
+  }
+  if (!host) {
+    const status = await talosStatus().catch(() => null);
+    host = status?.nodeAddress || status?.endpoint || null;
   }
   return { host, disk };
 }
@@ -79,7 +87,17 @@ export function RecoveryMenu({ quarantineReason }: { quarantineReason: string | 
     });
   }, [ops, target.host]);
 
-  const onRecoverKeys = useCallback(() => {
+  const onRecoverKeys = useCallback(async () => {
+    // Resolve the node target FRESH at click time. The mount-time snapshot can
+    // be empty if the panel rendered before the node connection was ready (and
+    // it is never re-resolved), which made the recover-keys op fail closed with
+    // "missing host or install disk" even after the operator connected. Resolving
+    // here picks up the current connection; we still fall back to any earlier
+    // snapshot, and the op fails closed only if both are genuinely empty.
+    const fresh = await resolveNodeTarget();
+    if (fresh.host || fresh.disk) setTarget(fresh);
+    const host = fresh.host ?? target.host;
+    const disk = fresh.disk ?? target.disk;
     ops.requestOp({
       kind: "operator-recover-keys",
       title: "Re-provision with existing keys",
@@ -92,14 +110,14 @@ export function RecoveryMenu({ quarantineReason }: { quarantineReason: string | 
       destructive: true,
       confirmLabel: "Recover & keep my seat",
       fields: [
-        { key: "node", label: "Node", value: target.host ?? "configured Talos node" },
-        { key: "disk", label: "Install disk", value: target.disk ?? "node system disk" },
+        { key: "node", label: "Node", value: host ?? "configured Talos node" },
+        { key: "disk", label: "Install disk", value: disk ?? "node system disk" },
         { key: "operator", label: "Operator", value: self.operatorId ?? "your registered operator" },
         { key: "mnemonic", label: "Mnemonic source", value: "this computer's OS keychain" },
       ],
       recoverKeysInput: {
-        host: target.host ?? "",
-        disk: target.disk ?? "",
+        host: host ?? "",
+        disk: disk ?? "",
         operatorId: self.operatorId ?? undefined,
       },
     });
