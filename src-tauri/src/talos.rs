@@ -1676,7 +1676,8 @@ fn cpu_busy_jiffies(stat: &machine::CpuStat) -> f64 {
 
 /// CPU busy percent (0..100) from two `cpu_total` snapshots taken a short
 /// interval apart: `busy_delta / total_delta`. `None` when the deltas are
-/// non-positive (no movement / counter reset) — never a fabricated value.
+/// non-positive (no movement / counter reset) — it returns nothing rather than
+/// a guessed reading.
 fn cpu_busy_percent(first: &machine::CpuStat, second: &machine::CpuStat) -> Option<f64> {
     let total_delta = cpu_total_jiffies(second) - cpu_total_jiffies(first);
     let busy_delta = cpu_busy_jiffies(second) - cpu_busy_jiffies(first);
