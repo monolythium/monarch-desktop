@@ -239,6 +239,29 @@ export type TalosLogDiskUsage = {
   files: TalosLogFile[];
 };
 
+/** Disk usage of the protocore DATA directory (`/var/lib/protocore`), from the
+ *  Talos `DiskUsage` RPC. Pure read. Mirrors the Rust `TalosDataDirUsage`. The
+ *  Hardware view divides this by node uptime for a first-open growth estimate. */
+export type TalosDataDirUsage = {
+  endpoint: string;
+  nodeAddress: string;
+  path: string;
+  /** Total bytes under `path` as reported by `du`. */
+  totalBytes: number;
+};
+
+/** One persisted local hardware sample. Mirrors the Rust `hw_store::HwSample`
+ *  and the pure `hwTrends.HwSample`. Bytes are absolute; `ts` is UNIX ms. */
+export type HwSample = {
+  ts: number;
+  diskUsed: number;
+  diskTotal: number;
+  /** CPU busy percent (0..100), or -1 when the node couldn't report it. */
+  cpuPct: number;
+  memUsed: number;
+  memTotal: number;
+};
+
 export type TalosBackupResult = {
   endpoint: string;
   nodeAddress: string;
@@ -334,6 +357,11 @@ export type TalosHostTelemetry = {
   endpoint: string;
   nodeAddress: string;
   loadAverage: TalosLoadAverage | null;
+  /** CPU busy percent (0..100) over a short sampling window, or null when the
+   *  node didn't report usable CPU counters. */
+  cpuUsedPercent: number | null;
+  /** Logical CPU count the node reported, or null. */
+  cpuCount: number | null;
   memory: TalosMemoryTelemetry | null;
   mounts: TalosMountTelemetry[];
   network: TalosNetworkTelemetry[];
@@ -686,6 +714,31 @@ export async function talosLogDiskUsage(): Promise<TalosLogDiskUsage> {
     throw new Error("talos_log_disk_usage unavailable — running outside Tauri");
   }
   return await invoke<TalosLogDiskUsage>("talos_log_disk_usage");
+}
+
+/** Read the protocore DATA directory's size (`/var/lib/protocore`) over the
+ *  Talos `DiskUsage` RPC. Pure read — paired with node uptime, this gives the
+ *  Hardware view an immediate disk-growth estimate before local samples accrue. */
+export async function talosDataDirUsage(): Promise<TalosDataDirUsage> {
+  if (!inTauri()) {
+    throw new Error("talos_data_dir_usage unavailable — running outside Tauri");
+  }
+  return await invoke<TalosDataDirUsage>("talos_data_dir_usage");
+}
+
+/** Append one local hardware sample (disk/CPU/RAM) to the on-disk time-series
+ *  so trends survive an app restart. No-op outside Tauri. Best-effort: a failed
+ *  record never blocks the live snapshot the view already shows. */
+export async function recordHwSample(sample: HwSample): Promise<void> {
+  if (!inTauri()) return;
+  await invoke<void>("record_hw_sample", { sample });
+}
+
+/** Query persisted hardware samples with `ts >= sinceMs`, oldest first. Returns
+ *  an empty list outside Tauri (the browser preview has no local store). */
+export async function queryHwSamples(sinceMs: number): Promise<HwSample[]> {
+  if (!inTauri()) return [];
+  return await invoke<HwSample[]>("query_hw_samples", { sinceMs });
 }
 
 /** Install / refresh the protocore log retention bound on a running node via an

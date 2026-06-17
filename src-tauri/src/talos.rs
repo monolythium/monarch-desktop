@@ -44,15 +44,15 @@ const PROTOCORE_RPC_TIMEOUT: Duration = Duration::from_secs(4);
 // read, so it gets a more forgiving budget than the 4s health bridges.
 const RPC_PROXY_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_SERVICE_ID: &str = "ext-protocore";
-// Talos routes `MachineService.Logs` on the request shape. A request keyed on
-// the containerd `system` namespace with the Containerd driver reads CRI
-// container logs — but `ext-protocore` is a Talos extension *service*, not a
-// containerd container, so that request opens an empty stream and never emits
-// a chunk. `talosctl logs ext-protocore` (no `-k`, no `--namespace`) reads the
-// *service* log instead: empty namespace + default driver, keyed on `id`. We
-// mirror that exact shape so the follow/one-shot tails actually carry the
-// protocore process stdout/stderr that the extension captures.
-const TALOS_SERVICE_LOG_NAMESPACE: &str = "";
+// Talos `MachineService.Logs` requires a NON-EMPTY namespace — an empty one is
+// rejected with `InvalidArgument: "namespace can't be empty"` (observed live on
+// Talos v1.13.0; the prior empty value left the Logs panel dead). `ext-protocore`
+// is a Talos extension service that runs as a containerd container in the
+// `system` namespace, so `talosctl logs ext-protocore` reads it with namespace
+// `system` + the Containerd driver. We mirror that exact shape so the
+// follow/one-shot tails carry the protocore process stdout/stderr the extension
+// captures.
+const TALOS_SERVICE_LOG_NAMESPACE: &str = "system";
 const PROTOCORE_DATA_DIR: &str = "/var/lib/protocore";
 // Where the protocore extension's systemd unit appends stdout/stderr
 // (`StandardOutput=append:/var/lib/protocore/logs/protocore.log`). The `append:`
@@ -300,6 +300,21 @@ pub struct TalosLogDiskUsage {
     pub files: Vec<TalosLogFile>,
 }
 
+/// Disk usage of the protocore data directory (`/var/lib/protocore` — the chain
+/// DB + resolved genesis + config), sourced from the Talos `DiskUsage` RPC. Pure
+/// read. The Hardware view pairs this byte total with the node's uptime to derive
+/// an *immediate* disk-growth pace before any local time-series has accrued.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalosDataDirUsage {
+    pub endpoint: String,
+    #[serde(rename = "nodeAddress")]
+    pub node_address: String,
+    pub path: String,
+    /// Total bytes under `path` as reported by `du`.
+    #[serde(rename = "totalBytes")]
+    pub total_bytes: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TalosBackupResult {
     pub endpoint: String,
@@ -448,6 +463,15 @@ pub struct TalosHostTelemetry {
     pub node_address: String,
     #[serde(rename = "loadAverage")]
     pub load_average: Option<TalosLoadAverage>,
+    /// CPU busy percent (0..100) over a short sampling window, computed from the
+    /// delta between two `SystemStat` reads. `None` when the node didn't report
+    /// usable CPU jiffies (the snapshot then falls back to the load average).
+    #[serde(rename = "cpuUsedPercent")]
+    pub cpu_used_percent: Option<f64>,
+    /// Number of logical CPUs the node reported (per-core `SystemStat` rows).
+    /// `None` when unavailable.
+    #[serde(rename = "cpuCount")]
+    pub cpu_count: Option<u32>,
     pub memory: Option<TalosMemoryTelemetry>,
     pub mounts: Vec<TalosMountTelemetry>,
     pub network: Vec<TalosNetworkTelemetry>,
@@ -1630,6 +1654,78 @@ fn load_average(response: machine::LoadAvgResponse) -> Option<TalosLoadAverage> 
         })
 }
 
+/// Total jiffies across every `CpuStat` field. Pure arithmetic on the node's
+/// own counters.
+fn cpu_total_jiffies(stat: &machine::CpuStat) -> f64 {
+    stat.user
+        + stat.nice
+        + stat.system
+        + stat.idle
+        + stat.iowait
+        + stat.irq
+        + stat.soft_irq
+        + stat.steal
+        + stat.guest
+        + stat.guest_nice
+}
+
+/// Non-idle jiffies (`idle` + `iowait` are the idle classes).
+fn cpu_busy_jiffies(stat: &machine::CpuStat) -> f64 {
+    (cpu_total_jiffies(stat) - stat.idle - stat.iowait).max(0.0)
+}
+
+/// CPU busy percent (0..100) from two `cpu_total` snapshots taken a short
+/// interval apart: `busy_delta / total_delta`. `None` when the deltas are
+/// non-positive (no movement / counter reset) — never a fabricated value.
+fn cpu_busy_percent(first: &machine::CpuStat, second: &machine::CpuStat) -> Option<f64> {
+    let total_delta = cpu_total_jiffies(second) - cpu_total_jiffies(first);
+    let busy_delta = cpu_busy_jiffies(second) - cpu_busy_jiffies(first);
+    if total_delta <= 0.0 || busy_delta < 0.0 {
+        return None;
+    }
+    Some(((busy_delta / total_delta) * 100.0).clamp(0.0, 100.0))
+}
+
+/// Pull the `cpu_total` CpuStat and the per-core count out of a `SystemStat`
+/// read. `(cpu_total, core_count)` — either component may be `None`.
+fn system_stat_cpu(
+    response: &machine::SystemStatResponse,
+) -> (Option<machine::CpuStat>, Option<u32>) {
+    let stat = response.messages.first();
+    let cpu_total = stat.and_then(|s| s.cpu_total);
+    let count = stat
+        .map(|s| s.cpu.len())
+        .filter(|n| *n > 0)
+        .map(|n| n as u32);
+    (cpu_total, count)
+}
+
+/// Sample CPU busy% over a short window via two `SystemStat` reads. Best-effort:
+/// any read failure (or no usable counters) yields `(None, count?)` so the rest
+/// of the telemetry still returns. PURE READ — `SystemStat` is the same RPC the
+/// node-status header already uses for uptime.
+async fn sample_cpu_usage(
+    client: &mut MachineServiceClient<talos_rust_client::Channel>,
+) -> (Option<f64>, Option<u32>) {
+    let first = match timeout(TALOS_TIMEOUT, client.system_stat(empty_request())).await {
+        Ok(Ok(resp)) => resp.into_inner(),
+        _ => return (None, None),
+    };
+    let (first_cpu, count) = system_stat_cpu(&first);
+    // Short window so the command stays snappy; CPU jiffies move every tick.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let second = match timeout(TALOS_TIMEOUT, client.system_stat(empty_request())).await {
+        Ok(Ok(resp)) => resp.into_inner(),
+        _ => return (None, count),
+    };
+    let (second_cpu, count2) = system_stat_cpu(&second);
+    let percent = match (first_cpu, second_cpu) {
+        (Some(a), Some(b)) => cpu_busy_percent(&a, &b),
+        _ => None,
+    };
+    (percent, count.or(count2))
+}
+
 fn memory_telemetry(response: machine::MemoryResponse) -> Option<TalosMemoryTelemetry> {
     let meminfo = response
         .messages
@@ -1753,6 +1849,10 @@ async fn fetch_host_telemetry(
     config_path: &str,
 ) -> Result<TalosHostTelemetry, TalosError> {
     let mut machine = machine_client(endpoint, config_path).await?;
+    // CPU busy% needs two SystemStat reads a short interval apart; do this first
+    // so the sampling window overlaps the other reads rather than adding latency
+    // serially. Best-effort — a failure leaves cpu_used_percent None.
+    let (cpu_used_percent, cpu_count) = sample_cpu_usage(&mut machine).await;
     let load = timeout(TALOS_TIMEOUT, machine.load_avg(empty_request()))
         .await
         .map_err(|_| TalosError::Timeout)?
@@ -1790,6 +1890,8 @@ async fn fetch_host_telemetry(
         endpoint: endpoint.to_string(),
         node_address: node_address(endpoint),
         load_average: load_average(load),
+        cpu_used_percent,
+        cpu_count,
         memory: memory_telemetry(memory),
         mounts: mount_telemetry(mounts),
         network: network_telemetry(network),
@@ -3741,6 +3843,72 @@ pub async fn talos_log_disk_usage(
     })
 }
 
+/// Sum the bytes under `path` via the Talos `DiskUsage` (`du`) RPC. Returns the
+/// directory aggregate when the node emits the dir entry, else the sum of the
+/// per-file rows it streamed. PURE READ.
+async fn disk_usage_total(
+    client: &mut MachineServiceClient<talos_rust_client::Channel>,
+    path: &str,
+) -> Result<i64, TalosError> {
+    timeout(TALOS_TIMEOUT, async {
+        let response = client
+            .disk_usage(machine::DiskUsageRequest {
+                recursion_depth: 0,
+                all: true,
+                threshold: 0,
+                paths: vec![path.to_string()],
+            })
+            .await?;
+        let mut stream = response.into_inner();
+        let mut dir_total: i64 = 0;
+        let mut file_sum: i64 = 0;
+        while let Some(item) = stream.next().await {
+            let info = item?;
+            if !info.error.is_empty() {
+                continue;
+            }
+            let is_dir_entry =
+                info.relative_name == "." || info.name.trim_end_matches('/') == path;
+            if is_dir_entry {
+                dir_total = dir_total.max(info.size);
+            } else {
+                file_sum += info.size;
+            }
+        }
+        Ok::<i64, talos_rust_client::tonic::Status>(if dir_total > 0 { dir_total } else { file_sum })
+    })
+    .await
+    .map_err(|_| TalosError::Timeout)?
+    .map_err(TalosError::from)
+}
+
+/// READ-ONLY size of the protocore DATA directory (`/var/lib/protocore`) via the
+/// Talos `DiskUsage` (`du`) RPC. Pure read — issues no state-changing call. The
+/// Hardware view divides this by the node's uptime for an immediate disk-growth
+/// pace so the "full in ~N days" projection has something to show before the
+/// local time-series has accrued enough points.
+#[tauri::command]
+pub async fn talos_data_dir_usage(
+    state: State<'_, TalosState>,
+) -> Result<TalosDataDirUsage, String> {
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    let mut client = machine_client(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let total_bytes = disk_usage_total(&mut client, PROTOCORE_DATA_DIR)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(TalosDataDirUsage {
+        node_address: node_address(&endpoint),
+        endpoint,
+        path: PROTOCORE_DATA_DIR.to_string(),
+        total_bytes,
+    })
+}
+
 // Where Talos persists the node's machine configuration. `ApplyConfiguration`
 // replaces this document set wholesale, so a retention change must re-apply the
 // COMPLETE config (v1alpha1 `Config` + the `ExtensionServiceConfig` doc), not a
@@ -4161,7 +4329,8 @@ pub async fn talos_clean_protocore_logs(
 mod tests {
     use super::{
         any_type_is, backup_paths, build_log_retention_env, classify_protocore_readiness,
-        endpoint_url, enforce_privileged_control_plane, first_version_info, format_fingerprint,
+        cpu_busy_percent, endpoint_url, enforce_privileged_control_plane, first_version_info,
+        format_fingerprint,
         is_post_dispatch_reboot_drop, machine_stage_label, merge_log_retention_into_config,
         node_address, normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64,
         parse_service_action, parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
@@ -4174,6 +4343,35 @@ mod tests {
     use serde_json::json;
     use talos_rust_client::generated::{google, machine};
     use talos_rust_client::tonic::{Code, Status};
+
+    fn cpu_stat(user: f64, system: f64, idle: f64, iowait: f64) -> machine::CpuStat {
+        machine::CpuStat {
+            user,
+            system,
+            idle,
+            iowait,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cpu_busy_percent_from_jiffy_delta() {
+        // Over the window: idle +60, busy (user+system) +40 → 40% busy.
+        let first = cpu_stat(100.0, 50.0, 1000.0, 0.0);
+        let second = cpu_stat(130.0, 60.0, 1060.0, 0.0);
+        let pct = cpu_busy_percent(&first, &second).unwrap();
+        assert!((pct - 40.0).abs() < 1e-9, "got {pct}");
+    }
+
+    #[test]
+    fn cpu_busy_percent_none_on_no_movement_or_reset() {
+        let stat = cpu_stat(100.0, 50.0, 1000.0, 0.0);
+        // No movement between reads → no usable delta.
+        assert!(cpu_busy_percent(&stat, &stat).is_none());
+        // Counter reset (second < first) → non-positive total delta.
+        let later = cpu_stat(10.0, 5.0, 100.0, 0.0);
+        assert!(cpu_busy_percent(&stat, &later).is_none());
+    }
 
     #[test]
     fn endpoint_url_adds_scheme_and_default_port() {
@@ -4352,11 +4550,11 @@ mod tests {
     fn talos_logs_request_reads_service_logs() {
         let req = talos_logs_request("ext-protocore".to_string(), true, 128);
 
-        // Service-log shape, not container-log shape: empty namespace keyed on
-        // the service `id`, mirroring `talosctl logs ext-protocore`. The
-        // previous `system`-namespace/containerd request opened an empty stream
-        // because `ext-protocore` is an extension service, not a container.
-        assert_eq!(req.namespace, "");
+        // Service-log shape: the `system` containerd namespace keyed on the
+        // service `id`, mirroring `talosctl logs ext-protocore`. An empty
+        // namespace is rejected by Talos with `InvalidArgument: "namespace
+        // can't be empty"` (v1.13.0), so it MUST be non-empty.
+        assert_eq!(req.namespace, "system");
         assert_eq!(req.id, "ext-protocore");
         assert!(req.follow);
         assert_eq!(req.tail_lines, 128);

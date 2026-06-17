@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.48",
+    date: "2026-06-17",
+    highlights: [
+      "Hardware: the view now shows your node's live disk, CPU, and memory — per-mount usage bars, CPU busy %, and RAM used — pulled read-only straight from the node. It also tracks how fast the data disk is growing (24h / 48h / 72h) and estimates when it will fill up. On first open, before any local history has built up, it estimates the pace from the node's own log/data-dir size over its uptime, then refines it as Monarch records samples (which persist across restarts). When the disk is projected to fill soon you get a clear warning with a one-click \"Clean up logs\" button — the warning is also the fix. As always, it only reads; it never changes anything on the node.",
+      "Logs: fixed the live log stream failing with \"namespace can't be empty\". Monarch now reads ext-protocore from the Talos `system` namespace (matching `talosctl logs`), so the stream actually opens on current Monarch OS / Talos builds.",
+    ],
+  },
+  {
     version: "0.0.47",
     date: "2026-06-17",
     highlights: [

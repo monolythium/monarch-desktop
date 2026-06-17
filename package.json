@@ -1,7 +1,7 @@
 {
   "name": "@monolythium/monarch-desktop",
   "private": true,
-  "version": "0.0.47",
+  "version": "0.0.48",
   "type": "module",
   "description": "Monarch Desktop — operator and cluster GUI for Monolythium v5.0 (Tauri 2, React 19)",
   "license": "Apache-2.0",

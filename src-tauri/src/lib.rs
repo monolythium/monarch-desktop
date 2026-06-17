@@ -36,6 +36,8 @@
 mod ai;
 mod chat;
 mod chat_store;
+mod hw;
+mod hw_store;
 mod keychain;
 // Full-node machine-config + talosconfig generation. Public so the
 // `maintenance_dryrun` example binary can exercise the exact generator the
@@ -64,6 +66,7 @@ pub fn run() {
     let ai_state: ai::AiState = Arc::new(Mutex::new(ai::AiStateInner::new()));
     let talos_state: talos::TalosState = Arc::new(Mutex::new(talos::TalosStateInner::default()));
     let chat_state: chat::ChatState = Arc::new(Mutex::new(chat::ChatManagerInner::new()));
+    let hw_state: hw::HwState = hw::new_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -74,6 +77,7 @@ pub fn run() {
         .manage(ai_state)
         .manage(talos_state)
         .manage(chat_state)
+        .manage(hw_state)
         .invoke_handler(tauri::generate_handler![
             ssh::ssh_connect,
             ssh::ssh_exec,
@@ -110,8 +114,11 @@ pub fn run() {
             talos::talos_log_cancel,
             talos::talos_protocore_restart,
             talos::talos_log_disk_usage,
+            talos::talos_data_dir_usage,
             talos::talos_set_log_retention,
             talos::talos_clean_protocore_logs,
+            hw::record_hw_sample,
+            hw::query_hw_samples,
             talos_maintenance::talos_maintenance_probe,
             talos_maintenance::talos_maintenance_disks,
             talos_maintenance::talos_maintenance_apply,

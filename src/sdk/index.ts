@@ -39,6 +39,32 @@ export type {
   TalosNodeStatusSlice,
 } from "./talosNodeStatus";
 export {
+  CPU_UNAVAILABLE,
+  FILL_CRITICAL_DAYS,
+  FILL_WARN_DAYS,
+  computeDiskTrend,
+  diskDeltaOverWindow,
+  fillTone,
+  formatFillTime,
+  formatPacePerDay,
+  immediateEstimateFromDatadir,
+  immediateEstimateFromLogfile,
+  projectDiskFillDays,
+} from "./hwTrends";
+export type {
+  DiskDelta,
+  DiskTrend,
+  DiskTrendInputs,
+  FillTone,
+  HwSample as HwTrendSample,
+} from "./hwTrends";
+export {
+  HW_QUERY_WINDOW_MS,
+  HW_SAMPLE_INTERVAL_MS,
+  useHwSamples,
+} from "./useHwSamples";
+export type { HwSampleInput, HwSamplesSlice } from "./useHwSamples";
+export {
   DEFAULT_RPC_PORT,
   isMethodRestricted,
   normalizeNodeEndpoint,
@@ -481,6 +507,9 @@ export {
   talosHostTelemetry,
   talosLogCancel,
   talosLogDiskUsage,
+  talosDataDirUsage,
+  recordHwSample,
+  queryHwSamples,
   talosCleanProtocoreLogs,
   talosSetLogRetention,
   talosLogStream,
@@ -535,10 +564,12 @@ export type {
   TalosStatus,
   TalosTextResult,
   TalosLogDiskUsage,
+  TalosDataDirUsage,
   TalosLogFile,
   TalosNodeServiceState,
   TalosNodeStatus,
   TalosUpgradeInput,
+  HwSample,
 } from "./bridge";
 export {
   ALL_TARGETS,
