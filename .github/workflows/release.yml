@@ -83,6 +83,10 @@ jobs:
   gui-e2e:
     if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_desktop_e2e == 'true') }}
     runs-on: ubuntu-latest
+    # Advisory GUI smoke gate. Job-level timeout so an apt/runner hang can't
+    # block the release for hours (it hung ~35min on 2026-06-17); build + release
+    # no longer REQUIRE this to succeed — see build.if below.
+    timeout-minutes: 25
     env:
       VITE_MONARCH_E2E_RECORDER: "true"
       VITE_RPC_ENDPOINT: ${{ github.event.inputs.rpc_endpoint || vars.MONARCH_TESTNET_RPC_ENDPOINT || 'http://127.0.0.1:8545' }}
@@ -117,9 +121,18 @@ jobs:
           workspaces: ./src-tauri -> target
 
       - name: Install Linux dependencies
+        timeout-minutes: 8
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 qemu-system-x86 qemu-utils xz-utils curl jq
+          # Retry apt — a hung/slow mirror or a stale dpkg lock stalled this step
+          # for ~35min on 2026-06-17. Bounded by the step timeout above.
+          for i in 1 2 3; do
+            sudo apt-get update \
+              && sudo apt-get install -y libwebkit2gtk-4.1-dev webkit2gtk-driver libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 qemu-system-x86 qemu-utils xz-utils curl jq \
+              && break
+            echo "apt attempt $i failed/stalled; retrying in 10s"; sleep 10
+          done
           if [ -e /dev/kvm ]; then
             sudo chmod 666 /dev/kvm
             ls -l /dev/kvm
@@ -238,7 +251,11 @@ jobs:
 
   build:
     needs: gui-e2e
-    if: ${{ always() && (needs.gui-e2e.result == 'success' || needs.gui-e2e.result == 'skipped') }}
+    # gui-e2e is ADVISORY: build proceeds on success, skipped, OR failure/timeout
+    # (only a deliberate run cancellation stops it). A flaky GUI smoke must never
+    # block a signed release again (it hung the 2026-06-17 v0.0.52 release). The
+    # e2e result stays visible in the run for post-hoc review.
+    if: ${{ always() && needs.gui-e2e.result != 'cancelled' }}
     strategy:
       fail-fast: false
       matrix:
@@ -273,9 +290,17 @@ jobs:
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 8
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          # Retry apt — a hung/slow mirror or a stale dpkg lock can stall this.
+          for i in 1 2 3; do
+            sudo apt-get update \
+              && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+              && break
+            echo "apt attempt $i failed/stalled; retrying in 10s"; sleep 10
+          done
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
