@@ -341,6 +341,58 @@ export type TalosHostTelemetry = {
   disks: TalosDiskTelemetry[];
 };
 
+/** One key-service state in the node-status header (`ext-protocore`, `kubelet`).
+ *  Mirrors the Rust `TalosNodeServiceState`; severity matches the richer
+ *  `TalosServiceInfo` summariser. */
+export type TalosNodeServiceState = {
+  id: string;
+  state: string;
+  displayState: string;
+  severity: "ok" | "warn" | "err" | "info" | string;
+  healthy: boolean | null;
+  healthUnknown: boolean | null;
+};
+
+/**
+ * READ-ONLY node-status snapshot for the in-app header — the at-a-glance fields
+ * the Talos console/VNC dashboard surfaces (Stage, ready, hostname, version,
+ * uptime, key service states, node addresses), pulled over Talos *read* RPCs
+ * only. Mirrors the Rust `TalosNodeStatus`.
+ *
+ * Every field is best-effort: a value the node couldn't answer (or that this
+ * Talos client can't reach) comes back `null`/empty and the header renders a
+ * subtle "—". `warnings` carries per-source read failures for diagnostics; the
+ * header never paints a missing field red.
+ *
+ * Deliberately absent (not cleanly reachable via talos-rust-client 0.1.3, which
+ * exposes no COSI resource/state service): machine UUID/SMBIOS, IP CIDR,
+ * gateway, DNS resolvers. `addresses` carries the bare node IPs the AddressEvent
+ * reports (no CIDR/gateway).
+ */
+export type TalosNodeStatus = {
+  endpoint: string;
+  nodeAddress: string;
+  /** Machine stage label (e.g. "Running", "Booting", "Upgrading"); null when no
+   *  stage event was observed. */
+  stage: string | null;
+  /** MachineStatus.ready — the node met its boot conditions. */
+  ready: boolean | null;
+  /** Names of the still-unmet boot conditions when `ready` is false. */
+  unmetConditions: string[];
+  hostname: string | null;
+  talosVersion: string | null;
+  talosArch: string | null;
+  /** Seconds since boot (`now - bootTime`). */
+  uptimeSeconds: number | null;
+  /** Node addresses as the AddressEvent reports them (bare IPs, no CIDR). */
+  addresses: string[];
+  /** Key service states (`ext-protocore`, `kubelet`). */
+  services: TalosNodeServiceState[];
+  /** Per-source read errors; display-irrelevant (missing → "—") but surfaced
+   *  for diagnostics. */
+  warnings: string[];
+};
+
 export type TalosUpgradeInput = {
   image: string;
   stage: boolean;
@@ -522,6 +574,21 @@ export async function talosHostTelemetry(): Promise<TalosHostTelemetry> {
     throw new Error("talos_host_telemetry unavailable — running outside Tauri");
   }
   return await invoke<TalosHostTelemetry>("talos_host_telemetry");
+}
+
+/**
+ * Read the READ-ONLY node-status snapshot (Stage / ready / hostname / version /
+ * uptime / key service states / node addresses) over Talos read RPCs only — the
+ * same fields the Talos console/VNC dashboard shows, brought in-app. Issues no
+ * state-changing call. Outside Tauri it throws (callers degrade to "—"); a
+ * reachable-but-partial node returns whatever it could with the rest in
+ * `warnings`.
+ */
+export async function talosNodeStatus(): Promise<TalosNodeStatus> {
+  if (!inTauri()) {
+    throw new Error("talos_node_status unavailable — running outside Tauri");
+  }
+  return await invoke<TalosNodeStatus>("talos_node_status");
 }
 
 export async function talosExportProtocoreBackup(): Promise<TalosBackupResult> {

@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
+use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -453,6 +454,73 @@ pub struct TalosHostTelemetry {
     #[serde(rename = "diskIo")]
     pub disk_io: Vec<TalosDiskIoTelemetry>,
     pub disks: Vec<TalosDiskTelemetry>,
+}
+
+/// One MachineService key-service state, condensed for the node-status header.
+/// Re-uses the richer `TalosServiceInfo` summariser so a service shows the same
+/// running/degraded/failed verdict the Operations view does. Absent when the
+/// node doesn't report a service of that id (e.g. `kubelet` on a node whose
+/// kubelet never started) — the header then renders a graceful "—".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalosNodeServiceState {
+    pub id: String,
+    pub state: String,
+    #[serde(rename = "displayState")]
+    pub display_state: String,
+    pub severity: String,
+    pub healthy: Option<bool>,
+    #[serde(rename = "healthUnknown")]
+    pub health_unknown: Option<bool>,
+}
+
+/// READ-ONLY node-status snapshot for the in-app header — the same at-a-glance
+/// fields the Talos console/VNC dashboard surfaces, pulled over Talos *read*
+/// RPCs only. Every field is best-effort and independently sourced: a field the
+/// node can't answer (or that this Talos client can't reach) comes back `None`
+/// and the header shows a subtle "—", never a hard error.
+///
+/// Sourcing (talos-rust-client 0.1.3, MachineService unary/stream reads):
+///   * `stage` / `ready` / `unmetConditions` — `Events` stream, decoded from the
+///     tailed `MachineStatusEvent` (the same resource the dashboard's Stage line
+///     reads).
+///   * `hostname` — `Hostname` RPC.
+///   * `talosVersion` / `talosArch` — `Version` RPC.
+///   * `uptimeSeconds` — `SystemStat` RPC (`now - bootTime`).
+///   * `addresses` — `Events` stream `AddressEvent` (node addresses; no
+///     CIDR/gateway/DNS, which need COSI resources this client does not expose).
+///   * `services` — `ServiceList` RPC, filtered to the key service ids.
+///
+/// Deliberately NOT included (not cleanly reachable via this client, omitted
+/// rather than faked): machine UUID / SMBIOS, IP CIDR, gateway, DNS resolvers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TalosNodeStatus {
+    pub endpoint: String,
+    #[serde(rename = "nodeAddress")]
+    pub node_address: String,
+    /// Machine stage label (e.g. "Running", "Booting", "Upgrading"), from the
+    /// tailed MachineStatusEvent. `None` when no stage event was observed.
+    pub stage: Option<String>,
+    /// MachineStatus.ready — the node has met its boot conditions.
+    pub ready: Option<bool>,
+    /// Names of the still-unmet boot conditions when `ready` is false.
+    #[serde(rename = "unmetConditions")]
+    pub unmet_conditions: Vec<String>,
+    pub hostname: Option<String>,
+    #[serde(rename = "talosVersion")]
+    pub talos_version: Option<String>,
+    #[serde(rename = "talosArch")]
+    pub talos_arch: Option<String>,
+    /// Seconds since the node booted (`now - SystemStat.bootTime`).
+    #[serde(rename = "uptimeSeconds")]
+    pub uptime_seconds: Option<u64>,
+    /// Node addresses as the AddressEvent reports them (bare IPs, no CIDR).
+    pub addresses: Vec<String>,
+    /// Key service states (`ext-protocore`, `kubelet`).
+    pub services: Vec<TalosNodeServiceState>,
+    /// Per-field read errors, keyed by source (e.g. "version", "events"). The
+    /// header ignores these for display (a missing field is just "—") but they
+    /// are surfaced for diagnostics. Never blocks the rest of the snapshot.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1131,6 +1199,46 @@ fn format_service(service: &TalosServiceInfo) -> String {
     output
 }
 
+/// Map the Talos `MachineStage` enum (the dashboard's Stage line) to a stable
+/// operator-facing label. Pure — covers every variant the proto defines so a
+/// future stage never silently renders blank.
+fn machine_stage_label(stage: machine::machine_status_event::MachineStage) -> &'static str {
+    use machine::machine_status_event::MachineStage;
+    match stage {
+        MachineStage::Unknown => "Unknown",
+        MachineStage::Booting => "Booting",
+        MachineStage::Installing => "Installing",
+        MachineStage::Maintenance => "Maintenance",
+        MachineStage::Running => "Running",
+        MachineStage::Rebooting => "Rebooting",
+        MachineStage::ShuttingDown => "Shutting down",
+        MachineStage::Resetting => "Resetting",
+        MachineStage::Upgrading => "Upgrading",
+    }
+}
+
+/// Talos stamps event payloads into a `google.protobuf.Any` whose `type_url`
+/// ends with the proto message name. We match on the suffix (not the full url)
+/// so a registry-prefix change (`type.googleapis.com/…` vs `talos.dev/…`)
+/// doesn't break the decode.
+fn any_type_is(any: &google::protobuf::Any, message_name: &str) -> bool {
+    any.type_url
+        .rsplit('/')
+        .next()
+        .map(|tail| tail == message_name || tail.ends_with(&format!(".{message_name}")))
+        .unwrap_or(false)
+}
+
+/// Best-effort, single-field extract of the first `VersionInfo` from a
+/// `VersionResponse` — the tag + arch the header shows. `None` when the node
+/// returned no version message.
+fn first_version_info(response: &machine::VersionResponse) -> Option<&machine::VersionInfo> {
+    response
+        .messages
+        .iter()
+        .find_map(|msg| msg.version.as_ref())
+}
+
 fn format_version(response: machine::VersionResponse) -> String {
     let mut lines = Vec::new();
     for msg in response.messages {
@@ -1711,6 +1819,247 @@ async fn fetch_service(
     }
 
     Ok(None)
+}
+
+/// Key services surfaced in the node-status header, in display order. These are
+/// the "is my node OK at a glance" services — the protocore consensus extension
+/// and the Talos kubelet. Any service the node doesn't report is simply omitted
+/// (the header shows nothing for it rather than a fake "down").
+const NODE_STATUS_KEY_SERVICES: &[&str] = &[DEFAULT_SERVICE_ID, "kubelet"];
+
+/// How many trailing events to ask the `Events` stream for when reading the
+/// last MachineStatus / Address event. Talos replays the tail and then would
+/// block waiting for new events, so the reader takes the tail and stops — it
+/// never holds the stream open.
+const NODE_STATUS_EVENT_TAIL: i32 = 50;
+
+/// Drain the `Events` stream tail for the most-recent `MachineStatusEvent`
+/// (stage + ready + unmet conditions) and `AddressEvent` (node addresses).
+/// Pure read: `tail_events` replays the recent history and we stop as soon as
+/// the replayed tail is consumed, so the stream is never followed live. Returns
+/// `(stage, ready, unmet_conditions, addresses)` — every component best-effort
+/// (`None` / empty when no such event was in the tail).
+#[allow(clippy::type_complexity)]
+async fn read_machine_status_events(
+    client: &mut MachineServiceClient<talos_rust_client::Channel>,
+) -> Result<
+    (
+        Option<String>,
+        Option<bool>,
+        Vec<String>,
+        Vec<String>,
+    ),
+    TalosError,
+> {
+    let response = timeout(
+        TALOS_TIMEOUT,
+        client.events(machine::EventsRequest {
+            tail_events: NODE_STATUS_EVENT_TAIL,
+            tail_id: String::new(),
+            tail_seconds: 0,
+            with_actor_id: String::new(),
+        }),
+    )
+    .await
+    .map_err(|_| TalosError::Timeout)?
+    .map_err(TalosError::from)?;
+
+    let mut stream = response.into_inner();
+    let mut stage: Option<String> = None;
+    let mut ready: Option<bool> = None;
+    let mut unmet: Vec<String> = Vec::new();
+    let mut addresses: Vec<String> = Vec::new();
+
+    // The replayed tail arrives back-to-back; once it's drained the server
+    // would block waiting for the next live event. A short per-chunk timeout
+    // turns that expected block into a clean stop without following the stream.
+    loop {
+        let next = match timeout(Duration::from_secs(2), stream.next()).await {
+            Ok(Some(item)) => item,
+            // Stream ended, or no further replayed event within the window:
+            // the tail is consumed — stop reading.
+            Ok(None) | Err(_) => break,
+        };
+        let event = match next {
+            Ok(event) => event,
+            Err(_) => break,
+        };
+        let Some(any) = event.data else { continue };
+        if any_type_is(&any, "MachineStatusEvent") {
+            if let Ok(decoded) = machine::MachineStatusEvent::decode(any.value.as_slice()) {
+                let parsed = machine::machine_status_event::MachineStage::try_from(decoded.stage)
+                    .unwrap_or(machine::machine_status_event::MachineStage::Unknown);
+                stage = Some(machine_stage_label(parsed).to_string());
+                if let Some(status) = decoded.status {
+                    ready = Some(status.ready);
+                    unmet = status
+                        .unmet_conditions
+                        .into_iter()
+                        .map(|cond| cond.name)
+                        .filter(|name| !name.trim().is_empty())
+                        .collect();
+                }
+            }
+        } else if any_type_is(&any, "AddressEvent") {
+            if let Ok(decoded) = machine::AddressEvent::decode(any.value.as_slice()) {
+                // The latest AddressEvent carries the current address set;
+                // replace rather than accumulate so a stale earlier event in
+                // the tail doesn't re-add a since-removed address.
+                addresses = decoded
+                    .addresses
+                    .into_iter()
+                    .filter(|addr| !addr.trim().is_empty())
+                    .collect();
+            }
+        }
+    }
+
+    Ok((stage, ready, unmet, addresses))
+}
+
+/// Assemble the READ-ONLY node-status snapshot from Talos read RPCs. Each source
+/// is independent and best-effort: a failing read records a warning and leaves
+/// its field `None`, so a partial-answer node still yields a useful header
+/// instead of an all-or-nothing error.
+async fn fetch_node_status(
+    endpoint: &str,
+    config_path: &str,
+) -> Result<TalosNodeStatus, TalosError> {
+    // One connection failure is fatal (nothing to report); per-RPC failures are
+    // not — they degrade individual fields.
+    let mut client = machine_client(endpoint, config_path).await?;
+    let mut warnings: Vec<String> = Vec::new();
+
+    let (hostname, talos_version, talos_arch) =
+        match timeout(TALOS_TIMEOUT, client.version(empty_request())).await {
+            Ok(Ok(resp)) => {
+                let resp = resp.into_inner();
+                let (version, arch) = first_version_info(&resp)
+                    .map(|info| (Some(info.tag.clone()), Some(info.arch.clone())))
+                    .unwrap_or((None, None));
+                (None, version, arch)
+            }
+            Ok(Err(err)) => {
+                warnings.push(format!("version: {err}"));
+                (None, None, None)
+            }
+            Err(_) => {
+                warnings.push("version: timed out".to_string());
+                (None, None, None)
+            }
+        };
+
+    let hostname = match timeout(TALOS_TIMEOUT, client.hostname(empty_request())).await {
+        Ok(Ok(resp)) => resp
+            .into_inner()
+            .messages
+            .into_iter()
+            .find_map(|msg| {
+                let name = msg.hostname.trim().to_string();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name)
+                }
+            })
+            .or(hostname),
+        Ok(Err(err)) => {
+            warnings.push(format!("hostname: {err}"));
+            hostname
+        }
+        Err(_) => {
+            warnings.push("hostname: timed out".to_string());
+            hostname
+        }
+    };
+
+    let uptime_seconds = match timeout(TALOS_TIMEOUT, client.system_stat(empty_request())).await {
+        Ok(Ok(resp)) => resp
+            .into_inner()
+            .messages
+            .into_iter()
+            .find_map(|stat| {
+                // `now - bootTime`. Guard against a future/zero boot time
+                // (clock skew) by reporting nothing rather than a bogus value.
+                unix_now().ok().and_then(|now| {
+                    if stat.boot_time > 0 && now >= stat.boot_time {
+                        Some(now - stat.boot_time)
+                    } else {
+                        None
+                    }
+                })
+            }),
+        Ok(Err(err)) => {
+            warnings.push(format!("uptime: {err}"));
+            None
+        }
+        Err(_) => {
+            warnings.push("uptime: timed out".to_string());
+            None
+        }
+    };
+
+    let services = match timeout(TALOS_TIMEOUT, client.service_list(empty_request())).await {
+        Ok(Ok(resp)) => {
+            let mut found: Vec<TalosNodeServiceState> = Vec::new();
+            for message in resp.into_inner().messages {
+                for info in message.services {
+                    if NODE_STATUS_KEY_SERVICES.contains(&info.id.as_str()) {
+                        let summary = service_info(info);
+                        found.push(TalosNodeServiceState {
+                            id: summary.id,
+                            state: summary.state,
+                            display_state: summary.display_state,
+                            severity: summary.severity,
+                            healthy: summary.healthy,
+                            health_unknown: summary.health_unknown,
+                        });
+                    }
+                }
+            }
+            // Stable, predictable order regardless of how the node enumerated
+            // them: ext-protocore first, then kubelet.
+            found.sort_by_key(|svc| {
+                NODE_STATUS_KEY_SERVICES
+                    .iter()
+                    .position(|id| *id == svc.id)
+                    .unwrap_or(usize::MAX)
+            });
+            found
+        }
+        Ok(Err(err)) => {
+            warnings.push(format!("services: {err}"));
+            Vec::new()
+        }
+        Err(_) => {
+            warnings.push("services: timed out".to_string());
+            Vec::new()
+        }
+    };
+
+    let (stage, ready, unmet_conditions, addresses) =
+        match read_machine_status_events(&mut client).await {
+            Ok(values) => values,
+            Err(err) => {
+                warnings.push(format!("events: {err}"));
+                (None, None, Vec::new(), Vec::new())
+            }
+        };
+
+    Ok(TalosNodeStatus {
+        node_address: node_address(endpoint),
+        endpoint: endpoint.to_string(),
+        stage,
+        ready,
+        unmet_conditions,
+        hostname,
+        talos_version,
+        talos_arch,
+        uptime_seconds,
+        addresses,
+        services,
+        warnings,
+    })
 }
 
 #[derive(Debug, Default)]
@@ -2662,6 +3011,27 @@ pub async fn talos_host_telemetry(
     let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
     let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
     fetch_host_telemetry(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// READ-ONLY node-status header feed: the same at-a-glance fields the Talos
+/// console/VNC dashboard shows (Stage, ready, hostname, version, uptime, key
+/// service states, node addresses), pulled over Talos *read* RPCs only. This
+/// command issues NO state-changing call — no service control, no config patch,
+/// no upgrade/reboot/wipe. Polled by the in-app header so operators don't have
+/// to open the VNC console to check node health. Field-level reads are
+/// best-effort: an unreachable node errors, but a partially-answering node
+/// returns whatever it could and records the rest in `warnings`.
+#[tauri::command]
+pub async fn talos_node_status(
+    state: State<'_, TalosState>,
+) -> Result<TalosNodeStatus, String> {
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    fetch_node_status(&endpoint, &config_path)
         .await
         .map_err(|e| e.to_string())
 }
@@ -3790,16 +4160,19 @@ pub async fn talos_clean_protocore_logs(
 #[cfg(test)]
 mod tests {
     use super::{
-        backup_paths, build_log_retention_env, classify_protocore_readiness, endpoint_url,
-        enforce_privileged_control_plane, format_fingerprint, is_post_dispatch_reboot_drop,
-        merge_log_retention_into_config, node_address, normalize_private_key_pem, parse_reboot_mode,
-        parse_rpc_u64, parse_service_action, parse_u64_string, protocore_rpc_endpoint,
-        sanitize_backup_component, service_allows_offline_backup, summarize_service_state,
-        sync_status_is_synced, talos_logs_request, validate_service_name, validate_upgrade_image,
-        ProtocoreRpcProbe, TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode,
-        TalosServiceInfo, UPGRADE_REBOOTING_MARKER,
+        any_type_is, backup_paths, build_log_retention_env, classify_protocore_readiness,
+        endpoint_url, enforce_privileged_control_plane, first_version_info, format_fingerprint,
+        is_post_dispatch_reboot_drop, machine_stage_label, merge_log_retention_into_config,
+        node_address, normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64,
+        parse_service_action, parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
+        service_allows_offline_backup, summarize_service_state, sync_status_is_synced,
+        talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
+        TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
+        UPGRADE_REBOOTING_MARKER,
     };
+    use prost::Message as _;
     use serde_json::json;
+    use talos_rust_client::generated::{google, machine};
     use talos_rust_client::tonic::{Code, Status};
 
     #[test]
@@ -3860,6 +4233,119 @@ mod tests {
         assert!(parse_service_action("STOP").is_ok());
         assert!(parse_service_action("restart").is_ok());
         assert!(parse_service_action("reboot").is_err());
+    }
+
+    #[test]
+    fn machine_stage_label_covers_every_variant() {
+        use machine::machine_status_event::MachineStage;
+        assert_eq!(machine_stage_label(MachineStage::Running), "Running");
+        assert_eq!(machine_stage_label(MachineStage::Booting), "Booting");
+        assert_eq!(machine_stage_label(MachineStage::Upgrading), "Upgrading");
+        assert_eq!(machine_stage_label(MachineStage::Installing), "Installing");
+        assert_eq!(machine_stage_label(MachineStage::Maintenance), "Maintenance");
+        assert_eq!(machine_stage_label(MachineStage::Rebooting), "Rebooting");
+        assert_eq!(machine_stage_label(MachineStage::ShuttingDown), "Shutting down");
+        assert_eq!(machine_stage_label(MachineStage::Resetting), "Resetting");
+        assert_eq!(machine_stage_label(MachineStage::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn any_type_is_matches_on_message_name_suffix() {
+        // Talos stamps the message name as the last path segment; match it
+        // regardless of the registry prefix so a prefix change doesn't break
+        // the decode.
+        let make = |url: &str| google::protobuf::Any {
+            type_url: url.to_string(),
+            value: Vec::new(),
+        };
+        assert!(any_type_is(
+            &make("type.googleapis.com/machine.MachineStatusEvent"),
+            "MachineStatusEvent"
+        ));
+        assert!(any_type_is(
+            &make("talos.dev/v1alpha1/MachineStatusEvent"),
+            "MachineStatusEvent"
+        ));
+        assert!(any_type_is(
+            &make("type.googleapis.com/machine.AddressEvent"),
+            "AddressEvent"
+        ));
+        assert!(!any_type_is(
+            &make("type.googleapis.com/machine.AddressEvent"),
+            "MachineStatusEvent"
+        ));
+        // A different message under the same package must not match.
+        assert!(!any_type_is(
+            &make("type.googleapis.com/machine.SequenceEvent"),
+            "MachineStatusEvent"
+        ));
+    }
+
+    #[test]
+    fn first_version_info_extracts_tag_and_arch_best_effort() {
+        // No messages → None.
+        let empty = machine::VersionResponse { messages: vec![] };
+        assert!(first_version_info(&empty).is_none());
+
+        // A message with no version payload is skipped; the first with one wins.
+        let resp = machine::VersionResponse {
+            messages: vec![
+                machine::Version {
+                    metadata: None,
+                    version: None,
+                    platform: None,
+                    features: None,
+                },
+                machine::Version {
+                    metadata: None,
+                    version: Some(machine::VersionInfo {
+                        tag: "v1.9.0".to_string(),
+                        sha: "abc".to_string(),
+                        built: String::new(),
+                        go_version: String::new(),
+                        os: "linux".to_string(),
+                        arch: "amd64".to_string(),
+                    }),
+                    platform: None,
+                    features: None,
+                },
+            ],
+        };
+        let info = first_version_info(&resp).expect("version info present");
+        assert_eq!(info.tag, "v1.9.0");
+        assert_eq!(info.arch, "amd64");
+    }
+
+    #[test]
+    fn machine_status_event_decodes_from_any_value() {
+        // Prove the Any-payload decode path the events reader relies on: encode
+        // a MachineStatusEvent, wrap it in an Any with the Talos type_url, and
+        // confirm we recover the stage label + ready + unmet condition names.
+        let event = machine::MachineStatusEvent {
+            stage: machine::machine_status_event::MachineStage::Running as i32,
+            status: Some(machine::machine_status_event::MachineStatus {
+                ready: false,
+                unmet_conditions: vec![
+                    machine::machine_status_event::machine_status::UnmetCondition {
+                        name: "ext-protocore".to_string(),
+                        reason: "not healthy yet".to_string(),
+                    },
+                ],
+            }),
+        };
+        let any = google::protobuf::Any {
+            type_url: "type.googleapis.com/machine.MachineStatusEvent".to_string(),
+            value: event.encode_to_vec(),
+        };
+
+        assert!(any_type_is(&any, "MachineStatusEvent"));
+        let decoded =
+            machine::MachineStatusEvent::decode(any.value.as_slice()).expect("decodes");
+        let stage = machine::machine_status_event::MachineStage::try_from(decoded.stage).unwrap();
+        assert_eq!(machine_stage_label(stage), "Running");
+        let status = decoded.status.expect("status present");
+        assert!(!status.ready);
+        assert_eq!(status.unmet_conditions[0].name, "ext-protocore");
     }
 
     #[test]

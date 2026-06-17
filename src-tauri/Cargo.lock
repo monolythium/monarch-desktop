@@ -3675,7 +3675,7 @@ dependencies = [
 
 [[package]]
 name = "monarch-desktop"
-version = "0.0.46"
+version = "0.0.47"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3690,6 +3690,7 @@ dependencies = [
  "keyring",
  "libp2p",
  "p256",
+ "prost 0.13.5",
  "rand 0.9.4",
  "rand_core 0.6.4",
  "rcgen",

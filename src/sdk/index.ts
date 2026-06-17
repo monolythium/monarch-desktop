@@ -27,6 +27,18 @@ export type {
 export { useNodeStatus, nodeReadiness } from "./useNodeStatus";
 export type { NodeStatus, NodeReadiness } from "./useNodeStatus";
 export {
+  NODE_STATUS_POLL_MS,
+  formatUptime,
+  readyView,
+  serviceTone,
+  stageTone,
+  useTalosNodeStatus,
+} from "./talosNodeStatus";
+export type {
+  NodeStatusTone,
+  TalosNodeStatusSlice,
+} from "./talosNodeStatus";
+export {
   DEFAULT_RPC_PORT,
   isMethodRestricted,
   normalizeNodeEndpoint,
@@ -473,6 +485,7 @@ export {
   talosSetLogRetention,
   talosLogStream,
   talosLogs,
+  talosNodeStatus,
   talosBootstrap,
   talosGenerateFullNodeConfig,
   talosGenerateRecoveryNodeConfig,
@@ -523,6 +536,8 @@ export type {
   TalosTextResult,
   TalosLogDiskUsage,
   TalosLogFile,
+  TalosNodeServiceState,
+  TalosNodeStatus,
   TalosUpgradeInput,
 } from "./bridge";
 export {

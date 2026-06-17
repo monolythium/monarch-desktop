@@ -20,6 +20,7 @@ import {
   useIndexerStatus,
   useLogStream,
 } from "../sdk";
+import { NodeStatusHeader } from "../components/NodeStatusHeader";
 import { useOps } from "../ops/OpsContext";
 import { OP_CATALOG } from "../ops/catalog";
 import { DEFAULT_LOG_RETENTION, type OpKind, type OpRequest } from "../ops/types";
@@ -307,6 +308,12 @@ export function Logs() {
         <h1 className="view__title">Logs</h1>
         <p className="view__subtitle">Live node logs.</p>
       </header>
+
+      {/* Read-only node-status header: the Talos console/VNC dashboard fields
+          (Stage / health / host / version / uptime / key service states) in-app,
+          so the operator doesn't have to open the VNC console. Active only when
+          a Monarch OS (Talos) node is in scope. */}
+      <NodeStatusHeader active={target.transport === "talos"} />
 
       <div
         className="card"

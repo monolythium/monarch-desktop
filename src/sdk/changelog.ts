@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.47",
+    date: "2026-06-17",
+    highlights: [
+      "Logs: a node-status header now sits at the top of the page and shows your node's live Stage, health, hostname, Talos version, uptime, address, and the ext-protocore / kubelet service states — pulled read-only straight from the node, so you no longer need to open the VNC console just to check status. It reads only; it never changes anything on the node, and any field the node can't report shows a quiet \"—\" rather than an error.",
+    ],
+  },
+  {
     version: "0.0.46",
     date: "2026-06-17",
     highlights: [

@@ -1,6 +1,6 @@
 [package]
 name = "monarch-desktop"
-version = "0.0.46"
+version = "0.0.47"
 edition = "2021"
 rust-version = "1.77"
 description = "Monarch Desktop — operator and cluster GUI for Monolythium v5.0 (Tauri 2)"
@@ -36,6 +36,12 @@ async-trait = "0.1"
 thiserror = "1"
 base64 = "0.22"
 talos-rust-client = { version = "0.1.3", features = ["talosconfig"] }
+# prost is promoted to a direct dep (pinned to the 0.13 line talos-rust-client
+# already resolves) so the node-status reader can decode the Talos `Events`
+# stream's `google.protobuf.Any` payloads — the MachineStatusEvent (Stage /
+# ready) and AddressEvent — with the matching `prost::Message` trait in scope.
+# Decode only; nothing here writes to or controls the node.
+prost = "0.13"
 # Maintenance-mode Talos channel (src/talos_maintenance.rs). A freshly
 # flashed Monarch OS node answers the Talos API on :50000 with a
 # self-signed cert and NO client-cert requirement (insecure / maintenance
