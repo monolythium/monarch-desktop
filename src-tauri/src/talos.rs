@@ -4163,6 +4163,99 @@ fn set_retention_env_in_extension_doc(doc: &str, max_bytes: u64, max_files: u32)
     out.join("\n")
 }
 
+/// Strip the seat-preserving recovery mnemonic out of a node's persisted
+/// machine config (#7 part a).
+///
+/// After a seat-preserving recovery the operator's 24-word PLAINTEXT mnemonic
+/// lingers in the node's STATE config (`/system/state/config.yaml`): the
+/// `machine.files` block staged it (the protocore entrypoint securely deletes
+/// only the on-node FILE, never the STATE copy) and the protocore extension
+/// `PROTOCORE_OPERATOR_MNEMONIC_FILE` env still points at it. This reads the
+/// CURRENT config and removes EXACTLY those two recovery additions, leaving
+/// every other byte (PKI, certs, the talosconfig validity) untouched — the same
+/// read→line-scoped-edit→re-apply shape `merge_log_retention_into_config` uses,
+/// so re-applying does NOT re-mint a CA / invalidate the talosconfig.
+///
+/// Returns `None` when neither the recovery `machine.files` block NOR the env is
+/// present (already scrubbed / non-recovery node) so the caller can skip the
+/// apply (idempotent / no-op).
+///
+/// The `machine.files` removal is ANCHORED to `RECOVERY_MNEMONIC_PATH`: only a
+/// `files:` block whose item carries that exact `path:` is dropped, so an
+/// UNRELATED operator-authored `machine.files` block is never collaterally
+/// removed.
+fn strip_recovery_mnemonic_from_config(current: &str) -> Option<String> {
+    if current.trim().is_empty() {
+        return None;
+    }
+    let recovery_path = crate::provision::RECOVERY_MNEMONIC_PATH;
+    let recovery_env = crate::provision::RECOVERY_MNEMONIC_ENV;
+    let env_line = format!("- {recovery_env}={recovery_path}");
+    let path_line = format!("path: {recovery_path}");
+
+    let documents: Vec<&str> = split_yaml_documents(current);
+    let mut rebuilt: Vec<String> = Vec::with_capacity(documents.len());
+    let mut removed_files = false;
+    let mut removed_env = false;
+
+    for doc in &documents {
+        let lines: Vec<&str> = doc.split('\n').collect();
+        let mut out_lines: Vec<&str> = Vec::with_capacity(lines.len());
+        let mut idx = 0usize;
+        while idx < lines.len() {
+            let line = lines[idx];
+            let trimmed = line.trim();
+
+            // A `files:` block (any indentation) whose item targets the recovery
+            // path is the staged-mnemonic block. Drop the `files:` line and every
+            // more-indented child line until indentation returns to the `files:`
+            // key's level (or shallower).
+            if trimmed == "files:" {
+                let files_indent = indent_width(line);
+                let mut j = idx + 1;
+                while j < lines.len() {
+                    let child = lines[j];
+                    if !child.trim().is_empty() && indent_width(child) <= files_indent {
+                        break;
+                    }
+                    j += 1;
+                }
+                let block_targets_recovery =
+                    lines[idx..j].iter().any(|l| l.trim() == path_line);
+                if block_targets_recovery {
+                    removed_files = true;
+                    idx = j;
+                    continue;
+                }
+                out_lines.push(line);
+                idx += 1;
+                continue;
+            }
+
+            // The protocore extension env entry pointing at the recovery file.
+            if trimmed == env_line {
+                removed_env = true;
+                idx += 1;
+                continue;
+            }
+
+            out_lines.push(line);
+            idx += 1;
+        }
+        rebuilt.push(out_lines.join("\n"));
+    }
+
+    if !removed_files && !removed_env {
+        return None;
+    }
+    Some(rebuilt.join("---\n"))
+}
+
+/// Leading-space count for a line (block-indent depth).
+fn indent_width(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
 /// Read the node's persisted machine configuration (`/system/state/config.yaml`)
 /// over the Talos `Read` RPC and return it as a UTF-8 string. This is the
 /// current COMPLETE config (v1alpha1 `Config` + any extra documents) that a
@@ -4331,6 +4424,100 @@ pub async fn talos_clean_protocore_logs(
     })
 }
 
+/// Scrub the seat-preserving recovery mnemonic out of a node's persisted STATE
+/// config after a confirmed re-sync (#7 part a).
+///
+/// The seat-preserving recovery stages the operator's 24-word PLAINTEXT mnemonic
+/// onto the node via a `machine.files` block (which is copied into
+/// `/system/state/config.yaml`) and a `PROTOCORE_OPERATOR_MNEMONIC_FILE` env.
+/// The protocore entrypoint securely deletes the on-node FILE after re-deriving
+/// the key, but NOT the STATE copy — so the plaintext mnemonic lingers in the
+/// persisted machine config indefinitely. This reads the current config, strips
+/// EXACTLY those two recovery additions, and re-applies the COMPLETE config with
+/// `NoReboot` (scrubbing must not cycle a freshly re-synced node). Every other
+/// byte — PKI, certs, the talosconfig validity — is preserved, exactly like the
+/// log-retention patch. NEVER logs the config.
+///
+/// Best-effort / defence-in-depth: if no recovery additions are present the
+/// node is already clean and this is a no-op. The recovery orchestrator calls
+/// this AFTER the recovery is already settled and the on-node file is already
+/// entrypoint-deleted, so a failure here must never fail the recovery itself.
+#[tauri::command]
+pub async fn talos_scrub_recovery_mnemonic(
+    state: State<'_, TalosState>,
+) -> Result<TalosTextResult, String> {
+    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
+    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
+    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
+    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
+    let control_plane =
+        build_config_info(Some(&endpoint), &config_path).map_err(|e| e.to_string())?;
+    enforce_privileged_control_plane(&control_plane).map_err(|e| e.to_string())?;
+    let mut client = machine_client(&endpoint, &config_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let current = read_machine_config(&mut client)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let Some(scrubbed) = strip_recovery_mnemonic_from_config(&current) else {
+        return Ok(TalosTextResult {
+            node_address: node_address(&endpoint),
+            endpoint,
+            command: "talos read /system/state/config.yaml (scrub: no-op)".to_string(),
+            output: "No staged recovery mnemonic found in the node config — nothing to scrub."
+                .to_string(),
+            service: None,
+        });
+    };
+
+    let response = timeout(
+        TALOS_TIMEOUT,
+        client.apply_configuration(machine::ApplyConfigurationRequest {
+            data: scrubbed.into_bytes(),
+            // NoReboot — scrubbing must not cycle a freshly re-synced node.
+            mode: machine::apply_configuration_request::Mode::NoReboot as i32,
+            dry_run: false,
+            try_mode_timeout: None,
+        }),
+    )
+    .await
+    .map_err(|_| TalosError::Timeout.to_string())?
+    .map_err(|e| format!("apply rejected: {}", e.message()))?
+    .into_inner();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .flat_map(|m| {
+            let mut lines = Vec::new();
+            if !m.mode_details.is_empty() {
+                lines.push(m.mode_details);
+            }
+            lines.extend(m.warnings);
+            lines
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let output = if messages.trim().is_empty() {
+        "Recovery mnemonic scrubbed from the node's persisted config (machine.files block + \
+         PROTOCORE_OPERATOR_MNEMONIC_FILE env removed); PKI and the talosconfig are unchanged."
+            .to_string()
+    } else {
+        messages
+    };
+
+    Ok(TalosTextResult {
+        node_address: node_address(&endpoint),
+        endpoint,
+        command: "talos apply-config --mode no-reboot (scrub recovery mnemonic)".to_string(),
+        output,
+        service: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -4340,7 +4527,8 @@ mod tests {
         is_post_dispatch_reboot_drop, machine_stage_label, merge_log_retention_into_config,
         node_address, normalize_private_key_pem, parse_reboot_mode, parse_rpc_u64,
         parse_service_action, parse_u64_string, protocore_rpc_endpoint, sanitize_backup_component,
-        service_allows_offline_backup, summarize_service_state, sync_status_is_synced,
+        service_allows_offline_backup, strip_recovery_mnemonic_from_config,
+        summarize_service_state, sync_status_is_synced,
         talos_logs_request, validate_service_name, validate_upgrade_image, ProtocoreRpcProbe,
         TalosCertificateInfo, TalosConfigInfo, TalosLineBuffer, TalosRebootMode, TalosServiceInfo,
         UPGRADE_REBOOTING_MARKER,
@@ -4714,6 +4902,95 @@ environment:\n\
         assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 0, 5).is_err());
         assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 512, 0).is_err());
         assert!(merge_log_retention_into_config(SAMPLE_MACHINE_CONFIG, 512, 65).is_err());
+    }
+
+    // #7 — recovery-mnemonic STATE scrub.
+    const SCRUB_TEST_MNEMONIC: &str = "abandon ability able about above absent absorb \
+abstract absurd abuse access accident account accuse achieve acid acoustic \
+acquire across act action actor actress address";
+
+    #[test]
+    fn strip_removes_recovery_block_and_env_but_keeps_pki() {
+        let recovery = crate::provision::generate_recovery_node_config(
+            "10.0.0.5",
+            "/dev/sda",
+            SCRUB_TEST_MNEMONIC,
+        )
+        .expect("recovery config generates");
+        let yaml = recovery.config_yaml;
+        // Sanity: the staged mnemonic + env are present before scrubbing.
+        assert!(yaml.contains(SCRUB_TEST_MNEMONIC));
+        assert!(yaml.contains(crate::provision::RECOVERY_MNEMONIC_PATH));
+        assert!(yaml.contains(crate::provision::RECOVERY_MNEMONIC_ENV));
+
+        let scrubbed = strip_recovery_mnemonic_from_config(&yaml)
+            .expect("a recovery config has something to scrub");
+        // The plaintext mnemonic + env + recovery path are GONE.
+        assert!(!scrubbed.contains(SCRUB_TEST_MNEMONIC), "mnemonic must be gone");
+        assert!(
+            !scrubbed.contains(crate::provision::RECOVERY_MNEMONIC_ENV),
+            "recovery env must be gone"
+        );
+        assert!(
+            !scrubbed.contains(crate::provision::RECOVERY_MNEMONIC_PATH),
+            "recovery path must be gone"
+        );
+        // PKI / config skeleton preserved (byte-for-byte for everything else).
+        assert!(scrubbed.contains("version: v1alpha1"), "v1alpha1 doc preserved");
+        assert!(scrubbed.contains("    ca:\n        crt: "), "machine CA preserved");
+        assert!(
+            scrubbed.contains("    - PROTOCORE_NODE_MODE=full"),
+            "protocore full-node env preserved"
+        );
+        // Still three documents.
+        assert_eq!(scrubbed.split("\n---\n").count(), 3);
+    }
+
+    #[test]
+    fn strip_is_idempotent_and_noop_on_clean_config() {
+        let recovery = crate::provision::generate_recovery_node_config(
+            "10.0.0.5",
+            "/dev/sda",
+            SCRUB_TEST_MNEMONIC,
+        )
+        .expect("recovery config generates")
+        .config_yaml;
+        let scrubbed = strip_recovery_mnemonic_from_config(&recovery).unwrap();
+        // Re-running on the already-scrubbed config is a no-op (returns None).
+        assert!(
+            strip_recovery_mnemonic_from_config(&scrubbed).is_none(),
+            "second scrub finds nothing to remove"
+        );
+        // A fresh (non-recovery) config also returns None.
+        let fresh =
+            crate::provision::generate_full_node_config("10.0.0.5", "/dev/sda").unwrap().config_yaml;
+        assert!(strip_recovery_mnemonic_from_config(&fresh).is_none());
+        // An empty config returns None.
+        assert!(strip_recovery_mnemonic_from_config("").is_none());
+    }
+
+    #[test]
+    fn strip_preserves_an_unrelated_files_block() {
+        // A config carrying an operator-authored machine.files block targeting a
+        // DIFFERENT path must NOT be touched (anchored to the recovery path).
+        let config = format!(
+            "version: v1alpha1\nmachine:\n    type: controlplane\n    files:\n        \
+             - content: hello\n          permissions: 0o644\n          path: /var/etc/motd\n          \
+             op: create\n    files:\n        - content: {m}\n          permissions: 0o600\n          \
+             path: {p}\n          op: create\n---\napiVersion: v1alpha1\nkind: ExtensionServiceConfig\n\
+             name: protocore\nenvironment:\n    - PROTOCORE_NODE_MODE=full\n    - {e}={p}\n",
+            m = SCRUB_TEST_MNEMONIC,
+            p = crate::provision::RECOVERY_MNEMONIC_PATH,
+            e = crate::provision::RECOVERY_MNEMONIC_ENV,
+        );
+        let scrubbed = strip_recovery_mnemonic_from_config(&config).unwrap();
+        // Unrelated motd file survives.
+        assert!(scrubbed.contains("path: /var/etc/motd"), "unrelated files block preserved");
+        assert!(scrubbed.contains("content: hello"));
+        // Recovery additions gone.
+        assert!(!scrubbed.contains(SCRUB_TEST_MNEMONIC));
+        assert!(!scrubbed.contains(crate::provision::RECOVERY_MNEMONIC_PATH));
+        assert!(!scrubbed.contains(crate::provision::RECOVERY_MNEMONIC_ENV));
     }
 
     #[test]

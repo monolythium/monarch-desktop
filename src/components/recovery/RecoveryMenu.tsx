@@ -19,37 +19,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useOps } from "../../ops";
 import { useKeychainPresence, useSelfOperator } from "../../hooks/useSelfOperator";
-import { talosHostTelemetry, talosStatus } from "../../sdk";
+import { resolveNodeTarget, type NodeTarget } from "./resolveNodeTarget";
 
 const ORPHAN_CONFIRM_PHRASE = "ORPHAN BOND";
-
-type NodeTarget = { host: string | null; disk: string | null };
-
-/** Resolve the Talos host + install disk for the recovery config. The host is
- *  the connected node's address; the disk is its system disk. Best-effort —
- *  the recover-keys op fails closed with a clear message if either is missing. */
-async function resolveNodeTarget(): Promise<NodeTarget> {
-  // Host telemetry carries BOTH the host (nodeAddress/endpoint) and the disk
-  // list, so resolve both from it in one shot; fall back to talosStatus for the
-  // host if telemetry is unavailable. Best-effort — the recover-keys op fails
-  // closed with a clear message if either is still missing.
-  let host: string | null = null;
-  let disk: string | null = null;
-  try {
-    const telemetry = await talosHostTelemetry();
-    host = telemetry.nodeAddress || telemetry.endpoint || null;
-    const system = telemetry.disks.find((d) => d.systemDisk && !d.readonly);
-    const fallback = telemetry.disks.find((d) => !d.readonly);
-    disk = (system ?? fallback)?.deviceName ?? null;
-  } catch {
-    /* telemetry unavailable — fall through to talosStatus for the host */
-  }
-  if (!host) {
-    const status = await talosStatus().catch(() => null);
-    host = status?.nodeAddress || status?.endpoint || null;
-  }
-  return { host, disk };
-}
 
 export function RecoveryMenu({ quarantineReason }: { quarantineReason: string | null }) {
   const ops = useOps();

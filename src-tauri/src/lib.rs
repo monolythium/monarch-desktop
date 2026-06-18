@@ -117,6 +117,7 @@ pub fn run() {
             talos::talos_data_dir_usage,
             talos::talos_set_log_retention,
             talos::talos_clean_protocore_logs,
+            talos::talos_scrub_recovery_mnemonic,
             hw::record_hw_sample,
             hw::query_hw_samples,
             talos_maintenance::talos_maintenance_probe,

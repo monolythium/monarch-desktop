@@ -78,14 +78,27 @@ pub const MONARCH_OS_INSTALLER_IMAGE: &str =
 /// forked operator recovers KEEPING their bonded seat instead of minting a
 /// fresh random orphaned key. The entrypoint securely deletes the file after
 /// keygen (success and failure).
-const RECOVERY_MNEMONIC_PATH: &str = "/var/lib/protocore/recovery/operator-mnemonic.txt";
+///
+/// PINNED ASSUMPTION (#7 part b): the path lives under `/var/...`, which is a
+/// Talos-permitted `machine.files` write target (Talos v1.13.0 restricts
+/// `machine.files` to `/var` plus a small `/etc` allowlist). Do NOT move this
+/// out of `/var/` without re-checking the Talos allowlist — the
+/// `recovery_mnemonic_path_is_under_var` test fails loudly if you do.
+///
+/// `pub(crate)` so `talos.rs` reuses the exact same literal as the single source
+/// of truth when scrubbing the staged mnemonic out of the persisted STATE
+/// config after a confirmed re-sync (`talos_scrub_recovery_mnemonic`).
+pub(crate) const RECOVERY_MNEMONIC_PATH: &str =
+    "/var/lib/protocore/recovery/operator-mnemonic.txt";
 
 /// Env the entrypoint reads the recovery-mnemonic FILE PATH from. This is a
 /// path (allowed) — the inline `PROTOCORE_OPERATOR_MNEMONIC` stays forbidden in
 /// the apply-path secret-env reject scan. ⚠ Never add this to
 /// [`CLEARED_FILE_ENVS`]: that would clear the path with an empty value and the
 /// entrypoint would skip the re-derive, orphaning the seat.
-const RECOVERY_MNEMONIC_ENV: &str = "PROTOCORE_OPERATOR_MNEMONIC_FILE";
+///
+/// `pub(crate)` so `talos.rs` strips this exact env when scrubbing.
+pub(crate) const RECOVERY_MNEMONIC_ENV: &str = "PROTOCORE_OPERATOR_MNEMONIC_FILE";
 
 /// CA validity mirroring `talosctl gen secrets` (10 years).
 const CA_VALIDITY_DAYS: i64 = 3650;
@@ -94,7 +107,24 @@ const CA_VALIDITY_DAYS: i64 = 3650;
 /// 10 years instead: the app keeps no copy of the machine CA key after
 /// provisioning and has no cert-renewal path yet, so a 1-year cert would leave
 /// the node unmanageable after expiry (Monarch OS has no SSH fallback).
+///
+/// ⚠ #8 part 3 (STAGED — DO NOT reduce yet): reducing this WITHOUT first
+/// building a renewal / CA-rotation path is a node-bricking time-bomb. The
+/// renewal path (persist the machine CA key encrypted in the keychain, re-issue
+/// via `ApplyConfiguration` of a rotated `trustdAcceptedCAs`) must land FIRST;
+/// then `ADMIN_CERT_VALIDITY_DAYS` drops to [`PLANNED_ADMIN_CERT_VALIDITY_DAYS`]
+/// and `generate_admin_client`'s validity assertion updates in lockstep. See
+/// `docs/adr-0001-talosconfig-credential-hardening.md`.
 const ADMIN_CERT_VALIDITY_DAYS: i64 = 3650;
+
+/// #8 part 3 SCAFFOLDING (NOT YET WIRED). The validity the admin client cert
+/// will carry once a renewal / CA-rotation path exists (1 year, matching
+/// talosctl). Recorded here so the target is explicit and reviewable; it is
+/// intentionally unused until the renewal path lands, so issuing behavior is
+/// unchanged today (no time-bomb). Tracked in
+/// `docs/adr-0001-talosconfig-credential-hardening.md`.
+#[allow(dead_code)]
+pub(crate) const PLANNED_ADMIN_CERT_VALIDITY_DAYS: i64 = 365;
 
 /// The image-baked enrollment/TPM file-path envs that must be cleared with an
 /// explicit empty value (see the module docs). Order mirrors the validated
@@ -1146,6 +1176,18 @@ acquire across act action actor actress address";
             assert!(yaml.contains(line), "missing full-node env line {line:?}");
         }
         assert!(yaml.contains(&format!("        image: {MONARCH_OS_INSTALLER_IMAGE}\n")));
+    }
+
+    #[test]
+    fn recovery_mnemonic_path_is_under_var() {
+        // #7 part (b): the staged path MUST live under `/var/...`, the only
+        // Talos-permitted `machine.files` write target (besides a small `/etc`
+        // allowlist) on v1.13.0. A future move that breaks this constraint must
+        // fail loudly here, not silently on a live node.
+        assert!(
+            RECOVERY_MNEMONIC_PATH.starts_with("/var/"),
+            "recovery mnemonic path must stay under /var/ (Talos machine.files allowlist)"
+        );
     }
 
     #[test]

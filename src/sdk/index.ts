@@ -511,6 +511,7 @@ export {
   recordHwSample,
   queryHwSamples,
   talosCleanProtocoreLogs,
+  talosScrubRecoveryMnemonic,
   talosSetLogRetention,
   talosLogStream,
   talosLogs,

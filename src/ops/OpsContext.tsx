@@ -29,6 +29,7 @@ import {
   talosMaintenanceApply,
   talosOperatorSealEk,
   talosRollback,
+  talosScrubRecoveryMnemonic,
   talosServiceAction,
   talosSetLogRetention,
   talosStatus,
@@ -1597,6 +1598,14 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           try {
             const back = await awaitNodeReconnect(rpcEndpoint);
             if (!back.reconnected) return;
+            // (4a) Scrub the staged recovery mnemonic out of the node's persisted
+            // STATE config now that it has re-synced (#7). The protocore entrypoint
+            // already securely deleted the on-node FILE on first boot; this removes
+            // the lingering STATE copy (machine.files block + the
+            // PROTOCORE_OPERATOR_MNEMONIC_FILE env). Best-effort / non-blocking: the
+            // recovery is already settled and a scrub failure must not undo it. If
+            // it fails the operator can re-run it (defence-in-depth only).
+            await talosScrubRecoveryMnemonic().catch(() => {});
             const ek = await talosOperatorSealEk().catch(() => null);
             if (!ek || !ek.sealEkHex) return;
             requestOp({

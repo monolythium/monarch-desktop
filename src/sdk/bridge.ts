@@ -779,6 +779,22 @@ export async function talosCleanProtocoreLogs(
   });
 }
 
+/** Scrub the seat-preserving recovery mnemonic out of the node's persisted STATE
+ *  config after a confirmed re-sync (#7). The recovery flow stages the operator's
+ *  24-word plaintext mnemonic via `machine.files` + a `PROTOCORE_OPERATOR_MNEMONIC_FILE`
+ *  env; the protocore entrypoint deletes the on-node FILE but not the STATE copy.
+ *  This reads the config, strips ONLY those two recovery additions, and re-applies
+ *  with NoReboot (PKI / talosconfig validity preserved). A no-op (success) when the
+ *  config carries no staged mnemonic. Best-effort: callers must not gate recovery
+ *  success on it. */
+export async function talosScrubRecoveryMnemonic(): Promise<TalosTextResult> {
+  if (!inTauri()) {
+    throw new Error("talos_scrub_recovery_mnemonic unavailable — running outside Tauri");
+  }
+  recordE2eCommand("talos_scrub_recovery_mnemonic");
+  return await invoke<TalosTextResult>("talos_scrub_recovery_mnemonic");
+}
+
 /**
  * Detect whether a node is reachable on the Talos maintenance API and in
  * maintenance mode. Never rejects: a connection failure comes back as

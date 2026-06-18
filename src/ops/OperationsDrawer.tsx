@@ -51,6 +51,7 @@ import {
 import { isRegisterInputComplete, RegisterForm } from "./RegisterForm";
 import { isRedelegateInputComplete, RedelegateForm } from "./RedelegateForm";
 import { isRestoreInputComplete, RestoreForm } from "./RestoreForm";
+import { isRecoverKeysInputComplete, RecoverKeysForm } from "./RecoverKeysForm";
 import { OP_CATALOG } from "./catalog";
 import { OpIcon } from "../components/icons";
 import { translateOpError } from "./errors";
@@ -375,6 +376,10 @@ export function OperationsDrawer() {
     request?.kind === "operator-restore" &&
     stage === "preview" &&
     !isRestoreInputComplete(request.restoreInput);
+  const recoverKeysNeedsInput =
+    request?.kind === "operator-recover-keys" &&
+    stage === "preview" &&
+    !isRecoverKeysInputComplete(request.recoverKeysInput);
   const pendingChangeNeedsInput =
     (request?.kind === "cluster-accept-invite" || request?.kind === "cluster-swap") &&
     stage === "preview" &&
@@ -420,6 +425,7 @@ export function OperationsDrawer() {
     operatorSealKeyNeedsInput ||
     clusterNameNeedsInput ||
     restoreNeedsInput ||
+    recoverKeysNeedsInput ||
     pendingChangeNeedsInput ||
     clusterJoinRequestNeedsInput ||
     clusterVoteAdmitNeedsInput ||
@@ -444,6 +450,8 @@ export function OperationsDrawer() {
               ? "Enter a cluster id and valid cluster name first"
               : restoreNeedsInput
                 ? "Enter the operator peer id first"
+                : recoverKeysNeedsInput
+                ? "Enter the node host and install disk first"
                 : pendingChangeNeedsInput
                   ? "Fill every pending-change input first"
                   : clusterJoinRequestNeedsInput
@@ -744,6 +752,7 @@ function DrawerBody({
         {request.kind === "chat-bootstrap-peers" ? <ChatBootstrapPeersForm /> : null}
         {request.kind === "cluster-name-register" ? <ClusterNameForm /> : null}
         {request.kind === "operator-restore" ? <RestoreForm /> : null}
+        {request.kind === "operator-recover-keys" ? <RecoverKeysForm /> : null}
         {request.kind === "cluster-accept-invite" || request.kind === "cluster-swap" ? (
           <ClusterPendingChangeForm />
         ) : null}
