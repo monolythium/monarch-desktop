@@ -23,6 +23,7 @@ import {
 } from "../sdk";
 import { MONARCH_OS_ISO_URL } from "../sdk/onboarding";
 import { RecoveryMenu } from "../components/recovery/RecoveryMenu";
+import { RejoinAffordance } from "../components/recovery/RejoinAffordance";
 
 type StepStatus = "checking" | "done" | "todo" | "unknown";
 
@@ -198,8 +199,10 @@ export function Install() {
       </header>
 
       {status.quarantineReason ? (
-        <RecoveryMenu quarantineReason={status.quarantineReason} />
-      ) : null}
+        <RecoveryMenu reason={status.quarantineReason} variant="quarantine" />
+      ) : (
+        <RejoinAffordance />
+      )}
 
       <div className="card card--padded" style={{ textAlign: "center", padding: 40 }}>
         <div className="cap">node pairing</div>

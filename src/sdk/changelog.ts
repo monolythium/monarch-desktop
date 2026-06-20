@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const APP_CHANGELOG: ChangelogEntry[] = [
   {
+    version: "0.0.54",
+    date: "2026-06-20",
+    highlights: [
+      "Rejoin the current chain: a new entry on Install for a node stuck on an abandoned chain after a testnet re-genesis. The testnet re-genesises without notice, and a stale node sits at a frozen height with no peers while its own RPC still answers — so it isn't flagged \"quarantined\" and the recovery panel didn't surface on its own. The Install view now always offers \"Rejoin the current chain,\" which opens the same recovery paths: re-provision with your existing keys (keeps your bonded seat) or, as a last resort, re-enroll as a new node. It links the step-by-step rejoin guide for operators recovering by hand.",
+    ],
+  },
+  {
     version: "0.0.51",
     date: "2026-06-17",
     highlights: [

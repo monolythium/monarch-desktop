@@ -1,6 +1,9 @@
-// RecoveryMenu — shown on the Install view when the connected node is
-// QUARANTINED (item 5's `NodeStatus.quarantineReason`, e.g. a
-// CheckpointStateRootMismatch fork). It offers three escalating recovery
+// RecoveryMenu — recovery panel on the Install view. Auto-surfaces when the
+// connected node is QUARANTINED (item 5's `NodeStatus.quarantineReason`, e.g. a
+// CheckpointStateRootMismatch fork), and is also reachable on demand via the
+// "Rejoin the current chain" affordance (variant="rejoin") for a node stuck on
+// an abandoned chain after a testnet re-genesis (frozen height, no peers — not
+// necessarily quarantined). It offers three escalating recovery
 // paths, ordered safest-first:
 //
 //   1. Resume — a graceful service restart (reuses the `operator-restart` op).
@@ -23,7 +26,13 @@ import { resolveNodeTarget, type NodeTarget } from "./resolveNodeTarget";
 
 const ORPHAN_CONFIRM_PHRASE = "ORPHAN BOND";
 
-export function RecoveryMenu({ quarantineReason }: { quarantineReason: string | null }) {
+export function RecoveryMenu({
+  reason,
+  variant = "quarantine",
+}: {
+  reason: string | null;
+  variant?: "quarantine" | "rejoin";
+}) {
   const ops = useOps();
   const presence = useKeychainPresence();
   const self = useSelfOperator();
@@ -132,21 +141,40 @@ export function RecoveryMenu({ quarantineReason }: { quarantineReason: string | 
     >
       <div className="card__head">
         <div>
-          <h3 style={{ color: "var(--gold)" }}>Node quarantined — recover it</h3>
+          <h3 style={{ color: "var(--gold)" }}>
+            {variant === "rejoin"
+              ? "Rejoin the current chain"
+              : "Node quarantined — recover it"}
+          </h3>
           <div className="sub">
-            this node has been quarantined and is no longer signing · pick a recovery path below
+            {variant === "rejoin"
+              ? "testnet re-genesises without notice — a node last synced before the latest re-genesis is stuck on an abandoned chain (frozen height, no peers). pick a recovery path below to clear the stale data and rejoin the live chain."
+              : "this node has been quarantined and is no longer signing · pick a recovery path below"}
           </div>
         </div>
-        <span className="halo halo--err">
-          <span className="dot" /> quarantined
+        <span className={variant === "rejoin" ? "halo halo--warn" : "halo halo--err"}>
+          <span className="dot" /> {variant === "rejoin" ? "rejoin" : "quarantined"}
         </span>
       </div>
 
-      {quarantineReason ? (
+      {reason ? (
         <div className="install-note mono" style={{ marginBottom: 4 }}>
-          {quarantineReason}
+          {reason}
         </div>
       ) : null}
+
+      <div className="sub" style={{ marginBottom: 4 }}>
+        Unsure which path to pick? See the{" "}
+        <a
+          href="https://github.com/monolythium/monarch-os-talos/blob/master/docs/rejoin-after-regenesis.md"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--gold)" }}
+        >
+          rejoin-after-re-genesis guide
+        </a>
+        .
+      </div>
 
       {/* Option 1 — Resume (safest) */}
       <RecoveryOption
