@@ -68,7 +68,7 @@ pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 /// `:8545` never serves. Pinned to the protocore release the chain runs; bump
 /// alongside the OS/protocore version.
 pub const MONARCH_OS_INSTALLER_IMAGE: &str =
-    "ghcr.io/monolythium/monarch-os-installer:v0.1.63-testnet";
+    "ghcr.io/monolythium/monarch-os-installer:v0.1.71-testnet";
 
 /// On-node path the operator recovery mnemonic is staged to via `machine.files`
 /// (mode `0600`). The protocore entrypoint reads it through
