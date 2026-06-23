@@ -38,7 +38,6 @@ export function commandFor(op: OpRequest): string | null {
     case "operator-restore":
     case "operator-register":
     case "operator-display":
-    case "operator-seal-key":
     case "chat-bootstrap-peers":
     case "cluster-name-register":
     case "rotate-keys":

@@ -16,8 +16,6 @@ export const GLOSSARY: Record<string, string> = {
     "5,000 LYTH locked from your wallet when you register. It backs your good behaviour and is refundable after you resign and the delay passes.",
   delegation:
     "LYTH that holders assign to a cluster to share in its rewards. Delegating never gives the cluster control of the holder's funds.",
-  "seal key":
-    "Your public encryption key (an ML-KEM encapsulation key, 'EK'). Publishing it lets your cluster include you in sealed-mempool duty.",
   seat:
     "One of the 10 operator positions in a cluster - 7 active seats sign every round, 3 standby seats wait to rotate in.",
   threshold:
@@ -34,8 +32,6 @@ export const GLOSSARY: Record<string, string> = {
     "A fixed span of rounds after which membership and key changes take effect.",
   "possession proof":
     "A signature proving you control the key you are registering - it stops anyone registering a key they do not own.",
-  EK:
-    "Encapsulation key - the public half of your seal key. Safe to publish; only your node holds the private half.",
   moniker:
     "The public, human-readable name other operators and explorers see for your node.",
   nonce:

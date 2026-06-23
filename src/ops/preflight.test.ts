@@ -27,12 +27,6 @@ describe("preflightNeeds", () => {
     }
   });
 
-  it("requires the seal key only for cluster join requests", () => {
-    for (const kind of OP_KINDS) {
-      expect(preflightNeeds(kind).sealEk, kind).toBe(kind === "cluster-request-join");
-    }
-  });
-
   it("requires the service stopped only for export-backup", () => {
     for (const kind of OP_KINDS) {
       expect(preflightNeeds(kind).service, kind).toBe(kind === "export-backup");
@@ -90,7 +84,7 @@ describe("buildPreflightRows", () => {
     expect(registration?.detail).toMatch(/already registered/i);
   });
 
-  it("requires registration + published seal key + balance for a join request", () => {
+  it("requires registration + balance for a join request", () => {
     const request = req({
       kind: "cluster-request-join",
       clusterJoinRequestInput: {
@@ -105,14 +99,12 @@ describe("buildPreflightRows", () => {
         inTauri: true,
         hasOperatorKey: true,
         registered: false,
-        sealEkPublished: false,
         balanceLythoshi: 1n,
         walletAddress: "mono1example",
       }),
     );
     const ids = Object.fromEntries(rows.map((row) => [row.id, row.status]));
     expect(ids["registration"]).toBe("fail");
-    expect(ids["seal-ek"]).toBe("fail");
     expect(ids["balance"]).toBe("fail");
     expect(preflightBlocked(rows)).toBe(true);
   });
@@ -132,7 +124,6 @@ describe("buildPreflightRows", () => {
         inTauri: true,
         hasOperatorKey: true,
         registered: true,
-        sealEkPublished: true,
         balanceLythoshi: 6000n * 10n ** 18n,
       }),
     );

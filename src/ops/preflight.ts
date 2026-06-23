@@ -1,7 +1,7 @@
 // Pre-submit precondition checks ("PreflightChecks") for the Operations
 // drawer. Before the operator can press "Authorize & run", per-verb
-// preconditions are probed (keychain, registration, balance, seal key,
-// service state) and rendered as green/red rows with fix-it links.
+// preconditions are probed (keychain, registration, balance, service
+// state) and rendered as green/red rows with fix-it links.
 //
 // Split into a pure rule evaluator (`buildPreflightRows`, unit-tested)
 // and an async collector (`collectPreflightProbes`) that runs the
@@ -18,23 +18,16 @@ import {
   talosService,
 } from "../sdk/bridge";
 import { rpc } from "../sdk/client";
-import { encodeGetOperatorSealKeyCalldata } from "../sdk/operatorSealKeyOps";
 import { deriveOperatorConsensusPubkeyHex } from "../sdk/register";
 import { operatorPubkeyHash } from "../sdk/operatorKeys";
-import {
-  MIN_REGISTER_BOND_LYTHOSHI,
-  decodeSealEkPublished,
-} from "../sdk/onboarding";
+import { MIN_REGISTER_BOND_LYTHOSHI } from "../sdk/onboarding";
 import { FOUNDATION_OP_KINDS } from "./errors";
 import type { OpKind, OpRequest } from "./types";
-
-const NODE_REGISTRY_ADDRESS_HEX = "0x0000000000000000000000000000000000001005";
 
 /** Verbs whose execution signs with the operator PQM-1 key. */
 export const OPERATOR_SIGNED_KINDS: ReadonlySet<OpKind> = new Set<OpKind>([
   "operator-register",
   "operator-display",
-  "operator-seal-key",
   "chat-bootstrap-peers",
   "cluster-name-register",
   "rotate-keys",
@@ -63,7 +56,6 @@ export type PreflightProbes = {
   walletAddress: string | null;
   balanceLythoshi: bigint | null;
   registered: boolean | null;
-  sealEkPublished: boolean | null;
   /** ext-protocore service running on the paired node. */
   serviceRunning: boolean | null;
 };
@@ -75,7 +67,6 @@ export const EMPTY_PREFLIGHT_PROBES: PreflightProbes = {
   walletAddress: null,
   balanceLythoshi: null,
   registered: null,
-  sealEkPublished: null,
   serviceRunning: null,
 };
 
@@ -85,7 +76,6 @@ export function preflightNeeds(kind: OpKind): {
   foundationKey: boolean;
   registration: boolean;
   balance: boolean;
-  sealEk: boolean;
   service: boolean;
 } {
   return {
@@ -97,7 +87,6 @@ export function preflightNeeds(kind: OpKind): {
       kind === "cluster-vote-admit" ||
       kind === "cluster-resign",
     balance: kind === "operator-register" || kind === "cluster-request-join",
-    sealEk: kind === "cluster-request-join",
     service: kind === "export-backup",
   };
 }
@@ -235,24 +224,6 @@ export function buildPreflightRows(
     });
   }
 
-  if (needs.sealEk) {
-    const status =
-      probes.hasOperatorKey === false ? "unknown" : triState(probes.sealEkPublished, true);
-    rows.push({
-      id: "seal-ek",
-      label: "Seal key published",
-      status,
-      detail:
-        status === "ok"
-          ? "Public seal key (EK) found on-chain."
-          : status === "unknown"
-            ? "Seal-key lookup is not available right now."
-            : "Publish your operator seal key before requesting a cluster seat.",
-      fixRoute: status === "fail" ? "/operator" : undefined,
-      fixLabel: status === "fail" ? "Publish seal key" : undefined,
-    });
-  }
-
   if (needs.service) {
     const status = triState(probes.serviceRunning, false);
     rows.push({
@@ -297,7 +268,7 @@ export async function collectPreflightProbes(kind: OpKind): Promise<PreflightPro
   let walletAddress: string | null = null;
   let operatorIdHex: string | null = null;
 
-  if (tauri && (needs.operatorKey || needs.registration || needs.balance || needs.sealEk)) {
+  if (tauri && (needs.operatorKey || needs.registration || needs.balance)) {
     try {
       const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
       probes.hasOperatorKey = Boolean(mnemonic);
@@ -351,23 +322,6 @@ export async function collectPreflightProbes(kind: OpKind): Promise<PreflightPro
         })
         .catch((err: unknown) => {
           probes.registered = isNotFound(err) ? false : null;
-        }),
-    );
-  }
-
-  if (needs.sealEk && operatorIdHex) {
-    const id = operatorIdHex;
-    tasks.push(
-      rpc
-        .ethCall({
-          to: NODE_REGISTRY_ADDRESS_HEX,
-          data: encodeGetOperatorSealKeyCalldata({ operatorIdHex: id }),
-        })
-        .then((result: string) => {
-          probes.sealEkPublished = decodeSealEkPublished(result);
-        })
-        .catch(() => {
-          probes.sealEkPublished = null;
         }),
     );
   }

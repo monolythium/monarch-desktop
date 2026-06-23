@@ -208,38 +208,11 @@ export function Operator() {
             className="btn btn--ghost"
             onClick={() =>
               ops.requestOp({
-                kind: "operator-seal-key",
-                title: "Publish seal key",
-                sub: "Publish your public seal key",
-                intro:
-                  "Publishes your public seal key so a cluster can include you in sealed-mempool duty. It is safe to publish - only your node holds the private half.",
-                fields: [
-                  { key: "operator", label: "Operator", value: publicOperatorName || self.address || operatorId || "Your operator" },
-                  { key: "peer-id", label: "Operator ID", value: operatorId ?? "from your operator key" },
-                  { key: "private-key", label: "Private key", value: "stays on your node" },
-                ],
-                operatorSealKeyInput: operatorId
-                  ? { peerIdHex: operatorId, sealEkHex: "" }
-                  : undefined,
-                icon: "SK",
-                risk: "medium",
-                needsPasskey: true,
-                confirmLabel: "Approve seal key",
-              })
-            }
-          >
-            Publish seal key
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost"
-            onClick={() =>
-              ops.requestOp({
                 kind: "cluster-request-join",
                 title: `Request join for ${activeClusterLabel}`,
                 sub: "Ask this cluster for a seat",
                 intro:
-                  "Asks the selected cluster to admit your operator. Publish your seal key first so the cluster can include you safely.",
+                  "Asks the selected cluster to admit your operator. The current members vote on your request, and the bond travels with it.",
                 fields: [
                   { key: "cluster", label: "Cluster", value: activeClusterLabel },
                   {
@@ -248,9 +221,9 @@ export function Operator() {
                     value: "current members vote on the request",
                   },
                   {
-                    key: "seal-key",
-                    label: "Seal key",
-                    value: "publish before requesting admission",
+                    key: "bond",
+                    label: "Bond",
+                    value: "paid from your operator wallet",
                   },
                 ],
                 clusterJoinRequestInput: {

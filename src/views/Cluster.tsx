@@ -212,11 +212,11 @@ export function Cluster() {
                           title: `Request join for ${label}`,
                           sub: "Prepare CJ-1 join request",
                           intro:
-                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits after the operator seal key is published.",
+                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits.",
                           fields: [
                             { key: "cluster", label: "Cluster", value: label },
                             { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; runtime preflight gated" },
-                            { key: "seal-key", label: "Seal key", value: "publish before requesting admission" },
+                            { key: "bond", label: "Bond", value: "paid from your operator wallet" },
                           ],
                           clusterJoinRequestInput: {
                             clusterId: String(row.clusterId),

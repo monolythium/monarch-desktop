@@ -48,12 +48,6 @@ const CONCEPTS: ReadonlyArray<{ term: string; title: string; body: string }> = [
     body:
       "LYTH that holders assign to a cluster to share in its rewards. Delegating never gives the cluster control of the holder's funds.",
   },
-  {
-    term: "seal key",
-    title: "Seal key",
-    body:
-      "Your public encryption key. Publishing it lets your cluster include you in sealed-mempool duty. Safe to share — only your node holds the private half.",
-  },
 ];
 
 function statusHalo(status: OnboardingStepStatus): string {

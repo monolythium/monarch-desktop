@@ -27,7 +27,6 @@ import {
   talosExportProtocoreBackup,
   talosGenerateRecoveryNodeConfig,
   talosMaintenanceApply,
-  talosOperatorSealEk,
   talosRollback,
   talosScrubRecoveryMnemonic,
   talosServiceAction,
@@ -51,7 +50,6 @@ import { shortCommit } from "../sdk/protocoreRelease";
 import { submitChatBootstrapPeers } from "../sdk/chatPeerOps";
 import { submitClusterNameRegistration } from "../sdk/clusterNameOps";
 import { submitOperatorDisplay } from "../sdk/operatorDisplayOps";
-import { submitOperatorSealKey } from "../sdk/operatorSealKeyOps";
 import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
@@ -101,7 +99,6 @@ import type {
   OtaApplyInput,
   LogRetentionInput,
   OperatorDisplayInput,
-  OperatorSealKeyInput,
   PendingChangeInput,
   RecoverKeysInput,
   RedelegateInput,
@@ -178,8 +175,6 @@ type OpsContextValue = OpsState & {
   setChatBootstrapPeersInput: (patch: Partial<ChatBootstrapPeersInput>) => void;
   /** Update the operator display metadata declaration payload. */
   setOperatorDisplayInput: (patch: Partial<OperatorDisplayInput>) => void;
-  /** Update the operator LythiumSeal EK publication payload. */
-  setOperatorSealKeyInput: (patch: Partial<OperatorSealKeyInput>) => void;
   /** Update the cluster-name registration payload. */
   setClusterNameInput: (patch: Partial<ClusterNameInput>) => void;
   /** Update the pending-change request payload for cluster invite/swap. */
@@ -613,57 +608,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           req,
           { ok: false, message },
           { transport: "operator-display-tx" },
-        );
-      }
-    },
-    [settleOperation],
-  );
-
-  const runOperatorSealKeyFlow = useCallback(
-    async (req: OpRequest) => {
-      const input = req.operatorSealKeyInput;
-      if (!input) {
-        settleOperation(
-          req,
-          { ok: false, message: "Operator seal key form is missing required fields." },
-          { transport: "operator-seal-key-tx" },
-        );
-        return;
-      }
-      try {
-        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
-        if (!mnemonic) {
-          settleOperation(
-            req,
-            {
-              ok: false,
-              message: MISSING_OPERATOR_KEY_MESSAGE,
-            },
-            { transport: "operator-seal-key-tx" },
-          );
-          return;
-        }
-        const res = await submitOperatorSealKey({
-          rpcUrl: rpcEndpoint,
-          mnemonic,
-          peerIdHex: input.peerIdHex,
-          sealEkHex: input.sealEkHex,
-        });
-        settleOperation(
-          req,
-          {
-            ok: true,
-            message: `Published operator seal key for ${res.peerIdHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...).`,
-            txHash: res.txHash,
-          },
-          { transport: "operator-seal-key-tx" },
-        );
-      } catch (err) {
-        const message = (err as Error)?.message ?? String(err);
-        settleOperation(
-          req,
-          { ok: false, message },
-          { transport: "operator-seal-key-tx" },
         );
       }
     },
@@ -1489,10 +1433,10 @@ export function OpsProvider({ children }: { children: ReactNode }) {
   // Seat-preserving "Re-provision with existing keys" recovery. Orchestrates the
   // full SEQUENCE: (1) stage the keychain mnemonic into a fresh recovery machine
   // config and apply it with a reboot, (2) wipe EPHEMERAL, (3) bootstrap etcd,
-  // (4) wait for the node to come back and re-sync, (5) re-publish the
-  // regenerated ML-KEM seal key so sealed-mempool duty resumes. The consensus
-  // key is re-derived on first boot from the staged mnemonic via the entrypoint's
-  // `gen-operator-keys --from-mnemonic`, so the bonded seat is preserved.
+  // (4) wait for the node to come back and re-sync, then scrub the staged
+  // recovery mnemonic from STATE. The consensus key is re-derived on first boot
+  // from the staged mnemonic via the entrypoint's `gen-operator-keys
+  // --from-mnemonic`, so the bonded seat is preserved.
   const runRecoverKeysFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.recoverKeysInput;
@@ -1579,7 +1523,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             ok: true,
             message: summarize(
               wipe.output,
-              `Recovery staged: the node re-derives its consensus key from your keychain mnemonic on first boot, keeping your bonded seat. It wipes the forked data and fast-syncs from a checkpoint.${bootstrapNote} Monarch will re-publish your seal key once it is back and synced.`,
+              `Recovery staged: the node re-derives its consensus key from your keychain mnemonic on first boot, keeping your bonded seat. It wipes the forked data and fast-syncs from a checkpoint.${bootstrapNote}`,
             ),
           },
           {
@@ -1591,9 +1535,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           },
         );
 
-        // (4) Wait for the node to reboot + re-sync, then (5) re-publish the
-        // regenerated seal key. Best-effort and non-blocking: the recovery above
-        // is already recorded; this resumes sealed-mempool duty for the operator.
+        // (4) Wait for the node to reboot + re-sync, then scrub the staged
+        // recovery mnemonic. Best-effort and non-blocking: the recovery above is
+        // already recorded.
         void (async () => {
           try {
             const back = await awaitNodeReconnect(rpcEndpoint);
@@ -1606,30 +1550,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
             // recovery is already settled and a scrub failure must not undo it. If
             // it fails the operator can re-run it (defence-in-depth only).
             await talosScrubRecoveryMnemonic().catch(() => {});
-            const ek = await talosOperatorSealEk().catch(() => null);
-            if (!ek || !ek.sealEkHex) return;
-            requestOp({
-              kind: "operator-seal-key",
-              title: "Re-publish seal key",
-              sub: "Resume sealed-mempool duty after recovery",
-              intro:
-                "Re-publishes your public seal key after recovery so your cluster can include you in sealed-mempool duty again. Only your node holds the private half.",
-              icon: "SK",
-              risk: "medium",
-              needsPasskey: true,
-              confirmLabel: "Approve seal key",
-              fields: [
-                { key: "peer-id", label: "Operator ID", value: input.operatorId ?? "your registered operator" },
-                { key: "seal-key", label: "Seal key", value: "regenerated public key from your node" },
-                { key: "private-key", label: "Private key", value: "stays on your node" },
-              ],
-              operatorSealKeyInput: input.operatorId
-                ? { peerIdHex: input.operatorId, sealEkHex: ek.sealEkHex }
-                : undefined,
-            });
           } catch {
-            // Re-sync timed out or the EK read failed — the operator can
-            // re-publish the seal key manually from the Operator view.
+            // Re-sync timed out — the mnemonic scrub can be re-run later.
           }
         })();
       } catch (err) {
@@ -1641,7 +1563,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         );
       }
     },
-    [requestOp, settleOperation],
+    [settleOperation],
   );
 
   const runSetLogRetentionFlow = useCallback(
@@ -1811,14 +1733,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     if (req.kind === "operator-display") {
       if (inTauri()) {
         await runOperatorDisplayFlow(req);
-      } else {
-        blockBrowserExecution(req);
-      }
-      return;
-    }
-    if (req.kind === "operator-seal-key") {
-      if (inTauri()) {
-        await runOperatorSealKeyFlow(req);
       } else {
         blockBrowserExecution(req);
       }
@@ -2025,7 +1939,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runOtaApplyFlow,
     runOtaRollbackFlow,
     runOperatorDisplayFlow,
-    runOperatorSealKeyFlow,
     runPendingChangeFlow,
     runBootstrapFlow,
     runCleanLogsFlow,
@@ -2151,24 +2064,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
         return {
           ...s,
           request: { ...s.request, operatorDisplayInput: next },
-        };
-      });
-    },
-    [],
-  );
-
-  const setOperatorSealKeyInput = useCallback(
-    (patch: Partial<OperatorSealKeyInput>) => {
-      setState((s) => {
-        if (!s.request || s.request.kind !== "operator-seal-key") return s;
-        const base: OperatorSealKeyInput = s.request.operatorSealKeyInput ?? {
-          peerIdHex: "",
-          sealEkHex: "",
-        };
-        const next = { ...base, ...patch };
-        return {
-          ...s,
-          request: { ...s.request, operatorSealKeyInput: next },
         };
       });
     },
@@ -2426,7 +2321,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
-      setOperatorSealKeyInput,
       setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,
@@ -2454,7 +2348,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setRestoreInput,
       setChatBootstrapPeersInput,
       setOperatorDisplayInput,
-      setOperatorSealKeyInput,
       setClusterNameInput,
       setPendingChangeInput,
       setClusterJoinRequestInput,

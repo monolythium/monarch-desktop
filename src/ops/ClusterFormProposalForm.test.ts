@@ -140,6 +140,5 @@ describe("cluster formation roster proposal", () => {
   it("states that formation execution uses formCluster on compatible runtimes", () => {
     expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("formCluster(bytes,bytes,bytes)");
     expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("ten ML-DSA-65 consent signatures");
-    expect(CLUSTER_FORM_RUNTIME_NOTICE).toContain("published LythiumSeal EK");
   });
 });

@@ -10,7 +10,6 @@ export type OperationReceiptTransport =
   | "register-tx"
   | "redelegate-tx"
   | "operator-display-tx"
-  | "operator-seal-key-tx"
   | "chat-bootstrap-peers-tx"
   | "cluster-name-tx"
   | "foundation-recovery-tx"

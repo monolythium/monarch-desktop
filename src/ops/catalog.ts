@@ -146,40 +146,9 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
-    kind: "operator-seal-key",
-    category: "cluster",
-    actionNumber: 24,
-    icon: "SK",
-    risk: "medium",
-    title: "Publish seal key",
-    sub: "Publish your public seal key",
-    intro:
-      "Publishes your public seal key so a cluster can include you in sealed-mempool duty. It is safe to publish — only your node holds the private half. Required before you can request a cluster seat.",
-    technical:
-      "Publishes the public seal key read from your Monarch OS node. The private key never leaves the node.",
-    destructive: false,
-    needsPasskey: true,
-    confirmLabel: "Approve seal key",
-    keywords: ["seal", "lythiumseal", "ek", "ml-kem", "operator", "join"],
-    effects: [
-      "Makes your public seal key available for cluster admission and sealed-mempool duty.",
-      "Reads the public key from the connected Monarch OS node when available.",
-      "Uses your stored operator key only for the approval step.",
-    ],
-    diff: [
-      { key: "seal", label: "Seal key", value: "+ public key" },
-      { key: "used-for", label: "Used for", value: "cluster admission and sealed mempool" },
-    ],
-    fields: [
-      { key: "peer-id", label: "Operator ID", value: "your registered operator" },
-      { key: "seal-key", label: "Seal key", value: "public key from your node" },
-      { key: "private-key", label: "Private key", value: "stays on your node" },
-    ],
-  },
-  {
     kind: "chat-bootstrap-peers",
     category: "cluster",
-    actionNumber: 25,
+    actionNumber: 24,
     icon: "CP",
     risk: "medium",
     title: "Publish chat peers",
@@ -210,7 +179,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-name-register",
     category: "cluster",
-    actionNumber: 26,
+    actionNumber: 25,
     icon: "CN",
     risk: "medium",
     title: "Set cluster name",
@@ -575,7 +544,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Recovers a forked or quarantined node WITHOUT losing your bonded cluster seat. Monarch stages your operator mnemonic from this computer's keychain onto the node, wipes the stale chain data, and lets the node re-derive the SAME consensus key on first boot — so your seat, bond, and identity are preserved. This is the recommended path when a node is quarantined (CheckpointStateRootMismatch) or wedged off the chain head. Requires your operator mnemonic to be saved in this computer's keychain.",
     technical:
-      "Stages the keychain operator mnemonic into the node's recovery file (/var/lib/protocore/recovery/operator-mnemonic.txt, mode 0600) via a machine.files entry in a fresh recovery machine config (talos_generate_recovery_node_config), applied with talos_maintenance_apply in reboot mode. It then wipes EPHEMERAL (talos_wipe_protocore) and bootstraps etcd (talos_bootstrap); on first boot the protocore entrypoint runs `protocore registry gen-operator-keys --from-mnemonic <file>`, re-deriving the byte-identical consensus key the bonded seat already trusts, and securely deletes the staged mnemonic. After the node re-syncs, Monarch re-publishes the regenerated ML-KEM seal key so sealed-mempool duty resumes. The keys are PRESERVED because they are re-derived from your keychain mnemonic — not because the wipe spares them.",
+      "Stages the keychain operator mnemonic into the node's recovery file (/var/lib/protocore/recovery/operator-mnemonic.txt, mode 0600) via a machine.files entry in a fresh recovery machine config (talos_generate_recovery_node_config), applied with talos_maintenance_apply in reboot mode. It then wipes EPHEMERAL (talos_wipe_protocore) and bootstraps etcd (talos_bootstrap); on first boot the protocore entrypoint runs `protocore registry gen-operator-keys --from-mnemonic <file>`, re-deriving the byte-identical consensus key the bonded seat already trusts, and securely deletes the staged mnemonic. After the node re-syncs, Monarch scrubs the staged recovery mnemonic from the persisted STATE config. The keys are PRESERVED because they are re-derived from your keychain mnemonic — not because the wipe spares them.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Recover & keep my seat",
@@ -598,13 +567,13 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Stages your keychain operator mnemonic onto the node (0600 recovery file) and wipes the stale chain data.",
       "On first boot the node re-derives the SAME consensus key from the mnemonic — keys preserved (re-derived from your keychain mnemonic), so your bonded seat is kept.",
-      "After re-sync, the regenerated public seal key is re-published so sealed-mempool duty resumes.",
+      "After re-sync, the staged recovery mnemonic is scrubbed from the node's persisted STATE config.",
     ],
     diff: [
       { key: "data", label: "Chain data (/var/lib/protocore)", value: "wiped + re-synced" },
       { key: "keys", label: "Consensus key", value: "preserved (re-derived from your keychain mnemonic)" },
       { key: "seat", label: "Bonded seat", value: "kept" },
-      { key: "seal", label: "Seal key", value: "re-published after re-sync" },
+      { key: "mnemonic", label: "Staged mnemonic", value: "scrubbed after re-sync" },
     ],
     fields: [
       { key: "mnemonic", label: "Mnemonic source", value: "this computer's OS keychain (operator:mnemonic)" },
@@ -642,7 +611,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-form",
     category: "cluster",
-    actionNumber: 27,
+    actionNumber: 26,
     icon: "FC",
     risk: "high",
     title: "Form cluster",
@@ -673,7 +642,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-update-charter",
     category: "cluster",
-    actionNumber: 28,
+    actionNumber: 27,
     icon: "UC",
     risk: "high",
     title: "Amend cluster charter",
@@ -705,13 +674,13 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-request-join",
     category: "cluster",
-    actionNumber: 29,
+    actionNumber: 28,
     icon: "RJ",
     risk: "high",
     title: "Request cluster join",
     sub: "Ask a cluster for a seat",
     intro:
-      "Asks an existing cluster for a seat. The current members vote on your request, and the chain admits you once enough votes land. Your seal key must be published first, and the bond travels with the request.",
+      "Asks an existing cluster for a seat. The current members vote on your request, and the chain admits you once enough votes land. The bond travels with the request.",
     technical:
       "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator PQM-1 mnemonic, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
     destructive: true,
@@ -721,11 +690,11 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Creates a pending admission request for the selected cluster.",
       "Uses your stored operator key only for the approval step.",
-      "Checks that your public seal key is published before signing.",
+      "Attaches the bond as native value and publishes your consensus pubkey for voting.",
     ],
     diff: [
       { key: "request", label: "Join request", value: "+ pending cluster vote" },
-      { key: "seal-key", label: "Seal key", value: "must be published" },
+      { key: "bond", label: "Bond", value: "paid from your operator wallet" },
     ],
     fields: [
       { key: "cluster", label: "Cluster", value: "selected cluster" },
@@ -736,7 +705,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-vote-admit",
     category: "cluster",
-    actionNumber: 30,
+    actionNumber: 29,
     icon: "VA",
     risk: "high",
     title: "Vote to admit operator",
@@ -767,7 +736,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-resign",
     category: "cluster",
-    actionNumber: 31,
+    actionNumber: 30,
     icon: "RN",
     risk: "high",
     title: "Resign from cluster",
@@ -798,7 +767,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-accept-invite",
     category: "cluster",
-    actionNumber: 32,
+    actionNumber: 31,
     icon: "IN",
     risk: "high",
     title: "Accept cluster invite",
@@ -829,7 +798,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "cluster-swap",
     category: "cluster",
-    actionNumber: 33,
+    actionNumber: 32,
     icon: "SW",
     risk: "high",
     title: "Cluster slot change",

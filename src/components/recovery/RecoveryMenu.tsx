@@ -84,7 +84,7 @@ export function RecoveryMenu({
       title: "Re-provision with existing keys",
       sub: "Seat-preserving recovery · re-derives your key",
       intro:
-        "Recovers this node WITHOUT losing your bonded cluster seat. Monarch stages your operator mnemonic from this computer's keychain onto the node, wipes the stale forked data, and lets the node re-derive the SAME consensus key on first boot. After re-sync, your seal key is re-published so sealed-mempool duty resumes.",
+        "Recovers this node WITHOUT losing your bonded cluster seat. Monarch stages your operator mnemonic from this computer's keychain onto the node, wipes the stale forked data, and lets the node re-derive the SAME consensus key on first boot, so your seat and identity are preserved.",
       icon: "RK",
       risk: "high",
       needsPasskey: true,

@@ -3,7 +3,6 @@ import {
   EMPTY_ONBOARDING_PROBES,
   MIN_REGISTER_BOND_LYTHOSHI,
   MONARCH_OS_ISO_URL,
-  decodeSealEkPublished,
   onboardingConfigured,
   reduceOnboardingSteps,
   type OnboardingProbeInputs,
@@ -14,7 +13,7 @@ function probes(overrides: Partial<OnboardingProbeInputs>): OnboardingProbeInput
 }
 
 describe("reduceOnboardingSteps", () => {
-  it("returns exactly the 10 canonical steps in order", () => {
+  it("returns exactly the 9 canonical steps in order", () => {
     const steps = reduceOnboardingSteps(EMPTY_ONBOARDING_PROBES);
     expect(steps.map((step) => step.id)).toEqual([
       "flash-iso",
@@ -23,12 +22,11 @@ describe("reduceOnboardingSteps", () => {
       "fund-bond",
       "register",
       "set-name",
-      "publish-seal-ek",
       "publish-chat-peers",
       "join-cluster",
       "dkg-attestation",
     ]);
-    expect(steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it("links the ISO download on step 1", () => {
@@ -80,7 +78,6 @@ describe("reduceOnboardingSteps", () => {
         balanceLythoshi: MIN_REGISTER_BOND_LYTHOSHI * 2n,
         registered: true,
         hasDisplayName: true,
-        sealEkPublished: true,
         chatPeersPublished: true,
         inCluster: true,
         lifecycleState: "active",
@@ -95,15 +92,14 @@ describe("reduceOnboardingSteps", () => {
         inTauri: true,
         hasOperatorKey: true,
         registered: false,
-        sealEkPublished: false,
         chatPeersPublished: false,
         inCluster: false,
       }),
     );
     expect(steps[4]?.status).toBe("todo"); // register
     expect(steps[5]?.status).toBe("blocked"); // set-name
-    expect(steps[6]?.status).toBe("blocked"); // seal EK
-    expect(steps[8]?.status).toBe("blocked"); // join cluster
+    expect(steps[6]?.status).toBe("blocked"); // publish-chat-peers
+    expect(steps[7]?.status).toBe("blocked"); // join cluster
   });
 
   it("distinguishes not-exposed (unknown) from not-done after registration", () => {
@@ -113,14 +109,13 @@ describe("reduceOnboardingSteps", () => {
         hasOperatorKey: true,
         registered: true,
         hasDisplayName: false,
-        sealEkPublished: null, // lookup unavailable
-        chatPeersPublished: false,
+        chatPeersPublished: null, // lookup unavailable
         inCluster: false,
       }),
     );
-    expect(steps[5]?.status).toBe("todo");
-    expect(steps[6]?.status).toBe("unknown");
-    expect(steps[7]?.status).toBe("todo");
+    expect(steps[5]?.status).toBe("todo"); // set-name
+    expect(steps[6]?.status).toBe("unknown"); // publish-chat-peers
+    expect(steps[7]?.status).toBe("todo"); // join-cluster
   });
 });
 
@@ -133,18 +128,5 @@ describe("onboardingConfigured", () => {
     expect(onboardingConfigured(probes({ talosConfigured: true }))).toBe(true);
     expect(onboardingConfigured(probes({ sshConnected: true }))).toBe(true);
     expect(onboardingConfigured(probes({ registered: true }))).toBe(true);
-  });
-});
-
-describe("decodeSealEkPublished", () => {
-  const word = (n: number) => n.toString(16).padStart(64, "0");
-  it("treats a non-empty ABI bytes return as published", () => {
-    expect(decodeSealEkPublished(`0x${word(0x20)}${word(1184)}${"ab".repeat(1184)}`)).toBe(true);
-  });
-  it("treats a zero-length bytes return as unpublished", () => {
-    expect(decodeSealEkPublished(`0x${word(0x20)}${word(0)}`)).toBe(false);
-  });
-  it("treats malformed/empty returns as unpublished", () => {
-    expect(decodeSealEkPublished("0x")).toBe(false);
   });
 });

@@ -44,10 +44,6 @@ import {
   isOperatorDisplayInputComplete,
   OperatorDisplayForm,
 } from "./OperatorDisplayForm";
-import {
-  isOperatorSealKeyInputComplete,
-  OperatorSealKeyForm,
-} from "./OperatorSealKeyForm";
 import { isRegisterInputComplete, RegisterForm } from "./RegisterForm";
 import { isRedelegateInputComplete, RedelegateForm } from "./RedelegateForm";
 import { isRestoreInputComplete, RestoreForm } from "./RestoreForm";
@@ -106,7 +102,6 @@ function requestNeedsPreflight(kind: OpKind): boolean {
     needs.foundationKey ||
     needs.registration ||
     needs.balance ||
-    needs.sealEk ||
     needs.service
   );
 }
@@ -360,10 +355,6 @@ export function OperationsDrawer() {
     request?.kind === "operator-display" &&
     stage === "preview" &&
     !isOperatorDisplayInputComplete(request.operatorDisplayInput);
-  const operatorSealKeyNeedsInput =
-    request?.kind === "operator-seal-key" &&
-    stage === "preview" &&
-    !isOperatorSealKeyInputComplete(request.operatorSealKeyInput);
   const clusterNameNeedsInput =
     request?.kind === "cluster-name-register" &&
     stage === "preview" &&
@@ -422,7 +413,6 @@ export function OperationsDrawer() {
     redelegateNeedsInput ||
     chatBootstrapPeersNeedsInput ||
     operatorDisplayNeedsInput ||
-    operatorSealKeyNeedsInput ||
     clusterNameNeedsInput ||
     restoreNeedsInput ||
     recoverKeysNeedsInput ||
@@ -444,39 +434,37 @@ export function OperationsDrawer() {
         ? "Enter the operator ID and chat peers first"
         : operatorDisplayNeedsInput
           ? "Enter the operator ID and valid profile fields first"
-          : operatorSealKeyNeedsInput
-            ? "Enter the operator ID and public seal key first"
-            : clusterNameNeedsInput
-              ? "Enter a cluster id and valid cluster name first"
-              : restoreNeedsInput
-                ? "Enter the operator peer id first"
-                : recoverKeysNeedsInput
-                ? "Enter the node host and install disk first"
-                : pendingChangeNeedsInput
-                  ? "Fill every pending-change input first"
-                  : clusterJoinRequestNeedsInput
-                    ? "Fill the join request details first"
-                    : clusterVoteAdmitNeedsInput
-                      ? "Fill the admission vote details first"
-                      : clusterResignationNeedsInput
-                        ? "Enter a valid resignation nonce first"
-                        : clusterFormNeedsInput
-                          ? "Fill the 7 active + 3 standby roster and consent signatures first"
-                          : dkgReshareNeedsInput
-                            ? "Fill the key ceremony output first"
-                            : freezeAdmissionNeedsInput
-                              ? "Enter the incident reason hash first"
-                              : emergencyKeyRotationNeedsInput
-                                ? "Fill every emergency key-rotation input first"
-                                : logRetentionNeedsInput
-                                  ? "Enter a valid max size (MB) and rotated-file count first"
-                                  : otaApplyNeedsInput
-                                  ? "Enter the signed image reference first"
-                                  : preflight.blocked
-                                    ? "Resolve the failing preflight checks first"
-                                    : typedBlocked
-                                      ? `Type ${typedWord} to confirm`
-                                      : undefined;
+          : clusterNameNeedsInput
+            ? "Enter a cluster id and valid cluster name first"
+            : restoreNeedsInput
+              ? "Enter the operator peer id first"
+              : recoverKeysNeedsInput
+              ? "Enter the node host and install disk first"
+              : pendingChangeNeedsInput
+                ? "Fill every pending-change input first"
+                : clusterJoinRequestNeedsInput
+                  ? "Fill the join request details first"
+                  : clusterVoteAdmitNeedsInput
+                    ? "Fill the admission vote details first"
+                    : clusterResignationNeedsInput
+                      ? "Enter a valid resignation nonce first"
+                      : clusterFormNeedsInput
+                        ? "Fill the 7 active + 3 standby roster and consent signatures first"
+                        : dkgReshareNeedsInput
+                          ? "Fill the key ceremony output first"
+                          : freezeAdmissionNeedsInput
+                            ? "Enter the incident reason hash first"
+                            : emergencyKeyRotationNeedsInput
+                              ? "Fill every emergency key-rotation input first"
+                              : logRetentionNeedsInput
+                                ? "Enter a valid max size (MB) and rotated-file count first"
+                                : otaApplyNeedsInput
+                                ? "Enter the signed image reference first"
+                                : preflight.blocked
+                                  ? "Resolve the failing preflight checks first"
+                                  : typedBlocked
+                                    ? `Type ${typedWord} to confirm`
+                                    : undefined;
   const advanceDisabled =
     stage === "executing" || inputBlocked || preflight.blocked || typedBlocked;
 
@@ -748,7 +736,6 @@ function DrawerBody({
         {request.kind === "operator-register" ? <RegisterForm /> : null}
         {request.kind === "redelegate" ? <RedelegateForm /> : null}
         {request.kind === "operator-display" ? <OperatorDisplayForm /> : null}
-        {request.kind === "operator-seal-key" ? <OperatorSealKeyForm /> : null}
         {request.kind === "chat-bootstrap-peers" ? <ChatBootstrapPeersForm /> : null}
         {request.kind === "cluster-name-register" ? <ClusterNameForm /> : null}
         {request.kind === "operator-restore" ? <RestoreForm /> : null}

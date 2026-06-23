@@ -1,4 +1,4 @@
-// First-run onboarding model: the auto-DETECTED 10-step operator
+// First-run onboarding model: the auto-DETECTED 9-step operator
 // checklist plus the probe bundle that gates LastViewRedirect.
 //
 // Split into a pure reducer (`reduceOnboardingSteps`, unit-tested) and
@@ -21,7 +21,6 @@ import {
 } from "./bridge";
 import { toMono1 } from "./address";
 import { extractChatBootstrapPeersFromOperatorMetadata } from "./chatConfig";
-import { encodeGetOperatorSealKeyCalldata } from "./operatorSealKeyOps";
 import { deriveOperatorConsensusPubkeyHex } from "./register";
 import { operatorPubkeyHash } from "./operatorKeys";
 
@@ -33,8 +32,6 @@ export const MONARCH_OS_ISO_URL =
 export const MIN_REGISTER_BOND_LYTH = 5_000n;
 export const MIN_REGISTER_BOND_LYTHOSHI = MIN_REGISTER_BOND_LYTH * 10n ** 18n;
 
-const NODE_REGISTRY_ADDRESS_HEX = "0x0000000000000000000000000000000000001005";
-
 export type OnboardingStepId =
   | "flash-iso"
   | "pair-node"
@@ -42,7 +39,6 @@ export type OnboardingStepId =
   | "fund-bond"
   | "register"
   | "set-name"
-  | "publish-seal-ek"
   | "publish-chat-peers"
   | "join-cluster"
   | "dkg-attestation";
@@ -91,8 +87,6 @@ export type OnboardingProbeInputs = {
   registered: boolean | null;
   /** Public moniker or alias is set. */
   hasDisplayName: boolean | null;
-  /** LythiumSeal EK published. */
-  sealEkPublished: boolean | null;
   /** Chat bootstrap multiaddrs published on-chain. */
   chatPeersPublished: boolean | null;
   /** Operator holds at least one active cluster seat. */
@@ -113,7 +107,6 @@ export const EMPTY_ONBOARDING_PROBES: OnboardingProbeInputs = {
   balanceLythoshi: null,
   registered: null,
   hasDisplayName: null,
-  sealEkPublished: null,
   chatPeersPublished: null,
   inCluster: null,
   lifecycleState: null,
@@ -125,7 +118,7 @@ function compactAddress(value: string | null): string {
 }
 
 /**
- * Pure reducer: probe inputs -> the 10 checklist rows.
+ * Pure reducer: probe inputs -> the 9 checklist rows.
  *
  * The reducer never fabricates progress: a `null` probe renders as
  * "unknown" with an explanation, and later chain steps stay "blocked"
@@ -179,7 +172,6 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
   };
 
   const setName = afterRegister(p.hasDisplayName);
-  const sealEk = afterRegister(p.sealEkPublished);
   const chatPeers = afterRegister(p.chatPeersPublished);
   const joinCluster = afterRegister(p.inCluster);
 
@@ -270,19 +262,8 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
       fixRoute: "/operator",
     },
     {
-      id: "publish-seal-ek",
-      n: 7,
-      title: "Publish your seal key",
-      detail:
-        sealEk === "done"
-          ? "Public seal key (ML-KEM encapsulation key) is on-chain."
-          : "Required before a cluster can admit you into sealed-mempool duty.",
-      status: sealEk,
-      fixRoute: "/operator",
-    },
-    {
       id: "publish-chat-peers",
-      n: 8,
+      n: 7,
       title: "Publish your chat peers",
       detail:
         chatPeers === "done"
@@ -293,7 +274,7 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
     },
     {
       id: "join-cluster",
-      n: 9,
+      n: 8,
       title: "Join or form a cluster",
       detail:
         joinCluster === "done"
@@ -304,7 +285,7 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
     },
     {
       id: "dkg-attestation",
-      n: 10,
+      n: 9,
       title: "DKG attestation",
       detail:
         dkg === "done"
@@ -341,14 +322,6 @@ function isNotFound(err: unknown): boolean {
   const e = err as { code?: number; message?: string } | null;
   const msg = (e?.message ?? "").toLowerCase();
   return e?.code === -32090 || msg.includes("not found") || msg.includes("unknown operator");
-}
-
-/** Decode the ABI `bytes` return of getOperatorSealKey: non-zero length = published. */
-export function decodeSealEkPublished(callResult: string): boolean {
-  const clean = callResult.startsWith("0x") ? callResult.slice(2) : callResult;
-  if (clean.length < 128) return false;
-  const len = Number.parseInt(clean.slice(64, 128), 16);
-  return Number.isFinite(len) && len > 0;
 }
 
 /**
@@ -456,18 +429,6 @@ export async function collectOnboardingProbes(): Promise<OnboardingProbeInputs> 
     }
   }
 
-  let sealEkPublished: boolean | null = null;
-  if (operatorIdHex && chainId) {
-    try {
-      const data = encodeGetOperatorSealKeyCalldata({ operatorIdHex });
-      const result = await rpc.ethCall({ to: NODE_REGISTRY_ADDRESS_HEX, data });
-      sealEkPublished = decodeSealEkPublished(result);
-    } catch {
-      // Revert / unknown selector / transport failure: cannot verify.
-      sealEkPublished = null;
-    }
-  }
-
   let chatPeersPublished: boolean | null = null;
   if (operatorIdHex && chainId) {
     try {
@@ -491,7 +452,6 @@ export async function collectOnboardingProbes(): Promise<OnboardingProbeInputs> 
     balanceLythoshi,
     registered,
     hasDisplayName,
-    sealEkPublished,
     chatPeersPublished,
     inCluster,
     lifecycleState,

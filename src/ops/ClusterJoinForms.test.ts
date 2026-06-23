@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   CLUSTER_JOIN_FORM_HEX_LENGTHS,
-  CLUSTER_JOIN_SEAL_KEY_REQUIREMENT,
   clusterJoinTtlLabel,
   clusterJoinRequestStatusPreview,
   clusterVoteAdmitStatusPreview,
@@ -37,11 +36,6 @@ describe("CJ-1 cluster join input validation", () => {
       2 + NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2,
     );
     expect(CLUSTER_JOIN_FORM_HEX_LENGTHS.operatorId).toBe(66);
-  });
-
-  it("discloses the seal-key publication requirement before join requests", () => {
-    expect(CLUSTER_JOIN_SEAL_KEY_REQUIREMENT).toContain("Publish the operator LythiumSeal EK");
-    expect(CLUSTER_JOIN_SEAL_KEY_REQUIREMENT).toContain("live seal rosters");
   });
 
   it("prepares the request-status address from the joining operator pubkey", () => {

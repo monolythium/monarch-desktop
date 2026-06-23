@@ -79,15 +79,6 @@ export function liveDiffRows(request: OpRequest): OpField[] | null {
         row("alias", "Alias", input.alias.trim() || "(cleared)"),
       ];
     }
-    case "operator-seal-key": {
-      const input = request.operatorSealKeyInput;
-      if (!input) return null;
-      const ekBytes = Math.floor(input.sealEkHex.replace(/^0x/iu, "").length / 2);
-      return [
-        row("peer", "Operator id", input.peerIdHex ? compactHex(input.peerIdHex) : "(not set)"),
-        row("seal", "Seal EK", ekBytes > 0 ? `+ ${ekBytes.toLocaleString()}-byte public key` : "(not set)"),
-      ];
-    }
     case "chat-bootstrap-peers": {
       const input = request.chatBootstrapPeersInput;
       if (!input) return null;

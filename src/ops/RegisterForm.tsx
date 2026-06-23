@@ -257,7 +257,7 @@ export function RegisterForm() {
       {wallet.alreadyRegistered === true ? (
         <div className="halo halo--err" style={{ alignSelf: "flex-start", marginBottom: 10, whiteSpace: "normal" }}>
           <span className="dot" /> This operator key is already registered on-chain — a second
-          register would be rejected. Use Set operator name or Publish seal key to update metadata.
+          register would be rejected. Use Set operator name to update metadata.
         </div>
       ) : null}
       {wallet.address ? (

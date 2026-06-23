@@ -82,7 +82,7 @@ const RULES: ReadonlyArray<ErrorRule> = [
   {
     test: /already.?registered|duplicate registration|peer.?id.*exists/i,
     friendly:
-      "This operator is already registered on-chain - a second register would be rejected. If you meant to update metadata, use Set operator name or Publish seal key instead.",
+      "This operator is already registered on-chain - a second register would be rejected. If you meant to update metadata, use Set operator name instead.",
     nextStepRoute: "/operator",
     nextStepLabel: "Open Operator",
   },
@@ -90,13 +90,6 @@ const RULES: ReadonlyArray<ErrorRule> = [
     test: /bond.*(minimum|below|too (low|small))|min(imum)?_?self_?bond|insufficientbond/i,
     friendly:
       "The bond is below the chain minimum (5,000 LYTH on testnet). Raise the bond amount and retry.",
-  },
-  {
-    test: /seal\s*(ek|key).*(not|missing|unpublished)|publish.*seal.*(first|before)|missing seal/i,
-    friendly:
-      "Your public seal key is not published yet. Publish it from the Operator page, then retry the join.",
-    nextStepRoute: "/operator",
-    nextStepLabel: "Publish seal key",
   },
   {
     test: /nonce too low|invalid nonce|nonce.*(stale|reused|not greater)/i,

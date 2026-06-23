@@ -52,7 +52,7 @@ describe("operation catalog", () => {
     });
     expect(prose(request)).toContain("requestClusterJoin(uint32,bytes)");
     expect(request?.effects).toContain(
-      "Checks that your public seal key is published before signing.",
+      "Attaches the bond as native value and publishes your consensus pubkey for voting.",
     );
 
     expect(vote).toMatchObject({
@@ -102,19 +102,6 @@ describe("operation catalog", () => {
     expect(prose(display)).toContain("public name and short alias");
     expect(display?.effects).toContain(
       "Updates the public name and alias shown in Monoscan and Monarch Desktop.",
-    );
-  });
-
-  it("routes operator seal key publication through an operator registry tx", () => {
-    const sealKey = OP_CATALOG.find((entry) => entry.kind === "operator-seal-key");
-
-    expect(sealKey).toMatchObject({
-      title: "Publish seal key",
-      confirmLabel: "Approve seal key",
-    });
-    expect(prose(sealKey)).toContain("private key never leaves the node");
-    expect(sealKey?.effects).toContain(
-      "Makes your public seal key available for cluster admission and sealed-mempool duty.",
     );
   });
 
@@ -264,11 +251,5 @@ describe("operation catalog", () => {
       expect(bandHeading("emergency")).toBe("Recovery · 81–100");
     });
 
-    it("keeps operator-seal-key in the Operator band (not moved to Keys)", () => {
-      const sealKey = OP_CATALOG.find((entry) => entry.kind === "operator-seal-key");
-      expect(sealKey?.category).toBe("cluster");
-      expect(sealKey?.actionNumber).toBeGreaterThanOrEqual(OP_BANDS.cluster.min);
-      expect(sealKey?.actionNumber).toBeLessThanOrEqual(OP_BANDS.cluster.max);
-    });
   });
 });
