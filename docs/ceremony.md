@@ -17,7 +17,7 @@ Each of the ten members must, before joining a ceremony:
 1. **Be a registered operator** with the 5,000 LYTH self-bond locked. The ceremony transport refuses senders who are not registered, and each claimed seat is live-probed on-chain — a seat showing **NOT bonded** will fail `formCluster` at submit.
 2. **Have published their seal key** (the node's ML-KEM encapsulation key) — required for sealed-mempool duty in any cluster.
 3. **Have published their chat bootstrap peers** (Operations → Chat bootstrap peers) — without published multiaddrs the lobby cannot mesh with you.
-4. **Have their PQM-1 operator key stored** in the OS keychain on the workstation running Desktop (Keys page) — it signs both your chat envelopes and your consent.
+4. **Have their operator key stored** in the OS keychain on the workstation running Desktop (Keys page) — it signs both your chat envelopes and your consent.
 
 These are steps 5, 7, and 8 of the welcome checklist; the checklist links here from step 9.
 
@@ -104,7 +104,7 @@ The export is byte-compatible with the manual cluster-form paste boxes in the Op
 | Symptom | Cause | Fix |
 |---|---|---|
 | *"Ceremony transport is unavailable in this build"* | You're in the browser preview (`pnpm dev`), or the desktop backend predates the ceremony commands. | Use the installed desktop app (v0.0.13+). If the lobby still can't be reached, coordinate over the JSON export/import fallback — it needs no live transport. |
-| *"Operator PQM-1 key is not stored yet"* | No operator mnemonic in the OS keychain. | Keys page → create or import your 24-word PQM-1 mnemonic (welcome checklist step 3), then rejoin. |
+| *"Operator operator key is not stored yet"* | No operator mnemonic in the OS keychain. | Keys page → create or import your 24-word recovery phrase (welcome checklist step 3), then rejoin. |
 | You can't send, or peers never see you | You are not a registered operator — the transport gate fails closed — or your chat peers aren't published. | Register (checklist step 5) and publish chat bootstrap peers (step 8). For meshing, exchange multiaddrs and use **Dial lobby peers**. |
 | Seat card shows **NOT bonded** | That operator registered but the self-bond isn't locked (or lapsed). | That member must fund and lock the 5,000 LYTH bond before anyone signs — the chain will reject the formation otherwise. |
 | **Digest mismatch** banner | The frozen digest differs from your local recomputation: the clients do not all see the same roster (usually a missed join/withdraw on someone's side). | Do not sign, do not submit. Initiator: **Re-broadcast snapshot**. Everyone: compare the digest groups out-of-band; once all clients agree, re-freeze and re-sign. |

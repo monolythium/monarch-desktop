@@ -2,7 +2,7 @@
 //
 // This covers the Operations drawer's `redelegate` action with the live
 // delegation precompile ABI exported by @monolythium/core-sdk. Like the
-// operator-register path, it uses the operator's PQM-1 mnemonic and the
+// operator-register path, it uses the operator's recovery phrase and the
 // SDK plaintext native transaction submit path; encrypted inclusion is
 // still a later protocol milestone.
 
@@ -14,8 +14,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -97,7 +97,7 @@ export function buildRedelegateTxFields(args: {
 
 export async function submitRedelegate(args: RedelegateArgs): Promise<RedelegateResult> {
   assertRedelegateInput(args);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -117,11 +117,10 @@ export async function submitRedelegate(args: RedelegateArgs): Promise<Redelegate
     executionUnitLimit: args.executionUnitLimit,
   });
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

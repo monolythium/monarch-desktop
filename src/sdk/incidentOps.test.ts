@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type SubmitArg = {
-  private: boolean;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -12,7 +11,7 @@ type SubmitArg = {
   };
 };
 
-const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "fa".repeat(32));
+const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "fa".repeat(32));
 
 const fakeBackend = {
   addressBytes: () => new Uint8Array(20).fill(0x91),
@@ -46,8 +45,8 @@ vi.mock("@monolythium/core-sdk", () => ({
 }));
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
-  pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
+  mnemonicToMlDsa65Backend: () => fakeBackend,
+  submitTransaction: (arg: SubmitArg) => submitPlain(arg),
 }));
 
 import {
@@ -158,7 +157,7 @@ describe("incident tx fields", () => {
 
 describe("incident submissions", () => {
   beforeEach(() => {
-    submitWithPrivacy.mockClear();
+    submitPlain.mockClear();
   });
 
   it("submits freezeAdmission through the foundation signer", async () => {
@@ -167,9 +166,8 @@ describe("incident submissions", () => {
       foundationMnemonic: "foundation mnemonic",
       reasonHashHex,
     });
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
     expect(call.tx.input).toBe("0x7a2605cd" + "ab".repeat(32));
     expect(res.txHash).toBe("0x" + "fa".repeat(32));
     expect(res.innerSighashHex).toBe("0x" + "92".repeat(32));
@@ -183,9 +181,8 @@ describe("incident submissions", () => {
       effectiveEpoch: 42,
       intentId: 7,
     });
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
     expect(call.tx.input.startsWith("0x0aeeafbf")).toBe(true);
     expect(res.targetPubkeyHex).toBe(targetPubkeyHex);
     expect(res.effectiveEpoch).toBe("42");

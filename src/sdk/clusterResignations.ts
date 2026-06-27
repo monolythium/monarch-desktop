@@ -3,7 +3,7 @@ import { makeRpcClient } from "./rpcTransport";
 import {
   ML_DSA_65_PUBLIC_KEY_LEN,
   ML_DSA_65_SIGNATURE_LEN,
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
 } from "@monolythium/core-sdk/crypto";
 
 export type ClusterResignationSummary = {
@@ -57,7 +57,7 @@ export function formatResignationHeight(
 // path: a `ClusterResignationTx` is a native, non-account protocol-maintenance
 // frame keyed solely by the resigning operator's ML-DSA-65 consensus pubkey —
 // the runtime resolves the operator's cluster from on-chain membership, so no
-// cluster id is part of the signed payload. The operator's PQM-1 mnemonic
+// cluster id is part of the signed payload. The operator's recovery phrase
 // derives that same 1952-byte consensus key (see `deriveOperatorConsensusPubkeyHex`
 // in `register.ts`), so Desktop signs the resignation with `backend.sign(...)`
 // exactly like register's possession proof.
@@ -202,7 +202,7 @@ export function encodeClusterResignationTx(args: {
 
 /**
  * Build, sign, and submit a `ClusterResignationTx` from the operator's
- * PQM-1 mnemonic. Returns the submitted tx hash plus the canonical frame
+ * recovery phrase. Returns the submitted tx hash plus the canonical frame
  * bytes for the local audit trail. The operator's cluster is resolved
  * on-chain from membership — there is no cluster id in the signed payload.
  */
@@ -212,7 +212,7 @@ export async function submitClusterResignation(
   const rpc = makeRpcClient(args.rpcUrl);
   const nonce = parseUint64(args.nonce, "nonce");
   const flags = args.expedite ? FLAG_EXPEDITE_REQUESTED : 0;
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const operatorPubkey = backend.publicKey();
 
   const preimage = clusterResignationSigningPreimage({

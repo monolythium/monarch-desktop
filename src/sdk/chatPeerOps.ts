@@ -13,8 +13,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -208,7 +208,7 @@ export async function submitChatBootstrapPeers(
 ): Promise<SubmitChatBootstrapPeersResult> {
   const peerId = peerIdHexToBytes(args.peerIdHex);
   const peers = normalizeChatBootstrapPeers(args.peers);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -231,11 +231,10 @@ export async function submitChatBootstrapPeers(
     throw new Error("setChatBootstrapPeers tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

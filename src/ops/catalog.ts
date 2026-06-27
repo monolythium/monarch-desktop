@@ -63,7 +63,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Locks your bond (5,000 LYTH minimum on testnet) and lists your node on-chain so clusters can admit you. The bond is paid from your operator wallet and is refundable after you resign and the delay passes.",
     technical:
-      "Posts a signed register tx to precompile 0x1005 from the operator's PQM-1 mnemonic. Locks the bond (sourced from the same wallet's native balance), publishes the endpoint + capabilities, and binds the derived ML-DSA-65 consensus pubkey plus possession proof into the node-registry. Operator self-signed; no foundation multisig required.",
+      "Posts a signed register tx to precompile 0x1005 from the operator's recovery phrase. Locks the bond (sourced from the same wallet's native balance), publishes the endpoint + capabilities, and binds the derived ML-DSA-65 consensus pubkey plus possession proof into the node-registry. Operator self-signed; no foundation multisig required.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign register tx",
@@ -156,7 +156,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Publishes the network addresses other operators use to reach you in operator chat. Also a precondition for taking part in a cluster-formation ceremony.",
     technical:
-      "Posts a signed setChatBootstrapPeers(bytes32,bytes) tx to node-registry 0x1005 from the operator's PQM-1 mnemonic. The stored libp2p multiaddrs feed lyth_getOperatorNetworkMetadata(...).chat.bootstrapPeers so Desktop release e2e and live operator chat can discover bootstrap peers without private local config.",
+      "Posts a signed setChatBootstrapPeers(bytes32,bytes) tx to node-registry 0x1005 from the operator's recovery phrase. The stored libp2p multiaddrs feed lyth_getOperatorNetworkMetadata(...).chat.bootstrapPeers so Desktop release e2e and live operator chat can discover bootstrap peers without private local config.",
     destructive: false,
     needsPasskey: true,
     confirmLabel: "Sign chat metadata tx",
@@ -371,7 +371,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Moves your delegated LYTH weight from one cluster to another. Your funds never leave your control — only which cluster's rewards you share in changes.",
     technical:
-      "Posts a signed redelegate tx to the delegation precompile from the operator's PQM-1 mnemonic. Moves the caller's delegation weight from the source cluster to the destination cluster after chain confirmation.",
+      "Posts a signed redelegate tx to the delegation precompile from the operator's recovery phrase. Moves the caller's delegation weight from the source cluster to the destination cluster after chain confirmation.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign redelegate tx",
@@ -627,7 +627,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     effects: [
       "Validates exactly 7 active and 3 standby ML-DSA-65 consensus pubkeys.",
       "Rejects malformed or duplicate consensus pubkeys before authorization.",
-      "Preflights formCluster through eth_call, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
+      "Preflights formCluster through eth_call, then signs with the active operator's recovery phrase on compatible runtimes.",
     ],
     diff: [
       { key: "cluster", label: "Cluster", value: "+ roster proposal" },
@@ -682,7 +682,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Asks an existing cluster for a seat. The current members vote on your request, and the chain admits you once enough votes land. The bond travels with the request.",
     technical:
-      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator PQM-1 mnemonic, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
+      "Prepares a self-service requestClusterJoin(uint32,bytes) admission request for the selected cluster. Desktop signs this from the operator recovery phrase, attaches the bond as native value, and publishes the operator ML-DSA-65 consensus pubkey for cluster-member voting.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Approve join request",
@@ -744,14 +744,14 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     intro:
       "Steps your operator down from its cluster. This cannot be undone: after a delay (24h on mainnet, shorter on testnet) your seat is freed and your bond becomes refundable.",
     technical:
-      "Submits a self-signed Tx::ClusterResignation (kind 0x05) from the operator's PQM-1 mnemonic. The resigning operator's ML-DSA-65 consensus key signs the canonical frame and the chain resolves the cluster from on-chain membership — no cluster id is part of the signed payload. This is the GUI equivalent of the `operator resign` CLI verb.",
+      "Submits a self-signed Tx::ClusterResignation (kind 0x05) from the operator's recovery phrase. The resigning operator's ML-DSA-65 consensus key signs the canonical frame and the chain resolves the cluster from on-chain membership — no cluster id is part of the signed payload. This is the GUI equivalent of the `operator resign` CLI verb.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign resignation",
     keywords: ["resign", "leave", "cluster", "step-down", "step down", "exit", "quit", "operator"],
     effects: [
       "Builds the canonical Tx::ClusterResignation frame (operator || nonce || flags || ML-DSA-65 sig).",
-      "Signs the native frame with the operator keychain PQM-1 mnemonic and submits via lyth_submitClusterResignation.",
+      "Signs the native frame with the operator keychain recovery phrase and submits via lyth_submitClusterResignation.",
       "Queues the step-down; the slot frees and the bond-refund window opens after the resignation delay.",
     ],
     diff: [

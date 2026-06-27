@@ -45,8 +45,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -337,7 +337,7 @@ export async function submitUpdateCharter(
       `updateCharter requires at least ${NODE_REGISTRY_UPDATE_CHARTER_THRESHOLD} active-member consents, got ${args.signerPubkeysHex.length}`,
     );
   }
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([
@@ -359,11 +359,10 @@ export async function submitUpdateCharter(
   if (typeof calldataHex !== "string") {
     throw new Error("updateCharter tx input was not hex-encoded");
   }
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
   return {
     txHash,

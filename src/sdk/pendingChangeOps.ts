@@ -13,8 +13,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -235,7 +235,7 @@ export async function submitPendingChange(
   );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId ?? 0n, "intentId");
-  const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -260,11 +260,10 @@ export async function submitPendingChange(
     throw new Error("submitPendingChange tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

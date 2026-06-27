@@ -13,8 +13,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -97,7 +97,7 @@ export async function submitRecoverOperatorNode(
   args: RecoverOperatorNodeArgs,
 ): Promise<RecoverOperatorNodeResult> {
   const peerId = peerIdHexToBytes(args.peerIdHex);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -116,11 +116,10 @@ export async function submitRecoverOperatorNode(
   });
   const calldataHex = encodeRecoverOperatorNodeCalldata(bytesToHex(peerId));
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

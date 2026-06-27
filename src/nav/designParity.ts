@@ -476,7 +476,7 @@ export const DESIGN_SOURCE_AUDIT = [
     status: "partial",
     desktopSurface: "/keys and OperatorKeySettings",
     routes: ["/keys"],
-    evidence: "Operator PQM-1 key import/validation and derived ML-DSA register path exist.",
+    evidence: "Operator key import/validation and derived ML-DSA register path exist.",
     decision: "Desktop imports operator keys; OS first boot owns node key generation.",
   },
   {
@@ -566,7 +566,7 @@ export const DESIGN_SOURCE_AUDIT = [
     routes: ["/operator"],
     operationKinds: ["operator-register", "operator-display", "operator-start", "operator-stop", "operator-restart"],
     evidence: "Operator route reads node/operator state and exposes register/display/service operations.",
-    decision: "Live operator identity generation happens on OS first boot; Desktop imports the operator PQM-1 mnemonic.",
+    decision: "Live operator identity generation happens on OS first boot; Desktop imports the operator recovery phrase.",
   },
   {
     file: "palette.jsx",

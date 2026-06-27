@@ -42,7 +42,7 @@ describe("operation catalog", () => {
     });
     expect(prose(form)).toContain("formCluster(bytes,bytes,bytes)");
     expect(form?.effects).toContain(
-      "Preflights formCluster through eth_call, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
+      "Preflights formCluster through eth_call, then signs with the active operator's recovery phrase on compatible runtimes.",
     );
 
     expect(request).toMatchObject({
@@ -188,7 +188,7 @@ describe("operation catalog", () => {
   });
 
   it("keeps intros plain-language — spec prose lives in technical details", () => {
-    const specTokens = /\b0x1[0-9a-fA-F]{3}\b|\(bytes|\(uint|bytes32|uint64|ML-DSA|ML-KEM|PQM-1/u;
+    const specTokens = /\b0x1[0-9a-fA-F]{3}\b|\(bytes|\(uint|bytes32|uint64|ML-DSA|ML-KEM/u;
     for (const entry of OP_CATALOG) {
       expect(specTokens.test(entry.intro), `${entry.kind} intro leaks spec prose`).toBe(false);
     }

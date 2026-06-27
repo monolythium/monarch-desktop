@@ -1,11 +1,11 @@
-// Resolve the local operator identity from the stored PQM-1 mnemonic.
+// Resolve the local operator identity from the stored recovery phrase.
 // Views use this hook instead of assuming a fixed cluster member index.
 //
 // The mnemonic is read from the OS keychain, derived in a local scope, and
 // dropped immediately. Cleartext is never logged or stored in React state.
 
 import { useEffect, useState } from "react";
-import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import { mnemonicToAddress } from "@monolythium/core-sdk/crypto";
 import {
   KEYCHAIN_ACCOUNTS,
   deriveOperatorConsensusPubkeyHex,
@@ -66,7 +66,7 @@ export function deriveSelfOperatorIds(mnemonic: string): {
 } {
   const pubkeyHex = deriveOperatorConsensusPubkeyHex(mnemonic);
   const operatorId = bytesToHex(operatorPubkeyHash(hexToBytes(pubkeyHex)));
-  const address = pqm1MnemonicToAddress(mnemonic);
+  const address = mnemonicToAddress(mnemonic);
   return { operatorId, address };
 }
 

@@ -10,7 +10,7 @@
 //   (unavailable data is NOT the same as "not done").
 // Only verified failures block authorization; unknowns never do.
 
-import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import { mnemonicToAddress } from "@monolythium/core-sdk/crypto";
 import {
   KEYCHAIN_ACCOUNTS,
   inTauri,
@@ -24,7 +24,7 @@ import { MIN_REGISTER_BOND_LYTHOSHI } from "../sdk/onboarding";
 import { FOUNDATION_OP_KINDS } from "./errors";
 import type { OpKind, OpRequest } from "./types";
 
-/** Verbs whose execution signs with the operator PQM-1 key. */
+/** Verbs whose execution signs with the operator key. */
 export const OPERATOR_SIGNED_KINDS: ReadonlySet<OpKind> = new Set<OpKind>([
   "operator-register",
   "operator-display",
@@ -274,7 +274,7 @@ export async function collectPreflightProbes(kind: OpKind): Promise<PreflightPro
       probes.hasOperatorKey = Boolean(mnemonic);
       if (mnemonic) {
         try {
-          walletAddress = pqm1MnemonicToAddress(mnemonic);
+          walletAddress = mnemonicToAddress(mnemonic);
           const pubkeyHex = deriveOperatorConsensusPubkeyHex(mnemonic);
           operatorIdHex = bytesToHex(operatorPubkeyHash(hexToBytes(pubkeyHex)));
         } catch {

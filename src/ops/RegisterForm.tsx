@@ -7,7 +7,7 @@
 // Form discipline:
 // - Endpoint: free text, validated as non-empty.
 // - Capabilities: bitmask checkboxes mirroring NODE_REGISTRY_CAPABILITIES.
-// - Consensus pubkey + possession proof: derived from the PQM-1 mnemonic
+// - Consensus pubkey + possession proof: derived from the recovery phrase
 //   at authorization time.
 // - Bond: LYTH (whole units) — translated to lythoshi via the SDK
 //   `parseLythToLythoshi` helper (1 LYTH = 1e18 lythoshi) before sign.
@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatLyth, parseLythToLythoshi } from "@monolythium/core-sdk";
-import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import { mnemonicToAddress } from "@monolythium/core-sdk/crypto";
 import {
   KEYCHAIN_ACCOUNTS,
   deriveOperatorConsensusPubkeyHex,
@@ -116,7 +116,7 @@ function useRegisterWalletProbe(): WalletProbe {
           return;
         }
         // Derive in this scope only — the cleartext is dropped right after.
-        address = pqm1MnemonicToAddress(mnemonic);
+        address = mnemonicToAddress(mnemonic);
         operatorIdHex = bytesToHex(operatorPubkeyHash(hexToBytes(deriveOperatorConsensusPubkeyHex(mnemonic))));
       } catch {
         if (!cancelled) {
@@ -404,7 +404,7 @@ export function RegisterForm() {
       <div className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
         <span className="kv__k">Consensus key</span>
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          Derived from the operator PQM-1 mnemonic; Desktop signs the possession proof during authorization.
+          Derived from the operator recovery phrase; Desktop signs the possession proof during authorization.
         </span>
       </div>
 

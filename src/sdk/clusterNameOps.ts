@@ -5,8 +5,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -186,7 +186,7 @@ export async function submitClusterNameRegistration(
 ): Promise<SubmitClusterNameRegistrationResult> {
   const normalized = normalizeClusterName(args.name);
   const clusterId = parseClusterNameId(args.clusterId);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -209,11 +209,10 @@ export async function submitClusterNameRegistration(
     throw new Error("cluster-name register tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

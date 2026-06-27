@@ -1168,7 +1168,7 @@ export function buildClusterFormOpRequest(state: CeremonyState): OpRequest | nul
             "Encodes the 30-byte economics charter (member shares, delegator share, consent expiry) — the signed V2 digest commits to these exact terms.",
           ]
         : []),
-      "Preflights formCluster, then signs with the active operator's PQM-1 mnemonic on compatible runtimes.",
+      "Preflights formCluster, then signs with the active operator's recovery phrase on compatible runtimes.",
     ],
     diff: [
       { key: "cluster", label: "Cluster", value: "+ roster proposal" },

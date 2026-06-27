@@ -51,11 +51,11 @@ export const KEYCHAIN_ACCOUNTS = {
   /// this just before issuing the HTTPS request; nothing in the React
   /// process ever holds the cleartext key once it has been written.
   hostedProviderApiKey: "hosted-provider-api-key",
-  /// PQM-1 mnemonic for the operator's chain-signing key. The Ops
+  /// recovery phrase for the operator's chain-signing key. The Ops
   /// drawer reads this in-memory just long enough to construct the
   /// register tx; the secret never leaves the Tauri sandbox.
   operatorMnemonic: "operator:mnemonic",
-  /// Recovery-authorized PQM-1 mnemonic used by support builds for guarded
+  /// Recovery-authorized recovery phrase used by support builds for guarded
   /// recovery and roster lifecycle actions. Operator installs leave this
   /// absent, so those actions fail closed.
   foundationRecoveryMnemonic: "foundation:recovery-mnemonic",
@@ -1103,7 +1103,7 @@ export async function listenAskStream(
 // ---- operator chat (Phase 1 MVP) ----------------------------------
 //
 // The Rust `chat` module runs a minimal libp2p gossipsub node, signs
-// every message with the operator's existing PQM-1 (ML-DSA-65) key from
+// every message with the operator's existing ML-DSA-65 key from
 // the keychain, and persists a local SQLite history. Cluster status is
 // read live from the node-registry (`lyth_clusterStatus`), every runtime
 // join/send/inbound persist resolves `lyth_operatorInfo` for the active

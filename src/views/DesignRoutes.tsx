@@ -1156,7 +1156,7 @@ export function SetupOperator() {
     <section className="view fade-in">
       <PageHeader
         title="Set up operator"
-        subtitle="Connect to a node, store a PQM-1 key, and submit the node-registry registration. The full guided journey lives on the Welcome page."
+        subtitle="Connect to a node, store a operator key, and submit the node-registry registration. The full guided journey lives on the Welcome page."
         action={
           <>
             <button type="button" className="btn btn--ghost" onClick={() => navigate("/welcome")}>Open checklist</button>
@@ -1170,7 +1170,7 @@ export function SetupOperator() {
         <SetupStep n={2} title="Verify Monarch OS" status={snapshot.readiness?.severity === "ok" ? "ok" : "warn"} detail={snapshot.readiness?.summary ?? snapshot.error ?? "Talos readiness not confirmed"} />
         <SetupStep
           n={3}
-          title="Store PQM-1 key"
+          title="Store operator key"
           status={keyStatus}
           detail={
             presence.checking
@@ -1210,7 +1210,7 @@ export function SetupOperator() {
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate("/marketplace")}>Browse marketplace</button>
           </div>
           <div className="empty-state" style={{ marginTop: 14 }}>
-            The register form derives the ML-DSA pubkey and possession proof from the stored PQM-1 mnemonic at signing time.
+            The register form derives the ML-DSA pubkey and possession proof from the stored recovery phrase at signing time.
           </div>
         </div>
       </div>
@@ -1655,7 +1655,7 @@ export function Keys() {
     <section className="view fade-in">
       <PageHeader
         title="Keys"
-        subtitle="PQM-1 operator key generation and storage, attestation, and backup actions."
+        subtitle="operator key generation and storage, attestation, and backup actions."
       />
 
       <div className="grid-2">
@@ -1679,7 +1679,7 @@ export function Keys() {
 
       <Blocker
         title="Passkey management is not available in this build."
-        detail="Desktop currently stores PQM-1 mnemonics in the OS keychain and uses chain and Monarch OS operations. Passkey lifecycle needs a dedicated runtime bridge before it can be exposed."
+        detail="Desktop currently stores operator recovery phrases in the OS keychain and uses chain and Monarch OS operations. Passkey lifecycle needs a dedicated runtime bridge before it can be exposed."
       />
     </section>
   );

@@ -2,10 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OperatorOnboardingPreview } from "./clusterJoinOps";
 
 type SubmitArg = {
-  private: boolean;
-  clusterId?: number;
-  clusterSealKeysSource?: unknown;
-  class?: number;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -16,8 +12,7 @@ type SubmitArg = {
   };
 };
 
-const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
-const clusterSealKeysSource = { clusterId: 7, epoch: 0, t: 0, n: 0, roster: [] };
+const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
 let previewResponse: OperatorOnboardingPreview = {
   schemaVersion: 1,
   capability: "operatorOnboardingRpcV1",
@@ -77,9 +72,8 @@ vi.mock("@monolythium/core-sdk", async (importOriginal) => {
 });
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
-  MempoolClass: { ContractCall: 1 },
-  pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
+  mnemonicToMlDsa65Backend: () => fakeBackend,
+  submitTransaction: (arg: SubmitArg) => submitPlain(arg),
 }));
 
 import {
@@ -98,7 +92,7 @@ const operatorIdHex = "0x" + "66".repeat(32);
 
 describe("CJ-1 submit helpers", () => {
   beforeEach(() => {
-    submitWithPrivacy.mockClear();
+    submitPlain.mockClear();
     rpcCalls.length = 0;
     transactionCountAddresses.length = 0;
     transactionCountReads = 0;
@@ -121,7 +115,6 @@ describe("CJ-1 submit helpers", () => {
       clusterId: 7,
       operatorPubkeyHex,
       bondLythoshi: "9000",
-      clusterSealKeysSource,
     });
 
     expect(rpcCalls[0]?.method).toBe("lyth_previewRequestClusterJoin");
@@ -131,13 +124,9 @@ describe("CJ-1 submit helpers", () => {
       operatorPubkey: operatorPubkeyHex,
       bondLythoshi: "9000",
     }]);
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    // Default is plaintext; a passed seal source is ignored unless private:true.
-    expect(call.private).toBe(false);
-    expect(call.clusterId).toBe(7);
-    expect(call.clusterSealKeysSource).toBeUndefined();
-    expect(call.class).toBe(1);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
+    // v2 plaintext mempool — the tx is signed and submitted in the clear.
     expect(call.tx.gasLimit).toBe(DEFAULT_CLUSTER_JOIN_EXECUTION_UNIT_LIMIT);
     expect(call.tx.maxPriorityFeePerGas).toBe(800n);
     expect(call.tx.to).toBe("0x0000000000000000000000000000000000001005");
@@ -167,7 +156,6 @@ describe("CJ-1 submit helpers", () => {
       clusterId: "7",
       operatorIdHex,
       voterPubkeyHex,
-      clusterSealKeysSource,
     });
 
     expect(rpcCalls[0]?.method).toBe("lyth_previewVoteClusterAdmit");
@@ -177,12 +165,8 @@ describe("CJ-1 submit helpers", () => {
       operatorId: operatorIdHex,
       voterPubkey: voterPubkeyHex,
     }]);
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
-    expect(call.clusterId).toBe(7);
-    expect(call.clusterSealKeysSource).toBeUndefined();
-    expect(call.class).toBe(1);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
     expect(call.tx.value).toBe(0n);
     expect(call.tx.input.startsWith(VOTE_CLUSTER_ADMIT_SELECTOR)).toBe(true);
     expect(transactionCountAddresses).toEqual(["mono1typedoperator"]);
@@ -201,7 +185,7 @@ describe("CJ-1 submit helpers", () => {
       bondLythoshi: "9000",
     })).rejects.toThrow(/Join-request preview is unavailable/u);
 
-    expect(submitWithPrivacy).not.toHaveBeenCalled();
+    expect(submitPlain).not.toHaveBeenCalled();
     expect(transactionCountReads).toBe(0);
   });
 
@@ -224,7 +208,7 @@ describe("CJ-1 submit helpers", () => {
       voterPubkeyHex,
     })).rejects.toThrow(/voteClusterAdmit preview rejected: request_not_open/u);
 
-    expect(submitWithPrivacy).not.toHaveBeenCalled();
+    expect(submitPlain).not.toHaveBeenCalled();
     expect(transactionCountReads).toBe(0);
   });
 });

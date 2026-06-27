@@ -140,7 +140,7 @@ export type ClusterUpdateCharterInput = {
 
 // Inputs for the Q120 voluntary cluster resignation
 // (`Tx::ClusterResignation`). The resigning operator signs the native
-// frame with the PQM-1-derived ML-DSA-65 consensus key; the runtime
+// frame with the ML-DSA-65 consensus key; the runtime
 // resolves the cluster from on-chain membership, so `clusterId` is a
 // display-only context field and is NOT part of the signed payload.
 // `nonce` is the operator-local resignation nonce (strictly greater than

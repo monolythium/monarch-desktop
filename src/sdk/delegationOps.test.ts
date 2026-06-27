@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type SubmitArg = {
-  private: boolean;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -12,7 +11,7 @@ type SubmitArg = {
   };
 };
 
-const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "cd".repeat(32));
+const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "cd".repeat(32));
 const encodeRedelegateCalldata = vi.fn(
   (fromCluster: number, toCluster: number, weightBps: number) =>
     `0xa06ac18f:${fromCluster}:${toCluster}:${weightBps}`,
@@ -55,8 +54,8 @@ vi.mock("@monolythium/core-sdk", () => ({
 }));
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
-  pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
+  mnemonicToMlDsa65Backend: () => fakeBackend,
+  submitTransaction: (arg: SubmitArg) => submitPlain(arg),
 }));
 
 import {
@@ -132,7 +131,7 @@ describe("buildRedelegateTxFields", () => {
 
 describe("submitRedelegate", () => {
   beforeEach(() => {
-    submitWithPrivacy.mockClear();
+    submitPlain.mockClear();
     encodeRedelegateCalldata.mockClear();
   });
 
@@ -145,9 +144,8 @@ describe("submitRedelegate", () => {
       weightBps: 5000,
     });
 
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
     expect(call.tx.gasLimit).toBe(250_000n);
     expect(call.tx.maxFeePerGas).toBe(900n);
     expect(call.tx.maxPriorityFeePerGas).toBe(900n);

@@ -28,8 +28,8 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  mnemonicToMlDsa65Backend,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -368,7 +368,7 @@ export function signFormClusterConsent(args: {
   standbyPubkeysHex: string;
   charterHex?: string;
 }): string {
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const signature = backend.sign(formClusterConsentMessage(args));
   return bytesToHex(signature);
 }
@@ -495,7 +495,7 @@ export async function submitFormCluster(
     validateClusterCharterHex(args.charterHex, { nowMs: Date.now() });
   }
 
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const preview = await previewFormCluster(rpc, {
@@ -526,11 +526,10 @@ export async function submitFormCluster(
     throw new Error("formCluster tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);
