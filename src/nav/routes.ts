@@ -205,7 +205,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g u",
     group: "Setup",
     icon: "SO",
-    keywords: ["setup", "operator", "register", "pqm1", "key"],
+    keywords: ["setup", "operator", "register", "recovery", "key"],
   },
   {
     path: "/setup-cluster",
@@ -233,7 +233,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g k",
     group: "Setup",
     icon: "KY",
-    keywords: ["keys", "pqm1", "mnemonic", "dkg", "backup"],
+    keywords: ["keys", "recovery", "mnemonic", "dkg", "backup"],
   },
   {
     path: "/recovery",

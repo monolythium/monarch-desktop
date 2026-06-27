@@ -28,7 +28,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -368,7 +368,7 @@ export function signFormClusterConsent(args: {
   standbyPubkeysHex: string;
   charterHex?: string;
 }): string {
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const signature = backend.sign(formClusterConsentMessage(args));
   return bytesToHex(signature);
 }
@@ -495,7 +495,7 @@ export async function submitFormCluster(
     validateClusterCharterHex(args.charterHex, { nowMs: Date.now() });
   }
 
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const preview = await previewFormCluster(rpc, {

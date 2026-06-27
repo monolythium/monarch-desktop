@@ -13,7 +13,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -235,7 +235,7 @@ export async function submitPendingChange(
   );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId ?? 0n, "intentId");
-  const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 

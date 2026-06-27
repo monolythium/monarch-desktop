@@ -241,7 +241,7 @@ export function CharterPanel(props: { clusterId: number; clusterLabel: string; c
       const pubkeyHex = init ? normalizeHex(init.public_key_hex) : null;
       if (!pubkeyHex) {
         setError(
-          "Operator key is not stored yet — add your operator PQM-1 key in Keys before signing a charter change.",
+          "Operator key is not stored yet — add your operator key in Keys before signing a charter change.",
         );
         return;
       }

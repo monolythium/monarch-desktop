@@ -23,7 +23,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   MempoolClass,
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type ClusterSealKeysSource,
   type NativeEvmTxFields,
@@ -409,7 +409,7 @@ export async function submitRequestClusterJoin(
   const rpc = makeRpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = deriveClusterJoinOperatorIdHex(args.operatorPubkeyHex);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const preview = await previewRequestClusterJoin(rpc, {
     from: senderAddress,
@@ -464,7 +464,7 @@ export async function submitVoteClusterAdmit(
   const rpc = makeRpcClient(args.rpcUrl);
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const operatorIdHex = bytesToHex(hexToBytes(args.operatorIdHex, "operatorId", 32));
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const preview = await previewVoteClusterAdmit(rpc, {
     from: senderAddress,

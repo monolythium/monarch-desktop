@@ -552,7 +552,7 @@ function interactionChecks(serverUrl, timeoutMs) {
             return Boolean(button?.disabled);
           })()
         `, timeoutMs);
-        assertions.push("operator key import validates PQM-1 mnemonic shape");
+        assertions.push("operator key import validates recovery phrase shape");
       },
     },
     {

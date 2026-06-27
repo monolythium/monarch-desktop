@@ -2,7 +2,7 @@
 //
 // Encodes `register(bytes32,string,bytes32,uint32,uint32,bytes,bytes,bytes)`
 // calldata, derives the ML-DSA-65 consensus key and possession signature
-// from the operator PQM-1 mnemonic, signs the inner ML-DSA-65 envelope, and
+// from the operator recovery phrase, signs the inner ML-DSA-65 envelope, and
 // submits it as a PLAINTEXT native tx by default. Registration publishes the
 // operator's consensus pubkey + bond on-chain in the clear, so sealing it buys
 // no privacy — and a brand-new operator's sealed envelope cannot be decrypted
@@ -22,7 +22,7 @@ import { addressToTypedBech32 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
   MempoolClass,
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
 } from "@monolythium/core-sdk/crypto";
 import type { ClusterSealKeysSource, NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
@@ -55,7 +55,7 @@ export const DEFAULT_REGISTER_EXECUTION_UNIT_LIMIT = 1_000_000n;
 export interface RegisterArgs {
   /** Foundation RPC endpoint, e.g. `https://rpc.monolythium.com`. */
   rpcUrl: string;
-  /** PQM-1 mnemonic that signs the register tx. The same mnemonic
+  /** recovery phrase that signs the register tx. The same mnemonic
    *  funds the bond from the wallet's native balance. */
   mnemonic: string;
   /** Operator's public RPC endpoint advertised in the registry. */
@@ -229,7 +229,7 @@ export function clampPriorityTip(tip: bigint, maxPrice: bigint): bigint {
 }
 
 export function deriveOperatorConsensusPubkeyHex(mnemonic: string): string {
-  const backend = pqm1MnemonicToMlDsa65Backend(mnemonic);
+  const backend = mnemonicToMlDsa65Backend(mnemonic);
   const consensusPubkey = backend.publicKey();
   assertBytesLen(consensusPubkey, "consensusPubkey", NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
   return bytesToHex(consensusPubkey);
@@ -295,7 +295,7 @@ export function buildRegisterTxFields(args: {
 }
 
 export async function submitRegister(args: RegisterArgs): Promise<RegisterResult> {
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const consensusPubkey = backend.publicKey();
   assertBytesLen(consensusPubkey, "consensusPubkey", NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES);
   const consensusPop = backend.sign(registerPopMessage(consensusPubkey));

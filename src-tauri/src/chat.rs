@@ -9,20 +9,22 @@
 // active cluster roster through `lyth_clusterStatus` plus
 // `lyth_operatorInfo`.
 //
-// Signing identity: we reuse the operator's existing PQM-1 (ML-DSA-65)
-// mnemonic from the OS keychain (account `operator:mnemonic`, the same
+// Signing identity: we reuse the operator's existing ML-DSA-65 recovery
+// phrase from the OS keychain (account `operator:mnemonic`, the same
 // key the node-registry register flow signs with — see
-// `src/sdk/register.ts`). We do NOT mint a new key. The PQM-1 →
+// `src/sdk/register.ts`). We do NOT mint a new key. The BIP-39 →
 // ML-DSA-65 derivation here is a byte-faithful port of the TS SDK's
-// `pqm1MnemonicToMlDsa65Seed` / `mlDsa65AddressBytes`:
+// `mnemonicToMlDsa65Seed` / `mlDsa65AddressBytes`:
 //
-//   payload  = bip39_entropy(mnemonic)            // 32 bytes: [0x01][0x01][30B]
-//   seed     = SHAKE256("monolythium.pqm1.v1.mldsa65" ‖ payload, 32)
+//   mnemonic = standard 24-word BIP-39 phrase (256-bit entropy, English)
+//   seed64   = BIP-39 PBKDF2 seed = mnemonicToSeed(mnemonic, "")
+//                                   (HMAC-SHA512, 2048 rounds, 64 bytes)
+//   seed     = SHAKE256("monolythium.mldsa65.v1" ‖ seed64, 32)
 //   (pk, sk) = ML-DSA-65.keygen_from_seed(seed)
 //   address  = BLAKE3("MONO_ADDRESS_BLAKE3_20_V1" ‖ be16(1001) ‖ pk)[..20]
 //
-// (A round-trip equivalence test against a known mnemonic lives in the
-// `tests` module; the canonical reference is the TS SDK.)
+// (A KAT equivalence test against known mnemonics lives in the `tests`
+// module; the canonical reference is the TS SDK.)
 //
 // Message envelope (canonical for signing): the body fields are encoded
 // deterministically, keccak256-hashed, and the digest is ML-DSA-65
@@ -56,24 +58,20 @@ use crate::keychain;
 
 // ---- constants (mirror the TS SDK) --------------------------------
 
-/// Keychain account that holds the operator PQM-1 mnemonic. Identical
+/// Keychain account that holds the operator recovery phrase. Identical
 /// to `KEYCHAIN_ACCOUNTS.operatorMnemonic` on the React side.
 const OPERATOR_MNEMONIC_ACCOUNT: &str = "operator:mnemonic";
 
-/// PQM-1 → ML-DSA-65 KDF domain (SDK `PQM1_V1_MLDSA65_DOMAIN_TAG`).
-const PQM1_DOMAIN: &[u8] = b"monolythium.pqm1.v1.mldsa65";
+/// BIP-39 → ML-DSA-65 KDF domain (SDK `MLDSA65_SEED_DOMAIN`).
+const MLDSA65_SEED_DOMAIN: &[u8] = b"monolythium.mldsa65.v1";
 /// Address derivation domain (SDK `ADDRESS_DERIVATION_DOMAIN`).
 const ADDRESS_DOMAIN: &[u8] = b"MONO_ADDRESS_BLAKE3_20_V1";
 /// Standard algorithm number for ML-DSA-65 (SDK `STANDARD_ALGO_NUMBER_ML_DSA_65`).
 const STD_ALGO_NUMBER_ML_DSA_65: u16 = 1001;
-/// PQM-1 payload byte length (algo + version + 30B entropy).
-const PQM1_PAYLOAD_LEN: usize = 32;
 /// ML-DSA-65 seed length fed to keygen.
 const ML_DSA_65_SEED_LEN: usize = 32;
-/// PQM-1 algo tag for ML-DSA-65.
-const PQM1_ALGO_TAG_MLDSA65: u8 = 1;
-/// PQM-1 v1 version byte.
-const PQM1_VERSION_V1: u8 = 1;
+/// Word count of a Monolythium recovery phrase (SDK `MLDSA65_MNEMONIC_WORDS`).
+const MLDSA65_MNEMONIC_WORDS: usize = 24;
 
 /// Max body size accepted on send / receive for CLUSTER channels
 /// (design spec: ≤4 KB).
@@ -176,7 +174,7 @@ impl From<crate::chat_store::ChatStoreError> for ChatError {
     }
 }
 
-// ---- signing identity (PQM-1 → ML-DSA-65) -------------------------
+// ---- signing identity (BIP-39 → ML-DSA-65) ------------------------
 
 /// The operator's chat signing identity, derived from the keychain
 /// mnemonic. Holds the ML-DSA-65 keypair plus the derived 20-byte
@@ -190,32 +188,38 @@ pub struct ChatIdentity {
 }
 
 impl ChatIdentity {
-    /// Derive the identity from the operator's PQM-1 mnemonic. Byte-for-
-    /// byte equivalent to the TS SDK's `pqm1MnemonicToMlDsa65Backend`.
+    /// Derive the identity from the operator's recovery phrase. Byte-for-
+    /// byte equivalent to the TS SDK's `mnemonicToMlDsa65Backend`.
     pub fn from_mnemonic(mnemonic: &str) -> Result<Self, ChatError> {
         use fips204::traits::{KeyGen, SerDes};
 
-        // BIP-39 mnemonic → 32-byte PQM-1 payload. The PQM-1 payload IS
-        // the bip39 entropy (algo + version + 30B), so `to_entropy`
-        // returns the payload directly.
-        let parsed = bip39::Mnemonic::parse_normalized(mnemonic)
-            .map_err(|e| ChatError::BadMnemonic(e.to_string()))?;
-        let payload = parsed.to_entropy();
-        if payload.len() != PQM1_PAYLOAD_LEN {
+        // Standard 24-word BIP-39 phrase. Normalize (trim/lowercase/
+        // collapse whitespace) to match the SDK, then validate the word
+        // count and BIP-39 checksum.
+        let normalized = mnemonic
+            .trim()
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let words = if normalized.is_empty() {
+            0
+        } else {
+            normalized.split(' ').count()
+        };
+        if words != MLDSA65_MNEMONIC_WORDS {
             return Err(ChatError::BadMnemonic(format!(
-                "PQM-1 payload must be {PQM1_PAYLOAD_LEN} bytes, got {}",
-                payload.len()
+                "recovery phrase must be {MLDSA65_MNEMONIC_WORDS} words, got {words}"
             )));
         }
-        if payload[0] != PQM1_ALGO_TAG_MLDSA65 || payload[1] != PQM1_VERSION_V1 {
-            return Err(ChatError::BadMnemonic(
-                "MetaMask / BIP-32 seed phrases are NOT compatible — use a PQM-1 (ML-DSA-65) mnemonic".to_string(),
-            ));
-        }
-        let payload = Zeroizing::new(payload);
+        let parsed = bip39::Mnemonic::parse_normalized(&normalized)
+            .map_err(|e| ChatError::BadMnemonic(e.to_string()))?;
 
-        // seed = SHAKE256(domain ‖ payload, dkLen = 32)
-        let seed = shake256_32(PQM1_DOMAIN, &payload);
+        // seed64 = BIP-39 PBKDF2 seed (HMAC-SHA512, 2048 rounds, 64 bytes).
+        let seed64 = Zeroizing::new(parsed.to_seed(""));
+
+        // seed = SHAKE256(domain ‖ seed64, dkLen = 32)
+        let seed = shake256_32(MLDSA65_SEED_DOMAIN, seed64.as_ref());
         let mut xi = [0u8; ML_DSA_65_SEED_LEN];
         xi.copy_from_slice(&seed);
 
@@ -2115,9 +2119,9 @@ mod tests {
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // A fixed PQM-1 mnemonic (24 words, algo+version tagged). Generated
-    // with the TS SDK's `generatePqm1Mnemonic`; its address is the
-    // reference value below. This pins the Rust derivation to the SDK.
+    // A standard 24-word BIP-39 phrase (KAT vector 1). Its derived seed +
+    // address are the reference values below — they pin the Rust derivation
+    // to the TS SDK (`@monolythium/core-sdk/crypto`).
     const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 
     #[test]
@@ -2130,75 +2134,83 @@ mod tests {
     }
 
     #[test]
-    fn derives_a_valid_address_from_a_pqm1_mnemonic() {
-        // `art` keeps the all-`abandon` phrase a valid BIP-39 checksum,
-        // but the leading bytes (algo/version) won't be 0x01/0x01 for an
-        // arbitrary all-zero entropy, so this asserts the derivation path
-        // runs and yields a 20-byte address when the tags are valid.
-        // We construct a valid PQM-1 payload directly instead.
-        let mut payload = [0u8; PQM1_PAYLOAD_LEN];
-        payload[0] = PQM1_ALGO_TAG_MLDSA65;
-        payload[1] = PQM1_VERSION_V1;
-        // deterministic 30-byte entropy
-        for (i, b) in payload[2..].iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(7).wrapping_add(3);
-        }
-        let mnemonic = bip39::Mnemonic::from_entropy(&payload).unwrap();
-        let id = ChatIdentity::from_mnemonic(&mnemonic.to_string()).unwrap();
+    fn derives_a_valid_address_from_a_mnemonic() {
+        // Standard 24-word BIP-39 phrase — derivation runs and yields a
+        // 20-byte address plus a full ML-DSA-65 public key.
+        let id = ChatIdentity::from_mnemonic(TEST_MNEMONIC).unwrap();
         assert!(id.address_hex().starts_with("0x"));
         assert_eq!(id.address_hex().len(), 2 + 40); // 0x + 20 bytes
         assert_eq!(id.public_key_bytes.len(), fips204::ml_dsa_65::PK_LEN);
     }
 
     #[test]
-    fn rejects_bip32_style_mnemonic() {
-        // All-`abandon ... art` is a valid 24-word BIP-39 phrase whose
-        // entropy is all-zero, so its algo/version tags are 0x00/0x00 →
-        // must be rejected as a non-PQM-1 (BIP-32) phrase.
-        match ChatIdentity::from_mnemonic(TEST_MNEMONIC) {
+    fn rejects_wrong_word_count() {
+        // A 12-word BIP-39 phrase is a valid mnemonic but not a 24-word
+        // operator recovery phrase → must be rejected.
+        let twelve = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        match ChatIdentity::from_mnemonic(twelve) {
             Err(ChatError::BadMnemonic(_)) => {}
             Err(other) => panic!("expected BadMnemonic, got {other}"),
-            Ok(_) => panic!("a BIP-32 (all-zero entropy) phrase must be rejected"),
+            Ok(_) => panic!("a non-24-word phrase must be rejected"),
         }
     }
 
-    /// Pins the Rust PQM-1 → ML-DSA-65 → address derivation to the TS
-    /// SDK. The reference seed + address below were produced by the SDK
-    /// (`@monolythium/core-sdk/crypto`) for the SAME deterministic
-    /// payload `make_identity` builds (algo=1, ver=1, entropy[i]=i*5+11).
-    /// If the SDK changes its derivation this test catches the drift.
     #[test]
-    fn derivation_matches_ts_sdk_reference_vector() {
-        let mut payload = [0u8; PQM1_PAYLOAD_LEN];
-        payload[0] = PQM1_ALGO_TAG_MLDSA65;
-        payload[1] = PQM1_VERSION_V1;
-        for (i, b) in payload[2..].iter_mut().enumerate() {
-            *b = (i as u8).wrapping_mul(5).wrapping_add(11);
+    fn rejects_bad_checksum() {
+        // 24 words but an invalid BIP-39 checksum → must be rejected.
+        let bad = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+        match ChatIdentity::from_mnemonic(bad) {
+            Err(ChatError::BadMnemonic(_)) => {}
+            Err(other) => panic!("expected BadMnemonic, got {other}"),
+            Ok(_) => panic!("a bad-checksum phrase must be rejected"),
         }
-        // seed = SHAKE256(domain ‖ payload, 32) — SDK reference.
-        let seed = shake256_32(PQM1_DOMAIN, &payload);
-        assert_eq!(
-            bytes_to_hex(&seed),
-            "0xd9d68616bf0cf38b632111aabf316f29781b6b0e36be1d83a06b296a4a0e9716",
-            "PQM-1 seed must match the TS SDK"
-        );
-        let mnemonic = bip39::Mnemonic::from_entropy(&payload).unwrap();
-        let id = ChatIdentity::from_mnemonic(&mnemonic.to_string()).unwrap();
-        assert_eq!(
-            id.address_hex(),
-            "0x3b48adca28974aacd15e9dd9577495f82cce8001",
-            "operator address must match the TS SDK (mlDsa65AddressBytes)"
-        );
+    }
+
+    /// Pins the Rust BIP-39 → ML-DSA-65 → address derivation to the TS SDK.
+    /// The reference seeds + addresses below are the SDK KAT vectors. If
+    /// the SDK changes its derivation this test catches the drift.
+    #[test]
+    fn derivation_matches_ts_sdk_kat_vectors() {
+        // (mnemonic, mldsa65 seed, address) KAT triples from the TS SDK.
+        let vectors: [(&str, &str, &str); 2] = [
+            (
+                TEST_MNEMONIC,
+                "0x5837fb3536908049379e7d42d3e33e48e7f39aa024fd03583a4b30f5e885349b",
+                "0x8105a54a9989b588c1dae8942de8d3272fd83592",
+            ),
+            (
+                "abandon amount liar amount expire adjust cage candy arch gather drum bullet absurd math era live bid rhythm alien crouch range attend journey unaware",
+                "0x35e6560e991418f7ca24b966a9626e84bc610621556cc484927c6f1a8edd945f",
+                "0xa3b92057ecbe3527316ee0f91539d01780416f0c",
+            ),
+        ];
+        for (mnemonic, want_seed, want_addr) in vectors {
+            // seed = SHAKE256(domain ‖ bip39_seed64, 32) — SDK reference.
+            let parsed = bip39::Mnemonic::parse_normalized(mnemonic).unwrap();
+            let seed64 = parsed.to_seed("");
+            let seed = shake256_32(MLDSA65_SEED_DOMAIN, &seed64);
+            assert_eq!(
+                bytes_to_hex(&seed),
+                want_seed,
+                "ML-DSA-65 seed must match the TS SDK for: {mnemonic}"
+            );
+            let id = ChatIdentity::from_mnemonic(mnemonic).unwrap();
+            assert_eq!(
+                id.address_hex(),
+                want_addr,
+                "operator address must match the TS SDK (mlDsa65AddressBytes)"
+            );
+        }
     }
 
     fn make_identity_variant(offset: u8) -> ChatIdentity {
-        let mut payload = [0u8; PQM1_PAYLOAD_LEN];
-        payload[0] = PQM1_ALGO_TAG_MLDSA65;
-        payload[1] = PQM1_VERSION_V1;
-        for (i, b) in payload[2..].iter_mut().enumerate() {
+        // Build a distinct valid 24-word BIP-39 phrase from deterministic
+        // 32-byte entropy (the checksum is computed by `from_entropy`).
+        let mut entropy = [0u8; 32];
+        for (i, b) in entropy.iter_mut().enumerate() {
             *b = (i as u8).wrapping_mul(5).wrapping_add(offset);
         }
-        let mnemonic = bip39::Mnemonic::from_entropy(&payload).unwrap();
+        let mnemonic = bip39::Mnemonic::from_entropy(&entropy).unwrap();
         ChatIdentity::from_mnemonic(&mnemonic.to_string()).unwrap()
     }
 

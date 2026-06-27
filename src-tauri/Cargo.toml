@@ -121,8 +121,8 @@ rand_core06 = { package = "rand_core", version = "0.6", features = ["getrandom"]
 # `libp2p` runs a minimal gossipsub node for cluster channels — only the
 # transport + gossipsub features the chat backend needs (tcp / noise /
 # yamux / tokio / gossipsub / macros for the derive). `fips204` provides
-# the ML-DSA-65 signing that reuses the operator's PQM-1 key; `bip39`
-# decodes the mnemonic to the PQM-1 payload; `sha3` (SHAKE256 + keccak)
+# the ML-DSA-65 signing that reuses the operator's recovery phrase; `bip39`
+# decodes the mnemonic to its BIP-39 seed; `sha3` (SHAKE256 + keccak)
 # and `blake3` reproduce the SDK's seed + address derivation byte-for-
 # byte. `rusqlite` (bundled SQLite amalgamation — no system lib) backs
 # the local message store. `rand` fills per-message nonces; `zeroize`

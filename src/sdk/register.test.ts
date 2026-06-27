@@ -50,7 +50,7 @@ vi.mock("@monolythium/core-sdk", () => ({
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
   MempoolClass: { ContractCall: 1 },
-  pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
+  mnemonicToMlDsa65Backend: () => fakeBackend,
   submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
 }));
 
@@ -89,7 +89,7 @@ describe("clampPriorityTip", () => {
 });
 
 describe("deriveOperatorConsensusPubkeyHex", () => {
-  it("returns the ML-DSA-65 consensus pubkey derived from the PQM-1 mnemonic", () => {
+  it("returns the ML-DSA-65 consensus pubkey derived from the recovery phrase", () => {
     expect(deriveOperatorConsensusPubkeyHex("test mnemonic")).toBe("0x" + "aa".repeat(1952));
   });
 });

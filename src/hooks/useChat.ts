@@ -189,7 +189,7 @@ export function useChat(): ChatState {
       });
       if (!init && inTauri()) {
         if (aliveRef.current) {
-          setError("Operator PQM-1 key is not stored yet. Add the operator key before joining chat.");
+          setError("Operator key is not stored yet. Add the operator key before joining chat.");
           setChannels([]);
           setActiveChannelId(null);
           setMessages([]);

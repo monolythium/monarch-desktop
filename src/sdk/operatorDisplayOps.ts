@@ -5,7 +5,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -190,7 +190,7 @@ export async function submitOperatorDisplay(
 ): Promise<SubmitOperatorDisplayResult> {
   const peerId = operatorDisplayPeerIdHexToBytes(args.peerIdHex);
   const normalized = normalizeOperatorDisplay(args);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 

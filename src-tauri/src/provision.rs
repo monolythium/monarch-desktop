@@ -210,7 +210,7 @@ fn validate_disk(disk: &str) -> Result<String, String> {
 }
 
 /// Validate the recovery mnemonic SHAPE before it is spliced into the machine
-/// config. A BIP-39 / PQM-1 operator mnemonic is exactly 24 lowercase
+/// config. A 24-word BIP-39 operator recovery phrase is exactly 24 lowercase
 /// space-separated words; the front end has already validated the checksum via
 /// `validateOperatorMnemonic`, so this is a defence-in-depth guard that the
 /// value can't smuggle YAML structure (newlines, `:`, `-`, `#`, quotes) into

@@ -476,7 +476,7 @@ export default function CeremonyRoom() {
         const init = await ceremonyChatInitialize({ rpcEndpoint });
         if (!init) {
           setError(
-            "Operator PQM-1 key is not stored yet — add your operator key in Keys before joining a ceremony.",
+            "Operator key is not stored yet — add your operator key in Keys before joining a ceremony.",
           );
           return;
         }
@@ -787,7 +787,7 @@ export default function CeremonyRoom() {
           ...(input.charterHex
             ? ["Encodes the imported 30-byte economics charter — the verified V2 digest commits to these exact terms."]
             : []),
-          "Preflights formCluster, then signs with the active operator's PQM-1 mnemonic.",
+          "Preflights formCluster, then signs with the active operator's recovery phrase.",
         ],
         diff: [
           { key: "cluster", label: "Cluster", value: "+ roster proposal (imported)" },

@@ -12,7 +12,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -228,7 +228,7 @@ export async function submitFreezeAdmission(
   args: SubmitFreezeAdmissionArgs,
 ): Promise<SubmitFreezeAdmissionResult> {
   const reasonHash = hexToBytes(args.reasonHashHex, "reasonHashHex", 32);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([
@@ -270,7 +270,7 @@ export async function submitEmergencyKeyRotation(
   );
   const effectiveEpoch = parseUint64(args.effectiveEpoch, "effectiveEpoch");
   const intentId = parseUint64(args.intentId, "intentId");
-  const backend = pqm1MnemonicToMlDsa65Backend(args.foundationMnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.foundationMnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
   const [chainId, nonce, fee] = await Promise.all([

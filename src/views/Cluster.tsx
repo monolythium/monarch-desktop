@@ -212,7 +212,7 @@ export function Cluster() {
                           title: `Request join for ${label}`,
                           sub: "Prepare CJ-1 join request",
                           intro:
-                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored PQM-1 mnemonic when available, preflights the request view, then signs and submits.",
+                            "Prepares requestClusterJoin(uint32,bytes) for the selected cluster. Desktop preloads the cluster id, derives the operator ML-DSA-65 consensus pubkey from the stored recovery phrase when available, preflights the request view, then signs and submits.",
                           fields: [
                             { key: "cluster", label: "Cluster", value: label },
                             { key: "flow", label: "Flow", value: "CJ-1 requestClusterJoin; runtime preflight gated" },

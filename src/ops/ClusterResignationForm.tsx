@@ -1,6 +1,6 @@
 // Inline form for the Q120 voluntary cluster resignation
 // (`Tx::ClusterResignation`, kind 0x05). The resigning operator signs the
-// native frame with the PQM-1-derived ML-DSA-65 consensus key; the runtime
+// native frame with the ML-DSA-65 consensus key; the runtime
 // resolves the operator's cluster from on-chain membership, so the cluster
 // id is display-only context and is NOT part of the signed payload. The
 // only signed inputs are the operator-local resignation nonce and the

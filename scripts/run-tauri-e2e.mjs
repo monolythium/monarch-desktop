@@ -337,9 +337,9 @@ Options:
   --talos-config <path>  Talos config path to save before collecting readiness.
   --trust-talos-config   Pin the supplied talosconfig CA before privileged actions.
   --operator-mnemonic-file <path>
-                         Ephemeral PQM-1 operator mnemonic file for chat evidence.
+                         Ephemeral operator recovery phrase file for chat evidence.
   --peer-operator-mnemonic-file <path>
-                         Second PQM-1 mnemonic file used by the secondary window.
+                         Second recovery phrase file used by the secondary window.
   --peer-chat-body <text>
                          Message body sent by the secondary window.
   --peer-wait-ms <ms>    Wait after secondary sends before primary collects readiness.

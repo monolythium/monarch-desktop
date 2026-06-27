@@ -69,7 +69,7 @@ function checkMnemonic(secret, name, out) {
   }
   const words = secret.value.split(/\s+/u).filter(Boolean);
   if (words.length !== REQUIRED_SECRET_WORDS) {
-    out.push(`${name} must be a ${REQUIRED_SECRET_WORDS}-word PQM-1 mnemonic`);
+    out.push(`${name} must be a ${REQUIRED_SECRET_WORDS}-word recovery phrase`);
   }
 }
 

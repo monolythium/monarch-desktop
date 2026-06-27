@@ -78,7 +78,7 @@ vi.mock("@monolythium/core-sdk", async (importOriginal) => {
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
   MempoolClass: { ContractCall: 1 },
-  pqm1MnemonicToMlDsa65Backend: () => fakeBackend,
+  mnemonicToMlDsa65Backend: () => fakeBackend,
   submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
 }));
 

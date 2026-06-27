@@ -14,7 +14,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -375,7 +375,7 @@ export async function submitDkgReshareAttestation(
   const intentId = parseUint64(args.intentId, "intentId");
   const consensusPublicKeysHex = dkgConsensusPublicKeysHex(args);
   const publicKeys = parseDkgResharePublicKeys(consensusPublicKeysHex);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 

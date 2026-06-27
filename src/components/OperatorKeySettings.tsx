@@ -1,4 +1,4 @@
-// Operator signing-key settings — imports PQM-1 mnemonics used by the
+// Operator signing-key settings — imports operator recovery phrases used by the
 // Operations drawer and stores them in the OS keychain via `keychain_set`.
 // Operator register/redelegate/chat use `operator:mnemonic`.
 //
@@ -6,13 +6,12 @@
 // Operations drawer reads the key back only long enough to build the signed
 // operator transaction.
 //
-// The input is validated against the PQM-1 spec before it is stored: a
-// 24-word BIP-39 mnemonic whose decoded 32-byte payload carries algo
-// tag 0x01 (ML-DSA-65). Validation uses the SDK's canonical decoder
-// (`pqm1MnemonicToPayload`) so it matches byte-for-byte what the signing
-// path will accept. A MetaMask-style BIP-32 seed phrase decodes to a
-// payload whose first byte is not 0x01 → it is rejected with a clear
-// warning that it is not a Monolythium operator key.
+// The input is validated against the BIP-39 spec before it is stored: a
+// standard 24-word BIP-39 mnemonic (256-bit entropy, English wordlist)
+// with a valid checksum. Validation uses the SDK's `validateMnemonic` so
+// it matches what the signing path (`mnemonicToMlDsa65Backend`) will
+// accept. Anything that is not exactly 24 words or fails the BIP-39
+// checksum is rejected with a clear bad-recovery-phrase warning.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -22,7 +21,7 @@ import {
   keychainGet,
   keychainSet,
 } from "../sdk";
-import { generatePqm1Mnemonic } from "@monolythium/core-sdk/crypto";
+import { generateMnemonic } from "@monolythium/core-sdk/crypto";
 import {
   validateOperatorMnemonic,
   type MnemonicValidation as ValidationResult,
@@ -151,7 +150,7 @@ export function OperatorKeySettings() {
   const startGeneration = () => {
     setMessage(null);
     try {
-      const mnemonic = generatePqm1Mnemonic();
+      const mnemonic = generateMnemonic();
       const words = mnemonic.trim().split(/\s+/u);
       setGeneration({
         stage: "reveal",
@@ -209,7 +208,7 @@ export function OperatorKeySettings() {
         <div>
           <h3>Operator signing key</h3>
           <div className="sub">
-            PQM-1 (ML-DSA-65) mnemonic that signs the node-registry register
+            ML-DSA-65 recovery phrase that signs the node-registry register
             tx. Stored in the OS keychain; read in-memory by the Operations
             drawer only when registering. The bond is paid from this key's
             native balance.
@@ -259,7 +258,7 @@ export function OperatorKeySettings() {
               title={
                 hasKey
                   ? "Generates a brand-new key; storing it REPLACES the current one"
-                  : "Create a brand-new 24-word PQM-1 operator key"
+                  : "Create a brand-new 24-word operator key"
               }
             >
               Generate new key
@@ -281,7 +280,7 @@ export function OperatorKeySettings() {
           <div className="settings-mnemonic-panel">
             <div className="settings-mnemonic-panel__head">
               <div>
-                <div className="cap">Import 24-word PQM-1 mnemonic</div>
+                <div className="cap">Import 24-word recovery phrase</div>
                 <p>
                   Paste the full mnemonic into any box or enter each word in order.
                 </p>

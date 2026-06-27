@@ -10,7 +10,7 @@
 //            "unknown", never as "not done".
 
 import { formatLyth } from "@monolythium/core-sdk";
-import { pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import { mnemonicToAddress } from "@monolythium/core-sdk/crypto";
 import { rpc } from "./client";
 import {
   KEYCHAIN_ACCOUNTS,
@@ -75,7 +75,7 @@ export type OnboardingProbeInputs = {
   sshConnected: boolean | null;
   /** RPC endpoint answered eth_chainId. */
   rpcReachable: boolean | null;
-  /** PQM-1 operator mnemonic present in the OS keychain. */
+  /** operator recovery phrase present in the OS keychain. */
   hasOperatorKey: boolean | null;
   /** Derived bech32m wallet address (requires the stored key). */
   walletAddress: string | null;
@@ -218,10 +218,10 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
       title: "Create or import your operator key",
       detail:
         operatorKey === "done"
-          ? "A 24-word PQM-1 operator mnemonic is stored in the OS keychain."
+          ? "A 24-word operator recovery phrase is stored in the OS keychain."
           : operatorKey === "unknown"
             ? "Keychain checks need the Monarch Desktop app."
-            : "Generate a new 24-word PQM-1 mnemonic (or paste an existing one) on the Keys page.",
+            : "Generate a new 24-word recovery phrase (or paste an existing one) on the Keys page.",
       status: operatorKey,
       fixRoute: "/keys",
     },
@@ -388,7 +388,7 @@ export async function collectOnboardingProbes(): Promise<OnboardingProbeInputs> 
     try {
       // Derive ids in this scope only; the mnemonic itself is never
       // retained past this block.
-      walletAddress = pqm1MnemonicToAddress(storedKey);
+      walletAddress = mnemonicToAddress(storedKey);
       const pubkeyHex = deriveOperatorConsensusPubkeyHex(storedKey);
       const pubkeyBytes = hexToBytes(pubkeyHex);
       operatorIdHex = bytesToHex(operatorPubkeyHash(pubkeyBytes));

@@ -1,18 +1,18 @@
 // Step 2 — Operator key.
 //
-// Create a brand-new 24-word PQM-1 (ML-DSA-65) operator mnemonic via the REAL
-// keygen path (`generatePqm1Mnemonic`), or import an existing one. Either way
+// Create a brand-new 24-word ML-DSA-65 operator recovery phrase via the REAL
+// keygen path (`generateMnemonic`), or import an existing one. Either way
 // the cleartext is stored in the OS keychain (`keychain_set` -> Rust keyring)
 // under `operator:mnemonic` — the same account the Operations drawer reads at
 // register/sign time. The derived bech32m operator account address comes from
-// the SDK (`pqm1MnemonicToAddress`). The mnemonic is shown ONCE behind a
+// the SDK (`mnemonicToAddress`). The mnemonic is shown ONCE behind a
 // "written it down" confirm, then dropped from React state.
 //
 // Outside the desktop app, the UI still renders for local review, but key
 // storage requires the OS keychain.
 
 import { useEffect, useState } from "react";
-import { generatePqm1Mnemonic, pqm1MnemonicToAddress } from "@monolythium/core-sdk/crypto";
+import { generateMnemonic, mnemonicToAddress } from "@monolythium/core-sdk/crypto";
 import { KEYCHAIN_ACCOUNTS, inTauri, keychainSet } from "../../sdk";
 import { validateOperatorMnemonic } from "../../sdk/operatorMnemonic";
 import { CopyButton } from "./CopyButton";
@@ -48,7 +48,7 @@ export function KeyStep({
   const startCreate = () => {
     setMessage(null);
     try {
-      const mnemonic = generatePqm1Mnemonic();
+      const mnemonic = generateMnemonic();
       setWords(mnemonic.trim().split(/\s+/u));
       setMode("create-reveal");
     } catch (err) {
@@ -69,7 +69,7 @@ export function KeyStep({
     setMessage(null);
     try {
       const mnemonic = words.join(" ");
-      const derived = pqm1MnemonicToAddress(mnemonic);
+      const derived = mnemonicToAddress(mnemonic);
       await keychainSet(KEYCHAIN_ACCOUNTS.operatorMnemonic, mnemonic);
       setAddress(derived);
       onKeyReady(derived);
@@ -98,7 +98,7 @@ export function KeyStep({
     setMessage(null);
     try {
       const normalized = importDraft.trim().replace(/\s+/g, " ");
-      const derived = pqm1MnemonicToAddress(normalized);
+      const derived = mnemonicToAddress(normalized);
       await keychainSet(KEYCHAIN_ACCOUNTS.operatorMnemonic, normalized);
       setAddress(derived);
       onKeyReady(derived);
@@ -118,7 +118,7 @@ export function KeyStep({
     <StepShell
       n={n}
       title="Your operator key"
-      sub="A 24-word PQM-1 (ML-DSA-65) mnemonic is your operator identity — it signs registration, posts your bond, and controls your funds. It is stored in your OS keychain."
+      sub="A 24-word ML-DSA-65 recovery phrase is your operator identity — it signs registration, posts your bond, and controls your funds. It is stored in your OS keychain."
     >
       {!tauri ? (
         <div className="halo halo--warn" style={{ alignSelf: "flex-start", marginBottom: 12 }}>
@@ -157,7 +157,7 @@ export function KeyStep({
             disabled={busy}
           >
             <b>Import an existing key</b>
-            <span>Paste a 24-word PQM-1 mnemonic you already control.</span>
+            <span>Paste a 24-word recovery phrase you already control.</span>
           </button>
         </div>
       ) : null}
@@ -253,7 +253,7 @@ export function KeyStep({
 
       {mode === "import" ? (
         <div className="setup__field">
-          <label className="cap" htmlFor="setup-import">operator mnemonic (24-word PQM-1)</label>
+          <label className="cap" htmlFor="setup-import">operator mnemonic (24-word recovery phrase)</label>
           <textarea
             id="setup-import"
             className={`setup__input${liveCheck && !liveCheck.ok ? " setup__input--err" : ""}`}

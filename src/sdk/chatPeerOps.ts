@@ -13,7 +13,7 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  pqm1MnemonicToMlDsa65Backend,
+  mnemonicToMlDsa65Backend,
   submitTransactionWithPrivacy,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
@@ -208,7 +208,7 @@ export async function submitChatBootstrapPeers(
 ): Promise<SubmitChatBootstrapPeersResult> {
   const peerId = peerIdHexToBytes(args.peerIdHex);
   const peers = normalizeChatBootstrapPeers(args.peers);
-  const backend = pqm1MnemonicToMlDsa65Backend(args.mnemonic);
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const rpc = makeRpcClient(args.rpcUrl);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
