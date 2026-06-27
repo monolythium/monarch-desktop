@@ -22,13 +22,10 @@ import {
 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  MempoolClass,
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
-  type ClusterSealKeysSource,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
-import { resolveTestnetClusterSealKeysSource } from "./clusterSeal";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
 
 export const REQUEST_CLUSTER_JOIN_SELECTOR = NODE_REGISTRY_SELECTORS.requestClusterJoin;
@@ -126,8 +123,6 @@ export interface SubmitRequestClusterJoinArgs {
   operatorPubkeyHex: string;
   bondLythoshi: bigint | number | string;
   executionUnitLimit?: bigint;
-  private?: boolean;
-  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface SubmitVoteClusterAdmitArgs {
@@ -137,8 +132,6 @@ export interface SubmitVoteClusterAdmitArgs {
   operatorIdHex: string;
   voterPubkeyHex: string;
   executionUnitLimit?: bigint;
-  private?: boolean;
-  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface ClusterJoinSubmitResult {
@@ -433,20 +426,13 @@ export async function submitRequestClusterJoin(
     bondLythoshi: args.bondLythoshi,
     executionUnitLimit: args.executionUnitLimit,
   });
-  // Plaintext by default — CJ-1 admission is public, and a not-yet-member's
-  // sealed envelope cannot be decrypted by the cluster (-32047). Opt-in seal.
-  const privateSubmit = args.private === true;
-  const clusterSealKeysSource = privateSubmit
-    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
-    : undefined;
-  const txHash = await submitTransactionWithPrivacy({
+  // v2 has a plaintext mempool — CJ-1 admission is a public action, signed
+  // and submitted in the clear (the LythiumSeal encrypted mempool was removed
+  // at the v2 re-genesis, DEC-029).
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: privateSubmit,
-    clusterId: Number(clusterId),
-    clusterSealKeysSource,
-    class: MempoolClass.ContractCall,
   });
   const signed = backend.signEvmTx(tx);
   return {
@@ -488,20 +474,13 @@ export async function submitVoteClusterAdmit(
     voterPubkeyHex: args.voterPubkeyHex,
     executionUnitLimit: args.executionUnitLimit,
   });
-  // Plaintext by default — CJ-1 admission is public, and a not-yet-member's
-  // sealed envelope cannot be decrypted by the cluster (-32047). Opt-in seal.
-  const privateSubmit = args.private === true;
-  const clusterSealKeysSource = privateSubmit
-    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
-    : undefined;
-  const txHash = await submitTransactionWithPrivacy({
+  // v2 has a plaintext mempool — CJ-1 admission is a public action, signed
+  // and submitted in the clear (the LythiumSeal encrypted mempool was removed
+  // at the v2 re-genesis, DEC-029).
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: privateSubmit,
-    clusterId: Number(clusterId),
-    clusterSealKeysSource,
-    class: MempoolClass.ContractCall,
   });
   const signed = backend.signEvmTx(tx);
   return {

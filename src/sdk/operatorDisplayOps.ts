@@ -6,7 +6,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -214,11 +214,10 @@ export async function submitOperatorDisplay(
     throw new Error("setOperatorDisplay tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

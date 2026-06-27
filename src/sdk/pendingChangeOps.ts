@@ -14,7 +14,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -260,11 +260,10 @@ export async function submitPendingChange(
     throw new Error("submitPendingChange tx input was not hex-encoded");
   }
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

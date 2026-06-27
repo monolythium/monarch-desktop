@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type SubmitArg = {
-  private: boolean;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -12,7 +11,7 @@ type SubmitArg = {
   };
 };
 
-const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ad".repeat(32));
+const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "ad".repeat(32));
 
 const fakeBackend = {
   addressBytes: () => new Uint8Array(20).fill(0x22),
@@ -47,7 +46,7 @@ vi.mock("@monolythium/core-sdk", () => ({
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
   mnemonicToMlDsa65Backend: () => fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
+  submitTransaction: (arg: SubmitArg) => submitPlain(arg),
 }));
 
 import {
@@ -225,7 +224,7 @@ describe("buildDkgReshareAttestationTxFields", () => {
 
 describe("submitDkgReshareAttestation", () => {
   beforeEach(() => {
-    submitWithPrivacy.mockClear();
+    submitPlain.mockClear();
   });
 
   it("submits a plaintext operator DKG attestation tx through the SDK signer", async () => {
@@ -237,9 +236,8 @@ describe("submitDkgReshareAttestation", () => {
       thresholdSigHex: sigHex,
     });
 
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
     expect(call.tx.gasLimit).toBe(250_000n);
     expect(call.tx.maxFeePerGas).toBe(900n);
     expect(call.tx.maxPriorityFeePerGas).toBe(900n);

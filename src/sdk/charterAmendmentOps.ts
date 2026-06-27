@@ -46,7 +46,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -359,11 +359,10 @@ export async function submitUpdateCharter(
   if (typeof calldataHex !== "string") {
     throw new Error("updateCharter tx input was not hex-encoded");
   }
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
   return {
     txHash,

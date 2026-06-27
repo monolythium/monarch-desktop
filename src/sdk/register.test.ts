@@ -2,18 +2,14 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mock the SDK so the submit path can be asserted without a live node. The
-// crypto mock captures the `submitTransactionWithPrivacy` args; the main
+// crypto mock captures the plaintext `submitTransaction` args; the main
 // mock gives `RpcClient` typed `lyth_*` reads with canned values.
 // ---------------------------------------------------------------------------
 
 type SubmitArg = {
-  private: boolean;
-  clusterId?: number;
-  clusterSealKeysSource?: unknown;
-  class?: number;
   tx: { gasLimit: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; input?: string };
 };
-const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ab".repeat(32));
+const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "ab".repeat(32));
 const consensusPubkey = new Uint8Array(1952).fill(0xaa);
 const consensusPop = new Uint8Array(3309).fill(0xbb);
 
@@ -49,9 +45,8 @@ vi.mock("@monolythium/core-sdk", () => ({
 }));
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
-  MempoolClass: { ContractCall: 1 },
   mnemonicToMlDsa65Backend: () => fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => submitWithPrivacy(arg),
+  submitTransaction: (arg: SubmitArg) => submitPlain(arg),
 }));
 
 import {
@@ -67,16 +62,6 @@ import {
 } from "./operatorKeys";
 
 const peerId = new Uint8Array(32).fill(0xcc);
-const clusterSealKeysSource = {
-  clusterId: 0,
-  epoch: 0,
-  t: 2,
-  n: 2,
-  roster: [
-    { operatorIndex: 1, mlKemEk: "0x" + "11".repeat(1184) },
-    { operatorIndex: 2, mlKemEk: "0x" + "22".repeat(1184) },
-  ],
-};
 
 describe("clampPriorityTip", () => {
   it("clamps a tip above the per-execution-unit price ceiling", () => {
@@ -195,10 +180,10 @@ describe("buildRegisterTxFields — SDK sane fee defaults", () => {
 
 describe("submitRegister — defaults to plaintext submission", () => {
   beforeEach(() => {
-    submitWithPrivacy.mockClear();
+    submitPlain.mockClear();
   });
 
-  it("submits plaintext (private:false, no seal roster) by default", async () => {
+  it("submits a plaintext native tx by default", async () => {
     const res = await submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
       mnemonic: "test mnemonic",
@@ -208,14 +193,10 @@ describe("submitRegister — defaults to plaintext submission", () => {
       peerIdHex: "0x" + "cc".repeat(32),
     });
 
-    expect(submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    // Registration is public; sealing buys no privacy and a new operator's
-    // sealed envelope cannot be decrypted by the cluster (-32047).
-    expect(call.private).toBe(false);
-    expect(call.clusterSealKeysSource).toBeUndefined();
-    expect(call.clusterId).toBe(0);
-    expect(call.class).toBe(1);
+    expect(submitPlain).toHaveBeenCalledTimes(1);
+    const call = submitPlain.mock.calls[0]![0];
+    // Registration is a public action — v2 has a plaintext mempool, so the tx
+    // is signed and submitted in the clear (no seal roster, DEC-029).
     // Sane fee defaults flow through to the actual submit.
     expect(call.tx.gasLimit).toBe(1_000_000n);
     expect(call.tx.maxFeePerGas).toBe(1000n);
@@ -230,22 +211,6 @@ describe("submitRegister — defaults to plaintext submission", () => {
     expect(res.consensusPubkeyHex).toBe("0x" + "aa".repeat(1952));
   });
 
-  it("can opt into the sealed path when privatePreview is explicitly true", async () => {
-    await submitRegister({
-      rpcUrl: "http://127.0.0.1:8545",
-      mnemonic: "test mnemonic",
-      endpoint: "https://node.example",
-      capabilities: 0x0001,
-      bondLythoshi: "1",
-      peerIdHex: "0x" + "cc".repeat(32),
-      privatePreview: true,
-      clusterSealKeysSource,
-    });
-    const call = submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(true);
-    expect(call.clusterSealKeysSource).toBe(clusterSealKeysSource);
-  });
-
   it("rejects malformed hex before submitting a transaction", async () => {
     await expect(submitRegister({
       rpcUrl: "http://127.0.0.1:8545",
@@ -255,6 +220,6 @@ describe("submitRegister — defaults to plaintext submission", () => {
       bondLythoshi: "1",
       peerIdHex: "0x" + "cc".repeat(31) + "zz",
     })).rejects.toThrow(/peerId: invalid hex/u);
-    expect(submitWithPrivacy).not.toHaveBeenCalled();
+    expect(submitPlain).not.toHaveBeenCalled();
   });
 });

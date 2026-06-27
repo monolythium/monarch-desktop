@@ -14,7 +14,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -116,11 +116,10 @@ export async function submitRecoverOperatorNode(
   });
   const calldataHex = encodeRecoverOperatorNodeCalldata(bytesToHex(peerId));
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);

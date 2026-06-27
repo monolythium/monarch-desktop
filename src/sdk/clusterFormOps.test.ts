@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FormClusterPreview } from "./clusterFormOps";
 
 type SubmitArg = {
-  private: boolean;
   tx: {
     gasLimit: bigint;
     maxFeePerGas: bigint;
@@ -14,10 +13,10 @@ type SubmitArg = {
 };
 
 const state = vi.hoisted(() => {
-  const submitWithPrivacy = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
+  const submitPlain = vi.fn(async (_arg: SubmitArg) => "0x" + "ac".repeat(32));
   const signPayloads: Uint8Array[] = [];
   return {
-    submitWithPrivacy,
+    submitPlain,
     previewFailure: null as Error | null,
     previewResponse: {
       schemaVersion: 1,
@@ -83,7 +82,7 @@ vi.mock("@monolythium/core-sdk", async (importOriginal) => ({
 
 vi.mock("@monolythium/core-sdk/crypto", () => ({
   mnemonicToMlDsa65Backend: () => state.fakeBackend,
-  submitTransactionWithPrivacy: (arg: SubmitArg) => state.submitWithPrivacy(arg),
+  submitTransaction: (arg: SubmitArg) => state.submitPlain(arg),
 }));
 
 import { blake3 } from "@noble/hashes/blake3.js";
@@ -159,7 +158,7 @@ function hexAt(calldata: string, byteOffset: number, byteLength: number): string
 
 describe("formCluster submit helpers", () => {
   beforeEach(() => {
-    state.submitWithPrivacy.mockClear();
+    state.submitPlain.mockClear();
     state.previewFailure = null;
     state.previewResponse = {
       schemaVersion: 1,
@@ -283,9 +282,8 @@ describe("formCluster submit helpers", () => {
     expect(params[0]?.standbyPubkeys).toHaveLength(FORM_CLUSTER_STANDBY_COUNT);
     expect(params[0]?.signatures).toHaveLength(FORM_CLUSTER_MEMBER_COUNT);
     expect(state.transactionCountAddresses).toEqual(["mono1typedoperator"]);
-    expect(state.submitWithPrivacy).toHaveBeenCalledTimes(1);
-    const call = state.submitWithPrivacy.mock.calls[0]![0];
-    expect(call.private).toBe(false);
+    expect(state.submitPlain).toHaveBeenCalledTimes(1);
+    const call = state.submitPlain.mock.calls[0]![0];
     expect(call.tx.value).toBe(0n);
     expect(call.tx.input.startsWith(FORM_CLUSTER_SELECTOR)).toBe(true);
     expect(res.txHash).toBe("0x" + "ac".repeat(32));
@@ -306,7 +304,7 @@ describe("formCluster submit helpers", () => {
     })).rejects.toThrow(/Cluster-form preview is unavailable/u);
 
     expect(state.transactionCountReads).toBe(0);
-    expect(state.submitWithPrivacy).not.toHaveBeenCalled();
+    expect(state.submitPlain).not.toHaveBeenCalled();
   });
 
   it("does not read nonce or broadcast when formCluster preview rejects", async () => {
@@ -327,7 +325,7 @@ describe("formCluster submit helpers", () => {
     })).rejects.toThrow(/formCluster preview rejected: duplicate_member/u);
 
     expect(state.transactionCountReads).toBe(0);
-    expect(state.submitWithPrivacy).not.toHaveBeenCalled();
+    expect(state.submitPlain).not.toHaveBeenCalled();
   });
 });
 
@@ -386,7 +384,7 @@ function charterErrorCode(fn: () => unknown): string | null {
 
 describe("formCluster V2 charter", () => {
   beforeEach(() => {
-    state.submitWithPrivacy.mockClear();
+    state.submitPlain.mockClear();
     state.previewFailure = null;
     state.previewResponse = {
       schemaVersion: 1,
@@ -513,7 +511,7 @@ describe("formCluster V2 charter", () => {
     expect(params[0]?.charter).toBe(V2_FIXTURE_CHARTER_HEX);
 
     // Broadcast input is the V2 selector; the consent digest is the V2 pin.
-    const call = state.submitWithPrivacy.mock.calls[0]![0];
+    const call = state.submitPlain.mock.calls[0]![0];
     expect(call.tx.input.startsWith(FORM_CLUSTER_V2_SELECTOR)).toBe(true);
     expect(res.consentMessageHex).toBe(V2_FIXTURE_DIGEST);
   });
@@ -526,7 +524,7 @@ describe("formCluster V2 charter", () => {
       charterHex: rawCharterHex(V2_FIXTURE_SHARES, V2_FIXTURE_DELEGATOR_BPS, 1_000),
     })).rejects.toThrow(/expiry .* not in the future/u);
     expect(state.rpcCalls).toHaveLength(0);
-    expect(state.submitWithPrivacy).not.toHaveBeenCalled();
+    expect(state.submitPlain).not.toHaveBeenCalled();
   });
 
   it("keeps the charter-less preview params free of the charter key", async () => {
@@ -537,7 +535,7 @@ describe("formCluster V2 charter", () => {
     });
     const params = state.rpcCalls[0]?.params as Array<Record<string, unknown>>;
     expect("charter" in params[0]!).toBe(false);
-    const call = state.submitWithPrivacy.mock.calls[0]![0];
+    const call = state.submitPlain.mock.calls[0]![0];
     expect(call.tx.input.startsWith(FORM_CLUSTER_SELECTOR)).toBe(true);
   });
 });

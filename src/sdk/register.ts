@@ -3,14 +3,11 @@
 // Encodes `register(bytes32,string,bytes32,uint32,uint32,bytes,bytes,bytes)`
 // calldata, derives the ML-DSA-65 consensus key and possession signature
 // from the operator recovery phrase, signs the inner ML-DSA-65 envelope, and
-// submits it as a PLAINTEXT native tx by default. Registration publishes the
-// operator's consensus pubkey + bond on-chain in the clear, so sealing it buys
-// no privacy — and a brand-new operator's sealed envelope cannot be decrypted
-// by the cluster seal-pool (it is not yet a member), which surfaced as
-// `-32047 upstream unavailable: mempool: decryption failed`. The chain accepts
-// plaintext mempool entries (`encrypted_mempool_required = false`), so the
-// register goes through the plaintext path like every other operator op.
-// Sealing remains available as an opt-in via `privatePreview: true`.
+// submits it as a PLAINTEXT native tx. Registration publishes the operator's
+// consensus pubkey + bond on-chain in the clear, and v2 has a plaintext
+// mempool — the LythiumSeal encrypted-mempool/seal submission lane was removed
+// at the v2 re-genesis (DEC-029), so the register goes through the plaintext
+// submit path like every other operator op.
 //
 // Operator-self-signed: the register handler at
 // `crates/economics/node-registry/src/ops.rs::register_op_host` does
@@ -21,12 +18,10 @@
 import { addressToTypedBech32 } from "@monolythium/core-sdk";
 import { makeRpcClient } from "./rpcTransport";
 import {
-  MempoolClass,
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
 } from "@monolythium/core-sdk/crypto";
-import type { ClusterSealKeysSource, NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
-import { resolveTestnetClusterSealKeysSource } from "./clusterSeal";
+import type { NativeEvmTxFields } from "@monolythium/core-sdk/crypto";
 import {
   NODE_REGISTRY_CONSENSUS_POP_BYTES,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
@@ -75,15 +70,6 @@ export interface RegisterArgs {
   /** Optional execution-unit limit override. The default mirrors the SDK
    *  registry write ceiling with public-preview headroom. */
   executionUnitLimit?: bigint;
-  /** Opt-in sealed submission. Default (`undefined`/`false`) submits the
-   *  register as a PLAINTEXT tx — registration is a public action and the
-   *  chain accepts plaintext entries. Set to `true` only when the cluster
-   *  seal-pool is known to be warmed for this sender (sealing a new
-   *  operator's register fails decryption: `-32047`). */
-  privatePreview?: boolean;
-  /** Optional pre-resolved cluster seal roster. If omitted on testnet, Desktop
-   *  resolves it from the pinned chain-registry genesis. */
-  clusterSealKeysSource?: ClusterSealKeysSource;
 }
 
 export interface RegisterResult {
@@ -337,20 +323,12 @@ export async function submitRegister(args: RegisterArgs): Promise<RegisterResult
     executionUnitLimit: args.executionUnitLimit,
   });
 
-  // Plaintext by default; sealing is opt-in (privatePreview === true).
-  const privateSubmit = args.privatePreview === true;
-  const clusterSealKeysSource = privateSubmit
-    ? args.clusterSealKeysSource ?? (await resolveTestnetClusterSealKeysSource())
-    : undefined;
-
-  const txHash = await submitTransactionWithPrivacy({
+  // v2 plaintext mempool — register is a public action submitted in the clear
+  // (the LythiumSeal encrypted-mempool lane was removed at re-genesis, DEC-029).
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: privateSubmit,
-    clusterId: clusterSealKeysSource?.clusterId ?? 0,
-    clusterSealKeysSource,
-    class: MempoolClass.ContractCall,
   });
 
   // Recompute the canonical sighash locally for the result surface. The

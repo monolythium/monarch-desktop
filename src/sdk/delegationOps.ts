@@ -15,7 +15,7 @@ import {
 import { makeRpcClient } from "./rpcTransport";
 import {
   mnemonicToMlDsa65Backend,
-  submitTransactionWithPrivacy,
+  submitTransaction,
   type NativeEvmTxFields,
 } from "@monolythium/core-sdk/crypto";
 import { clampPriorityTip, type RegisterFeeQuote } from "./register";
@@ -117,11 +117,10 @@ export async function submitRedelegate(args: RedelegateArgs): Promise<Redelegate
     executionUnitLimit: args.executionUnitLimit,
   });
 
-  const txHash = await submitTransactionWithPrivacy({
+  const txHash = await submitTransaction({
     client: rpc,
     backend,
     tx,
-    private: false,
   });
 
   const signed = backend.signEvmTx(tx);
