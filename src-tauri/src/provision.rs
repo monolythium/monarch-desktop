@@ -129,15 +129,13 @@ pub(crate) const PLANNED_ADMIN_CERT_VALIDITY_DAYS: i64 = 365;
 /// The image-baked enrollment/TPM file-path envs that must be cleared with an
 /// explicit empty value (see the module docs). Order mirrors the validated
 /// reference patch; the trailing `=` with no value is load-bearing.
-pub const CLEARED_FILE_ENVS: [&str; 9] = [
+pub const CLEARED_FILE_ENVS: [&str; 7] = [
     "PROTOCORE_EXPECTED_DIGEST_FILE",
     "PROTOCORE_ENROLLMENT_FILE",
     "PROTOCORE_TPM_QUOTE_FILE",
     "PROTOCORE_TPM_EVENT_LOG_FILE",
     "PROTOCORE_TPM_SEALED_OPERATOR_KEY_FILE",
-    "PROTOCORE_TPM_SEALED_BLS_SHARE_FILE",
     "PROTOCORE_KEY_TRANSCRIPT_FILE",
-    "PROTOCORE_DKG_TRANSCRIPT_FILE",
     "PROTOCORE_LYTHIUMSEAL_OPERATOR_KEY_FILE",
 ];
 
