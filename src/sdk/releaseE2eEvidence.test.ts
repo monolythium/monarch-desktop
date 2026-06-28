@@ -18,7 +18,6 @@ import { withOperationReceiptAuditHash, type OperationReceipt } from "../ops/rec
 import type { ReleaseAttestationStatus } from "./releaseAttestation";
 import type { ReleaseChatMembershipEvidence } from "./releaseReadiness";
 import {
-  DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA,
   DESKTOP_E2E_EVIDENCE_SCHEMA,
   type DesktopReleaseE2eEvidence,
   verifyDesktopReleaseE2eEvidence,
@@ -33,10 +32,6 @@ const screenshotLength = 2048;
 
 function hex(ch: string, bytes: number): string {
   return `0x${ch.repeat(bytes * 2)}`;
-}
-
-function blsKey(byte: number): string {
-  return byte.toString(16).padStart(2, "0").repeat(1952);
 }
 
 function certificate(overrides: Partial<TalosCertificateInfo> = {}): TalosCertificateInfo {
@@ -218,17 +213,6 @@ function membership(
   };
 }
 
-function dkgReshareAttestation(): DesktopReleaseE2eEvidence["dkg_reshare_attestation"] {
-  return {
-    schema_version: DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA,
-    created_at: "2026-06-01T00:00:00Z",
-    intent_id: "7",
-    consensus_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(blsKey).join(""),
-    threshold_sig_hex: "0x" + "c".repeat(5 * 3309 * 2),
-    signer_count: 5,
-  };
-}
-
 function routeSlug(route: string): string {
   const slug = route === "/" ? "root" : route.slice(1);
   return slug.replace(/[^a-z0-9._-]+/giu, "_") || "route";
@@ -336,7 +320,6 @@ function evidence(overrides: Partial<DesktopReleaseE2eEvidence> = {}): DesktopRe
       release_metadata: "monarch-os-talos-v1.13.0-amd64.release.json",
       expected_protocore_digest: releaseDigest,
     },
-    dkg_reshare_attestation: dkgReshareAttestation(),
     desktop_readiness: {
       expectedChainId: 69420,
       expectedRpcEndpoint: rpcEndpoint,
@@ -434,25 +417,6 @@ describe("Desktop release e2e evidence", () => {
     expect(report.ok).toBe(false);
     expect(report.blockers).toContain(
       "Desktop release-attestation: Expected digest does not match the Monarch OS release metadata digest.",
-    );
-  });
-
-  it("requires a valid DKG re-share attestation artifact", () => {
-    const withoutDkg: Record<string, unknown> = { ...evidence() };
-    delete withoutDkg.dkg_reshare_attestation;
-    const missing = verifyDesktopReleaseE2eEvidence(withoutDkg);
-    expect(missing.ok).toBe(false);
-    expect(missing.blockers).toContain("DKG re-share attestation evidence is missing.");
-
-    const duplicate = verifyDesktopReleaseE2eEvidence(evidence({
-      dkg_reshare_attestation: {
-        ...dkgReshareAttestation(),
-        consensus_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(blsKey).join(""),
-      },
-    }));
-    expect(duplicate.ok).toBe(false);
-    expect(duplicate.blockers).toContain(
-      "DKG re-share attestation signer pubkeys must be unique.",
     );
   });
 
@@ -611,25 +575,4 @@ describe("Desktop release e2e evidence", () => {
     }
   }, 60_000);
 
-  it("standalone verifier rejects missing DKG re-share attestation evidence", () => {
-    const bad: Record<string, unknown> = { ...evidence() };
-    delete bad.dkg_reshare_attestation;
-
-    const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-evidence-"));
-    try {
-      const file = join(dir, "evidence.json");
-      writeRouteScreenshotFiles(dir, bad as DesktopReleaseE2eEvidence);
-      writeFileSync(file, JSON.stringify(bad), "utf8");
-      const result = spawnSync(process.execPath, ["scripts/verify-release-e2e-evidence.mjs", file], {
-        cwd: process.cwd(),
-        env: process.env,
-        encoding: "utf8",
-      });
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("DKG re-share attestation evidence is missing.");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, 60_000);
 });

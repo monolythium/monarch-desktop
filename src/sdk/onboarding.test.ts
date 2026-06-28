@@ -13,7 +13,7 @@ function probes(overrides: Partial<OnboardingProbeInputs>): OnboardingProbeInput
 }
 
 describe("reduceOnboardingSteps", () => {
-  it("returns exactly the 9 canonical steps in order", () => {
+  it("returns exactly the 8 canonical steps in order", () => {
     const steps = reduceOnboardingSteps(EMPTY_ONBOARDING_PROBES);
     expect(steps.map((step) => step.id)).toEqual([
       "flash-iso",
@@ -24,9 +24,8 @@ describe("reduceOnboardingSteps", () => {
       "set-name",
       "publish-chat-peers",
       "join-cluster",
-      "dkg-attestation",
     ]);
-    expect(steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(steps.map((step) => step.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("links the ISO download on step 1", () => {

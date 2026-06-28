@@ -6,8 +6,6 @@ import {
 import requiredE2eRoutes from "../nav/e2eRequiredRoutes.json";
 
 export const DESKTOP_E2E_EVIDENCE_SCHEMA = "monarch-desktop-e2e-evidence/v1";
-export const DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA =
-  "monarch-dkg-reshare-attestation/v1";
 
 const REQUIRED_ROUTES = requiredE2eRoutes;
 const REQUIRED_COMMANDS = [
@@ -22,10 +20,6 @@ const TALOSCTL_PROBES = new Set(["talosctl_ok", "talosctl_secure_ok"]);
 const MIN_ROUTE_SCREENSHOT_BYTES = 1024;
 const MIN_ROUTE_SCREENSHOT_WIDTH = 320;
 const MIN_ROUTE_SCREENSHOT_HEIGHT = 240;
-const MAX_DKG_RESHARE_INTENT_ID = (1n << 56n) - 1n;
-const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = 1952;
-const DKG_RESHARE_ATTESTATION_SIG_BYTES = 3309;
-const DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 export type DesktopReleaseE2eEvidence = {
   schema_version: typeof DESKTOP_E2E_EVIDENCE_SCHEMA;
@@ -59,14 +53,6 @@ export type DesktopReleaseE2eEvidence = {
     substrate_runtime_proof: string;
     release_metadata: string;
     expected_protocore_digest: string;
-  };
-  dkg_reshare_attestation: {
-    schema_version: typeof DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA;
-    created_at?: string;
-    intent_id: string;
-    consensus_public_keys_hex: string;
-    threshold_sig_hex: string;
-    signer_count: number;
   };
   desktop_readiness: DesktopReleaseReadinessInput;
 };
@@ -104,13 +90,6 @@ export function verifyDesktopReleaseE2eEvidence(
     checkOsSmoke(osSmoke, blockers);
   }
 
-  const dkgReshare = evidence.dkg_reshare_attestation;
-  if (!isRecord(dkgReshare)) {
-    blockers.push("DKG re-share attestation evidence is missing.");
-  } else {
-    checkDkgReshareAttestation(dkgReshare, blockers);
-  }
-
   const desktopReadiness = evidence.desktop_readiness;
   let readiness: DesktopReleaseReadinessReport | null = null;
   if (!isRecord(desktopReadiness)) {
@@ -136,65 +115,6 @@ export function verifyDesktopReleaseE2eEvidence(
     blockers,
     readiness,
   };
-}
-
-function checkDkgReshareAttestation(
-  dkg: Record<string, unknown>,
-  blockers: string[],
-) {
-  const schema = stringValue(dkg.schema_version);
-  if (schema !== DESKTOP_E2E_DKG_RESHARE_ATTESTATION_SCHEMA) {
-    blockers.push(`DKG re-share attestation schema is unsupported: ${schema || "missing"}.`);
-  }
-
-  const createdAt = stringValue(dkg.created_at);
-  if (createdAt && Number.isNaN(Date.parse(createdAt))) {
-    blockers.push("DKG re-share attestation created_at must be an ISO timestamp when set.");
-  }
-
-  const intent = stringValue(dkg.intent_id);
-  if (!/^(0|[1-9][0-9]*)$/u.test(intent)) {
-    blockers.push("DKG re-share attestation intent_id must be a decimal integer.");
-  } else {
-    const parsed = BigInt(intent);
-    if (parsed === 0n || parsed > MAX_DKG_RESHARE_INTENT_ID) {
-      blockers.push("DKG re-share attestation intent_id must be 1..2^56-1.");
-    }
-  }
-
-  const keysHex = normalizeHex(
-    stringValue(dkg.consensus_public_keys_hex) || stringValue(dkg.bls_public_keys_hex),
-  );
-  if (
-    !/^[0-9a-f]+$/u.test(keysHex) ||
-    keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0
-  ) {
-    blockers.push("DKG re-share attestation pubkeys must be concatenated 1952-byte ML-DSA-65 values.");
-  } else {
-    const signerCount = keysHex.length / DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS;
-    if (signerCount < 5 || signerCount > 7) {
-      blockers.push("DKG re-share attestation must include 5..7 signer pubkeys.");
-    }
-    const keys: string[] = [];
-    for (let offset = 0; offset < keysHex.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS) {
-      keys.push(keysHex.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS));
-    }
-    if (new Set(keys).size !== keys.length) {
-      blockers.push("DKG re-share attestation signer pubkeys must be unique.");
-    }
-    if (numberValue(dkg.signer_count) !== signerCount) {
-      blockers.push("DKG re-share attestation signer_count does not match pubkeys.");
-    }
-  }
-
-  const sigHex = normalizeHex(stringValue(dkg.threshold_sig_hex));
-  const signerCount = numberValue(dkg.signer_count);
-  const expectedSigHexChars = signerCount > 0
-    ? signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES * 2
-    : 0;
-  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== expectedSigHexChars) {
-    blockers.push("DKG re-share attestation threshold_sig_hex must contain one 3309-byte ML-DSA-65 signature per signer.");
-  }
 }
 
 function checkSource(source: Record<string, unknown>, blockers: string[]) {
@@ -376,10 +296,6 @@ function isSafeRelativePngPath(value: string): boolean {
   if (!value.endsWith(".png")) return false;
   if (value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value)) return false;
   return !value.split(/[\\/]+/u).includes("..");
-}
-
-function normalizeHex(value: string): string {
-  return value.trim().replace(/^0x/iu, "").toLowerCase();
 }
 
 function normalizeDigest(value: string): string {

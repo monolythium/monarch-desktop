@@ -223,7 +223,7 @@ describe("assistant dispatch → Operations drawer state machine", () => {
 
   it("never auto-advances past preview without an operator action", () => {
     const req: OpRequest = {
-      kind: "rotate-keys",
+      kind: "cluster-swap",
       title: "Rotate",
       sub: "x",
       intro: "y",

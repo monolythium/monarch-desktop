@@ -306,38 +306,6 @@ export function Home() {
 
       <div className="quick-grid">
         <QuickAction
-          title="Rotate signing share"
-          caption="Submit DKG attestation"
-          onClick={() =>
-            ops.requestOp({
-              kind: "rotate-keys",
-              title: "Rotate signing share",
-              sub: "Submit DKG re-share attestation",
-              intro:
-                "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits attestDkgReshare(uint64,bytes,bytes) from the operator signer.",
-              fields: [
-                {
-                  key: "cluster",
-                  label: "Cluster",
-                  value: activeClusterLabel,
-                },
-                {
-                  key: "operators",
-                  label: "Operators",
-                  value: clusterData
-                    ? `${clusterData.threshold}-of-${clusterData.size} quorum`
-                    : "cluster loading",
-                },
-              ],
-              icon: "KY",
-              risk: "high",
-              destructive: true,
-              needsPasskey: true,
-              confirmLabel: "Sign DKG attestation",
-            })
-          }
-        />
-        <QuickAction
           title="Graceful restart"
           caption="Drain, restart, watch logs"
           onClick={() =>

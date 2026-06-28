@@ -14,21 +14,6 @@ function mnemonic(prefix: string): string {
   return Array.from({ length: 24 }, (_, index) => `${prefix}${index + 1}`).join(" ");
 }
 
-function key(byte: number): string {
-  return byte.toString(16).padStart(2, "0").repeat(1952);
-}
-
-function dkgAttestation(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    schema_version: "monarch-dkg-reshare-attestation/v1",
-    intent_id: "7",
-    consensus_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
-    threshold_sig_hex: "0x" + "cc".repeat(5 * 3309),
-    signer_count: 5,
-    ...overrides,
-  });
-}
-
 function validEnv(overrides: Record<string, string | undefined> = {}): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     PATH: process.env.PATH,
@@ -38,7 +23,6 @@ function validEnv(overrides: Record<string, string | undefined> = {}): Record<st
     MONARCH_E2E_CLUSTER_ID: "42",
     MONARCH_E2E_CHAT_BOOTSTRAP_PEERS: validPeer,
     MONARCH_E2E_EXPECTED_DIGEST: validDigest,
-    MONARCH_E2E_DKG_RESHARE_ATTESTATION: dkgAttestation(),
   };
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) delete env[key];
@@ -56,21 +40,8 @@ function run(overrides: Record<string, string | undefined> = {}) {
 }
 
 describe("release e2e input validator", () => {
-  it("accepts distinct operator inputs, cluster/chat inputs, digest, and DKG attestation", () => {
+  it("accepts distinct operator inputs, cluster/chat inputs, and digest", () => {
     const result = run();
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
-    expect(result.stderr).toBe("");
-  }, spawnTestTimeoutMs);
-
-  it("accepts legacy DKG re-share public-key field names", () => {
-    const result = run({
-      MONARCH_E2E_DKG_RESHARE_ATTESTATION: dkgAttestation({
-        consensus_public_keys_hex: undefined,
-        bls_public_keys_hex: "0x" + [1, 2, 3, 4, 5].map(key).join(""),
-      }),
-    });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("\"release_e2e_inputs\":\"valid\"");
@@ -88,27 +59,23 @@ describe("release e2e input validator", () => {
     expect(result.stderr).toBe("");
   }, spawnTestTimeoutMs);
 
-  it("accepts file-backed mnemonics, chat peers, and DKG attestation", () => {
+  it("accepts file-backed mnemonics and chat peers", () => {
     const dir = mkdtempSync(join(tmpdir(), "monarch-e2e-inputs-"));
     try {
       const operatorPath = join(dir, "operator.mnemonic");
       const peerPath = join(dir, "peer.mnemonic");
       const peersPath = join(dir, "chat-peers.txt");
-      const dkgPath = join(dir, "dkg.json");
       writeFileSync(operatorPath, mnemonic("operator"), "utf8");
       writeFileSync(peerPath, mnemonic("peer"), "utf8");
       writeFileSync(peersPath, `${validPeer}\n`, "utf8");
-      writeFileSync(dkgPath, dkgAttestation(), "utf8");
 
       const result = run({
         MONARCH_E2E_OPERATOR_MNEMONIC: undefined,
         MONARCH_E2E_PEER_OPERATOR_MNEMONIC: undefined,
         MONARCH_E2E_CHAT_BOOTSTRAP_PEERS: undefined,
-        MONARCH_E2E_DKG_RESHARE_ATTESTATION: undefined,
         MONARCH_E2E_OPERATOR_MNEMONIC_FILE: operatorPath,
         MONARCH_E2E_PEER_OPERATOR_MNEMONIC_FILE: peerPath,
         MONARCH_E2E_CHAT_BOOTSTRAP_PEERS_FILE: peersPath,
-        MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE: dkgPath,
       });
 
       expect(result.status).toBe(0);
@@ -148,22 +115,5 @@ describe("release e2e input validator", () => {
     expect(result.stderr).toContain("MONARCH_E2E_CLUSTER_ID");
     expect(result.stderr).toContain("invalid chat bootstrap peer");
     expect(result.stderr).toContain("MONARCH_E2E_EXPECTED_DIGEST");
-  }, spawnTestTimeoutMs);
-
-  it("rejects missing or malformed DKG re-share attestation input", () => {
-    const missing = run({ MONARCH_E2E_DKG_RESHARE_ATTESTATION: undefined });
-
-    expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain("MONARCH_E2E_DKG_RESHARE_ATTESTATION");
-
-    const malformed = run({
-      MONARCH_E2E_DKG_RESHARE_ATTESTATION: dkgAttestation({
-        consensus_public_keys_hex: "0x" + [1, 1, 2, 3, 4].map(key).join(""),
-        signer_count: 5,
-      }),
-    });
-
-    expect(malformed.status).toBe(1);
-    expect(malformed.stderr).toContain("duplicate signer pubkeys");
   }, spawnTestTimeoutMs);
 });

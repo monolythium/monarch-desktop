@@ -30,7 +30,6 @@ export const OPERATOR_SIGNED_KINDS: ReadonlySet<OpKind> = new Set<OpKind>([
   "operator-display",
   "chat-bootstrap-peers",
   "cluster-name-register",
-  "rotate-keys",
   "redelegate",
   "cluster-request-join",
   "cluster-vote-admit",

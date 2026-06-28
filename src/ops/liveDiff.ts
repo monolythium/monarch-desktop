@@ -151,15 +151,6 @@ export function liveDiffRows(request: OpRequest): OpField[] | null {
         ),
       ];
     }
-    case "rotate-keys": {
-      const input = request.dkgReshareInput;
-      if (!input) return null;
-      const keys = input.consensusPublicKeysHex.split(/[\s,]+/u).filter(Boolean);
-      return [
-        row("intent", "Rotate intent", input.intentId || "(not set)"),
-        row("signers", "Ceremony signers", keys.length > 0 ? String(keys.length) : "(not set)"),
-      ];
-    }
     case "cluster-accept-invite":
     case "cluster-swap": {
       const input = request.pendingChangeInput;

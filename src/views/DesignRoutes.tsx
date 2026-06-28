@@ -1483,9 +1483,7 @@ export function SetupCluster() {
               }}
             >
               Request join
-            </CatalogButton>
-            <CatalogButton kind="rotate-keys">Submit DKG attestation</CatalogButton>
-          </div>
+            </CatalogButton>          </div>
         </div>
 
         <div className="card card--padded">
@@ -1517,9 +1515,7 @@ export function SetupCluster() {
               }}
             >
               Prepare roster manually
-            </CatalogButton>
-            <CatalogButton kind="rotate-keys">Submit DKG attestation</CatalogButton>
-          </div>
+            </CatalogButton>          </div>
           <Blocker
             title="Compatible runtime required."
             detail="Desktop validates the proposed roster and consent signatures, preflights formCluster, and signs only when the connected runtime accepts the call."
@@ -1868,7 +1864,6 @@ export function Keys() {
             </div>
           </div>
           <div className="stack-actions">
-            <CatalogButton kind="rotate-keys" variant="primary">Rotate signing share</CatalogButton>
             <CatalogButton kind="export-backup">Export offline backup</CatalogButton>
             {presence.hasFoundationKey ? (
               <CatalogButton kind="emergency-key-rotation" variant="danger">Emergency key rotation</CatalogButton>

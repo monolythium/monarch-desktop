@@ -171,7 +171,7 @@ export function EmergencyKeyRotationForm() {
           style={inputStyle(validity.intent)}
         />
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
-          Non-zero id below 2^56; the matching DKG attestation still follows.
+          Non-zero id below 2^56; it links this Rotate to the queued slot change.
         </span>
       </label>
     </div>

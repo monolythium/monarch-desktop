@@ -45,9 +45,9 @@ const ASK_QUERIES: AskQuery[] = [
     keywords: ["ask", "risk", "jail", "liveness"],
   },
   {
-    label: "Can I rotate keys now?",
-    query: "is it safe to rotate my signing key now?",
-    keywords: ["ask", "rotate", "keys", "dkg"],
+    label: "Can I rotate a cluster seat now?",
+    query: "is it safe to rotate an operator into a cluster seat now?",
+    keywords: ["ask", "rotate", "keys", "seat"],
   },
   {
     label: "When is my next block duty?",

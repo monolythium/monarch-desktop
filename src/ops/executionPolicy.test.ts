@@ -6,10 +6,10 @@ import {
 import type { OpRequest } from "./types";
 
 const request: OpRequest = {
-  kind: "rotate-keys",
-  title: "Rotate signing share",
-  sub: "DVT DKG re-share",
-  intro: "Runs the cluster DKG re-share.",
+  kind: "cluster-swap",
+  title: "Cluster slot change",
+  sub: "Queue a Rotate roster change",
+  intro: "Queues a cluster seat Rotate at a future epoch.",
   fields: [],
 };
 

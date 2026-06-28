@@ -95,7 +95,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g f",
     group: "Cluster",
     icon: "CY",
-    keywords: ["ceremony", "form", "cluster", "lobby", "roster", "consent", "dkg"],
+    keywords: ["ceremony", "form", "cluster", "lobby", "roster", "consent"],
   },
   {
     path: "/chat",
@@ -214,7 +214,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g r",
     group: "Setup",
     icon: "SC",
-    keywords: ["setup", "cluster", "join", "form", "dkg"],
+    keywords: ["setup", "cluster", "join", "form"],
   },
   {
     path: "/attestation",
@@ -233,7 +233,7 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     hint: "g k",
     group: "Setup",
     icon: "KY",
-    keywords: ["keys", "recovery", "mnemonic", "dkg", "backup"],
+    keywords: ["keys", "recovery", "mnemonic", "backup"],
   },
   {
     path: "/recovery",

@@ -102,8 +102,8 @@ export const DESIGN_OPERATION_PARITY = {
   },
   "rotate-consensus-key": {
     status: "implemented",
-    kind: "rotate-keys",
-    note: "Current chain path is the DKG reshare attestation operation.",
+    kind: "cluster-swap",
+    note: "A seat's consensus key changes by rotating the operator in (submitPendingChange Rotate); the incoming operator brings their own ML-DSA-65 key.",
   },
   "rotate-admin-passkey": {
     status: "deferred",
@@ -906,8 +906,8 @@ export const LEGACY_DESIGN_SOURCE_AUDIT = [
     status: "partial",
     desktopSurface: "/operations and OperationsDrawer",
     routes: ["/operations"],
-    operationKinds: ["operator-restore", "rotate-keys", "operator-restart", "redelegate", "export-backup"],
-    evidence: "The five legacy operations map into OP_CATALOG entries or newer names.",
+    operationKinds: ["operator-restore", "operator-restart", "redelegate", "export-backup"],
+    evidence: "The legacy operations map into OP_CATALOG entries or newer names.",
     decision: "Current operation catalog is the source of truth.",
   },
   {

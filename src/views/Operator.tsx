@@ -241,30 +241,6 @@ export function Operator() {
           >
             Request seat
           </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={() =>
-              ops.requestOp({
-                kind: "rotate-keys",
-                title: "Rotate signing share",
-                sub: "Record a completed key ceremony",
-                intro:
-                  "Records the result of a completed key-share ceremony so the new signing shares can take effect. Run this only after the ceremony has finished and every participant has signed the final output.",
-                fields: [
-                  { key: "cluster", label: "Cluster", value: activeClusterLabel },
-                  { key: "operators", label: "Operators", value: clusterData ? `${clusterData.threshold}-of-${clusterData.size} quorum` : "cluster unavailable" },
-                ],
-                icon: "KY",
-                risk: "high",
-                destructive: true,
-                needsPasskey: true,
-                confirmLabel: "Approve key rotation",
-              })
-            }
-          >
-            Rotate keys →
-          </button>
         </div>
       </div>
       ) : null}
@@ -377,27 +353,6 @@ export function Operator() {
                 Restore
               </button>
             ) : null}
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={() =>
-                ops.requestOp({
-                  kind: "rotate-keys",
-                  title: "Rotate signing share",
-                  sub: "Record a completed key ceremony",
-                  intro:
-                    "Records the result of a completed key-share ceremony so the new signing shares can take effect. Run this only after the ceremony has finished and every participant has signed the final output.",
-                  fields: [{ key: "cluster", label: "Cluster", value: clusterData ? activeClusterLabel : "cluster unavailable" }],
-                  icon: "KY",
-                  risk: "high",
-                  destructive: true,
-                  needsPasskey: true,
-                  confirmLabel: "Approve key rotation",
-                })
-              }
-            >
-              Rotate keys
-            </button>
           </div>
         </div>
         {signing.data && recentSigning.length > 0 ? (

@@ -398,28 +398,6 @@ export type {
   SubmitUpdateCharterResult,
 } from "./charterAmendmentOps";
 export {
-  ATTEST_DKG_RESHARE_SELECTOR,
-  buildDkgReshareAttestationTxFields,
-  DEFAULT_DKG_RESHARE_EXECUTION_UNIT_LIMIT,
-  DKG_RESHARE_ATTESTATION_SCHEMA,
-  DKG_RESHARE_ATTESTATION_SIG_BYTES,
-  DKG_RESHARE_BLS_PUBKEY_BYTES,
-  DKG_RESHARE_CONSENSUS_PUBKEY_BYTES,
-  DKG_RESHARE_MAX_SIGNERS,
-  DKG_RESHARE_MIN_SIGNERS,
-  DKG_RESHARE_THRESHOLD_SIG_BYTES,
-  encodeAttestDkgReshareCalldata,
-  MAX_DKG_RESHARE_INTENT_ID,
-  parseDkgReshareAttestationArtifact,
-  parseDkgResharePublicKeys,
-  submitDkgReshareAttestation,
-} from "./dkgReshareOps";
-export type {
-  DkgReshareAttestationArtifact,
-  SubmitDkgReshareAttestationArgs,
-  SubmitDkgReshareAttestationResult,
-} from "./dkgReshareOps";
-export {
   DEFAULT_ACTIVE_CLUSTER_ID,
   MONARCH_ACTIVE_OPERATOR_SEATS,
   MONARCH_CLUSTER_SIZE,

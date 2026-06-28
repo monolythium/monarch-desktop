@@ -99,10 +99,6 @@ const readinessOptions = {
   requireBootstrapPeers: allowMissingBootstrapPeers ? false : undefined,
 };
 const peerWaitMs = positiveIntegerMs(firstNonEmpty(options.peerWaitMs, env("MONARCH_E2E_PEER_WAIT_MS"), "5000"), "Peer wait timeout");
-const dkgReshareAttestationPath =
-  options.dkgReshareAttestation ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE");
-const dkgReshareAttestationJson =
-  options.dkgReshareAttestationJson ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION");
 
 // Hard-exit on BOTH paths: `main`'s finally blocks have already run their
 // cleanup by the time these handlers fire, but a lingering child handle
@@ -123,11 +119,6 @@ async function main() {
   assertFile(appPath, "Tauri app binary");
   assertFile(osSmokePath, "Monarch OS smoke result");
   if (readinessPath) assertFile(readinessPath, "Desktop readiness JSON");
-  const dkgReshareAttestation = readJsonInput(
-    dkgReshareAttestationPath,
-    dkgReshareAttestationJson,
-    "DKG re-share attestation JSON",
-  );
 
   const osSmoke = readJson(osSmokePath);
   readinessOptions.expectedDigest = firstNonEmpty(
@@ -205,7 +196,6 @@ async function main() {
         commands_observed: merged.commandsObserved,
       },
       os_smoke: pickOsSmoke(osSmoke),
-      dkg_reshare_attestation: dkgReshareAttestation,
       desktop_readiness: desktopReadiness,
     };
 
@@ -281,8 +271,6 @@ function parseArgs(args) {
     else if (arg === "--peer-wait-ms") out.peerWaitMs = needArg(args, ++i, arg);
     else if (arg === "--chat-bootstrap-peers") out.chatBootstrapPeers = needArg(args, ++i, arg);
     else if (arg === "--chat-bootstrap-peers-file") out.chatBootstrapPeersFile = needArg(args, ++i, arg);
-    else if (arg === "--dkg-reshare-attestation") out.dkgReshareAttestation = needArg(args, ++i, arg);
-    else if (arg === "--dkg-reshare-attestation-json") out.dkgReshareAttestationJson = needArg(args, ++i, arg);
     else if (arg === "--cluster-id") out.clusterId = needArg(args, ++i, arg);
     else if (arg === "--cluster-name") out.clusterName = needArg(args, ++i, arg);
     else if (arg === "--chat-body") out.chatBody = needArg(args, ++i, arg);
@@ -347,8 +335,6 @@ Options:
                          Comma/space-separated libp2p peers for chat evidence.
   --chat-bootstrap-peers-file <path>
                          File containing libp2p peers for chat evidence.
-  --dkg-reshare-attestation <path>
-                         OS-rendered monarch-dkg-reshare-attestation/v1 JSON.
   --skip-restart        Do not submit ext-protocore restart during readiness collection.
   --skip-chat-send      Do not send a chat message during readiness collection.
   --allow-missing-bootstrap-peers
@@ -669,24 +655,6 @@ function pngDimensions(bytes) {
     width: bytes.readUInt32BE(16),
     height: bytes.readUInt32BE(20),
   };
-}
-
-function readJsonInput(file, rawJson, label) {
-  if (file) {
-    const resolved = path.resolve(file);
-    assertFile(resolved, label);
-    return readJson(resolved);
-  }
-  if (rawJson) {
-    try {
-      return JSON.parse(rawJson);
-    } catch (err) {
-      throw new Error(`${label} is not valid JSON: ${errorMessage(err)}`);
-    }
-  }
-  throw new Error(
-    `${label} is required; pass --dkg-reshare-attestation, --dkg-reshare-attestation-json, MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE, or MONARCH_E2E_DKG_RESHARE_ATTESTATION`,
-  );
 }
 
 function assertFile(file, label) {

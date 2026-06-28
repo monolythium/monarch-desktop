@@ -40,8 +40,7 @@ export type OnboardingStepId =
   | "register"
   | "set-name"
   | "publish-chat-peers"
-  | "join-cluster"
-  | "dkg-attestation";
+  | "join-cluster";
 
 export type OnboardingStepStatus =
   /** Verified complete. */
@@ -175,13 +174,6 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
   const chatPeers = afterRegister(p.chatPeersPublished);
   const joinCluster = afterRegister(p.inCluster);
 
-  const dkg: OnboardingStepStatus =
-    joinCluster !== "done"
-      ? "blocked"
-      : p.lifecycleState === "active"
-        ? "done"
-        : "unknown";
-
   const balanceLabel =
     p.balanceLythoshi !== null
       ? `${formatLyth(p.balanceLythoshi)} of 5,000 LYTH minimum`
@@ -282,19 +274,6 @@ export function reduceOnboardingSteps(p: OnboardingProbeInputs): OnboardingStep[
           : "Request a seat in an existing cluster, or gather 10 operators in the ceremony room to form a new one.",
       status: joinCluster,
       fixRoute: "/ceremony",
-    },
-    {
-      id: "dkg-attestation",
-      n: 9,
-      title: "DKG attestation",
-      detail:
-        dkg === "done"
-          ? "Your seat is active - the cluster key ceremony is in effect."
-          : dkg === "blocked"
-            ? "Runs after you join a cluster."
-            : "Attestation is verified per rotate intent; it cannot be separately detected here.",
-      status: dkg,
-      fixRoute: "/setup-cluster",
     },
   ];
 }

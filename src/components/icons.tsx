@@ -117,7 +117,6 @@ const OP_ICONS: Record<OpKind, LucideIcon> = {
   "cluster-accept-invite": UserPlus,
   "cluster-swap": ArrowRightLeft,
   // Keys
-  "rotate-keys": KeyRound,
   "export-backup": Archive,
   // Funds (treasury)
   redelegate: Coins,

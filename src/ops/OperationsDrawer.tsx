@@ -35,10 +35,6 @@ import {
   isClusterResignationInputComplete,
 } from "./ClusterResignationForm";
 import {
-  DkgReshareAttestationForm,
-  isDkgReshareAttestationInputComplete,
-} from "./DkgReshareAttestationForm";
-import {
   EmergencyKeyRotationForm,
   FreezeAdmissionForm,
   isEmergencyKeyRotationInputComplete,
@@ -405,10 +401,6 @@ export function OperationsDrawer() {
     request?.kind === "cluster-form" &&
     stage === "preview" &&
     !isClusterFormInputComplete(request.clusterFormInput);
-  const dkgReshareNeedsInput =
-    request?.kind === "rotate-keys" &&
-    stage === "preview" &&
-    !isDkgReshareAttestationInputComplete(request.dkgReshareInput);
   const freezeAdmissionNeedsInput =
     request?.kind === "freeze-admission" &&
     stage === "preview" &&
@@ -437,7 +429,6 @@ export function OperationsDrawer() {
     seatVoteAdmitNeedsInput ||
     clusterResignationNeedsInput ||
     clusterFormNeedsInput ||
-    dkgReshareNeedsInput ||
     freezeAdmissionNeedsInput ||
     emergencyKeyRotationNeedsInput ||
     logRetentionNeedsInput ||
@@ -470,19 +461,17 @@ export function OperationsDrawer() {
                       ? "Enter a valid resignation nonce first"
                       : clusterFormNeedsInput
                         ? "Fill the 7 active + 3 standby roster and consent signatures first"
-                        : dkgReshareNeedsInput
-                          ? "Fill the key ceremony output first"
-                          : freezeAdmissionNeedsInput
-                            ? "Enter the incident reason hash first"
-                            : emergencyKeyRotationNeedsInput
-                              ? "Fill every emergency key-rotation input first"
-                              : logRetentionNeedsInput
-                                ? "Enter a valid max size (MB) and rotated-file count first"
-                                : otaApplyNeedsInput
-                                ? "Enter the signed image reference first"
-                                : preflight.blocked
-                                  ? "Resolve the failing preflight checks first"
-                                  : typedBlocked
+                        : freezeAdmissionNeedsInput
+                          ? "Enter the incident reason hash first"
+                          : emergencyKeyRotationNeedsInput
+                            ? "Fill every emergency key-rotation input first"
+                            : logRetentionNeedsInput
+                              ? "Enter a valid max size (MB) and rotated-file count first"
+                              : otaApplyNeedsInput
+                              ? "Enter the signed image reference first"
+                              : preflight.blocked
+                                ? "Resolve the failing preflight checks first"
+                                : typedBlocked
                                     ? `Type ${typedWord} to confirm`
                                     : undefined;
   const advanceDisabled =
@@ -769,7 +758,6 @@ function DrawerBody({
         {request.kind === "seat-vote-admit" ? <VoteSeatAdmitForm /> : null}
         {request.kind === "cluster-resign" ? <ClusterResignationForm /> : null}
         {request.kind === "cluster-form" ? <ClusterFormProposalForm /> : null}
-        {request.kind === "rotate-keys" ? <DkgReshareAttestationForm /> : null}
         {request.kind === "freeze-admission" ? <FreezeAdmissionForm /> : null}
         {request.kind === "emergency-key-rotation" ? (
           <EmergencyKeyRotationForm />

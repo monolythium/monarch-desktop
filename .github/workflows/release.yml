@@ -75,10 +75,6 @@ on:
         description: "Comma/space-separated libp2p chat bootstrap peers for e2e."
         required: false
         type: string
-      desktop_e2e_dkg_reshare_attestation:
-        description: "monarch-dkg-reshare-attestation/v1 JSON used by GUI e2e. If omitted, MONARCH_E2E_DKG_RESHARE_ATTESTATION from vars/secrets is used."
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -158,24 +154,6 @@ jobs:
             "https://github.com/siderolabs/talos/releases/download/${TALOS_VERSION}/talosctl-linux-amd64"
           sudo chmod +x /usr/local/bin/talosctl
           talosctl version --client --short
-
-      - name: Prepare DKG re-share attestation
-        env:
-          DESKTOP_E2E_DKG_RESHARE_ATTESTATION: ${{ github.event.inputs.desktop_e2e_dkg_reshare_attestation || vars.MONARCH_E2E_DKG_RESHARE_ATTESTATION || '' }}
-          DESKTOP_E2E_DKG_RESHARE_ATTESTATION_GZIP_B64: ${{ secrets.MONARCH_E2E_DKG_RESHARE_ATTESTATION_GZIP_B64 || '' }}
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/monarch-dkg-reshare-attestation.json"
-          if [ -n "$DESKTOP_E2E_DKG_RESHARE_ATTESTATION_GZIP_B64" ]; then
-            printf '%s' "$DESKTOP_E2E_DKG_RESHARE_ATTESTATION_GZIP_B64" | base64 -d | gzip -dc > "$out"
-          elif [ -n "$DESKTOP_E2E_DKG_RESHARE_ATTESTATION" ]; then
-            printf '%s' "$DESKTOP_E2E_DKG_RESHARE_ATTESTATION" > "$out"
-          else
-            echo "Missing Desktop e2e DKG re-share attestation" >&2
-            exit 1
-          fi
-          jq -e '.schema_version == "monarch-dkg-reshare-attestation/v1"' "$out" >/dev/null
-          echo "MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE=$out" >> "$GITHUB_ENV"
 
       - name: Validate GUI e2e inputs
         run: pnpm run check:e2e-inputs

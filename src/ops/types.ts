@@ -10,7 +10,6 @@ export const OP_KINDS = [
   "operator-display",
   "chat-bootstrap-peers",
   "cluster-name-register",
-  "rotate-keys",
   "redelegate",
   "export-backup",
   "cluster-swap",
@@ -177,13 +176,6 @@ export type ClusterResignationInput = {
   expedite: boolean;
 };
 
-// Inputs for the operator-callable `attestDkgReshare(uint64,bytes,bytes)`.
-export type DkgReshareAttestationInput = {
-  intentId: string;
-  consensusPublicKeysHex: string;
-  thresholdSigHex: string;
-};
-
 export type FreezeAdmissionInput = {
   reasonHashHex: string;
 };
@@ -338,9 +330,6 @@ export type OpRequest = {
   /** Present only when `kind === "cluster-update-charter"`. Carries the
    *  proposed 30-byte charter + the collected active-member consents. */
   clusterUpdateCharterInput?: ClusterUpdateCharterInput;
-  /** Present only when `kind === "rotate-keys"`. Carries the DKG re-share
-   *  attestation payload produced by the external ceremony. */
-  dkgReshareInput?: DkgReshareAttestationInput;
   /** Present only when `kind === "freeze-admission"`. */
   freezeAdmissionInput?: FreezeAdmissionInput;
   /** Present only when `kind === "emergency-key-rotation"`. */

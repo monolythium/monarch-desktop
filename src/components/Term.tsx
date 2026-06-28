@@ -22,8 +22,6 @@ export const GLOSSARY: Record<string, string> = {
     "The minimum number of cluster operators (7 of 10) whose signatures are needed for the cluster to act.",
   quorum:
     "Enough operators online and signing for the cluster to keep making progress.",
-  DKG:
-    "Distributed key generation - the ceremony where cluster operators jointly create the shared signing key, so no single operator ever holds it.",
   "CJ-1":
     "The self-service cluster-join flow: you request a seat, the current members vote, and the chain admits you when enough votes land.",
   lythoshi:

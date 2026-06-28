@@ -208,37 +208,6 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
-    kind: "rotate-keys",
-    category: "keys",
-    actionNumber: 41,
-    icon: "KY",
-    risk: "high",
-    title: "Rotate signing share",
-    sub: "Submit DKG re-share attestation",
-    intro:
-      "Records the result of a completed cluster key-share ceremony on-chain so the new signing shares can take effect. Run this only after the ceremony has finished and produced its output files.",
-    technical:
-      "After the key-share ceremony produces participant ML-DSA-65 consensus pubkeys and per-signer attestation signatures, Desktop submits the operator-signed attestDkgReshare(uint64,bytes,bytes) transaction that marks the Rotate intent as DKG-attested on node-registry 0x1005.",
-    destructive: true,
-    needsPasskey: true,
-    confirmLabel: "Sign DKG attestation",
-    keywords: ["dkg", "rotate", "rotation", "share", "key", "rekey"],
-    effects: [
-      "Builds attestDkgReshare(intentId, consensusPublicKeys, attestationSigs) calldata against node-registry 0x1005.",
-      "Signs the zero-value native tx from the operator keychain mnemonic.",
-      "Records the submitted DKG attestation transaction hash in the local audit trail.",
-    ],
-    diff: [
-      { key: "share", label: "Signing share", value: "ceremony output required" },
-      { key: "attestation", label: "Attestation", value: "+ on-chain DKG flag" },
-    ],
-    fields: [
-      { key: "intent", label: "Intent", value: "Rotate intent id" },
-      { key: "pubkeys", label: "Consensus pubkeys", value: "5..7 unique ML-DSA-65 keys" },
-      { key: "signature", label: "Attestation sigs", value: "one ML-DSA-65 sig per signer" },
-    ],
-  },
-  {
     kind: "operator-restart",
     category: "system",
     actionNumber: 1,
@@ -394,7 +363,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
   {
     kind: "export-backup",
     category: "keys",
-    actionNumber: 42,
+    actionNumber: 41,
     icon: "BK",
     risk: "medium",
     title: "Export backup",
@@ -804,9 +773,9 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Cluster slot change",
     sub: "Queue a Rotate roster change",
     intro:
-      "Queues swapping an operator seat in a cluster roster at a future epoch. The matching key-share ceremony attestation must still follow.",
+      "Queues swapping an operator seat in a cluster roster at a future epoch. The incoming operator brings their own signing key, which joins the cluster's threshold signature set from the effective epoch — no separate ceremony follows.",
     technical:
-      "Queues submitPendingChange(Rotate) against node-registry 0x1005 with recovery authorization. The queued rotate still requires the matching DKG re-share attestation before the epoch boundary.",
+      "Queues submitPendingChange(Rotate) against node-registry 0x1005 with recovery authorization. At the effective epoch the Rotate replaces the seat's operator with the target operator's own ML-DSA-65 consensus key; the new member's individual signature counts toward the cluster's 7-of-N round certificate from then on.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign Rotate pending-change",
@@ -818,7 +787,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
     diff: [
       { key: "membership", label: "Membership", value: "+ pending Rotate" },
-      { key: "dkg", label: "DKG attestation", value: "required before activation" },
+      { key: "key", label: "Incoming key", value: "target operator's own ML-DSA-65" },
     ],
     fields: [
       { key: "pubkey", label: "Target consensus", value: "1952-byte ML-DSA-65 pubkey" },
@@ -929,13 +898,13 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     title: "Emergency key rotation",
     sub: "Submit emergency Rotate executor",
     intro:
-      "Forces a cluster key rotation through even while admission is frozen. The key-share ceremony attestation still follows.",
+      "Forces a cluster seat Rotate through even while admission is frozen. The incoming operator brings their own signing key, which joins the cluster's threshold signature set at the effective epoch.",
     technical:
-      "Submits emergencyKeyRotation(bytes,uint64,uint64) to node-registry 0x1005 with recovery authorization. The executor queues a Rotate pending change even when normal admission is frozen.",
+      "Submits emergencyKeyRotation(bytes,uint64,uint64) to node-registry 0x1005 with recovery authorization. The executor queues a Rotate pending change — swapping the seat to the target operator's own ML-DSA-65 consensus key at the effective epoch — even when normal admission is frozen.",
     destructive: true,
     needsPasskey: true,
     confirmLabel: "Sign emergencyKeyRotation",
-    keywords: ["incident", "emergency", "key", "rotation", "dkg", "recovery"],
+    keywords: ["incident", "emergency", "key", "rotation", "recovery"],
     effects: [
       "Builds emergencyKeyRotation(targetPubkey, effectiveEpoch, intentId) calldata.",
       "Reads recovery authorization from the OS keychain only during signing.",
@@ -943,7 +912,7 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
     diff: [
       { key: "membership", label: "Membership", value: "+ emergency Rotate" },
-      { key: "dkg", label: "DKG attestation", value: "required before activation" },
+      { key: "key", label: "Incoming key", value: "target operator's own ML-DSA-65" },
     ],
     fields: [
       { key: "pubkey", label: "Target consensus", value: "1952-byte ML-DSA-65 pubkey" },

@@ -242,7 +242,7 @@ html[data-theme="glass"] {
   --fg-600: #2d3048;
   --fg-700: #1a1c2c;
 
-  /* Glass tokens — frost every .glass / .card */
+  /* Glass tokens — frosted blur on every .glass / .card */
   --glass-fill:        rgba(255, 255, 255, 0.04);
   --glass-fill-strong: rgba(255, 255, 255, 0.07);
   --glass-fill-hover:  rgba(255, 255, 255, 0.08);

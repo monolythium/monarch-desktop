@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCHEMA = "monarch-desktop-e2e-evidence/v1";
-const DKG_RESHARE_SCHEMA = "monarch-dkg-reshare-attestation/v1";
 const REQUIRED_ROUTES = readRequiredRoutes();
 const REQUIRED_COMMANDS = [
   "talos_config_info",
@@ -22,10 +21,6 @@ const MIN_ROUTE_SCREENSHOT_HEIGHT = 240;
 const OPERATION_RECEIPT_AUDIT_SCHEMA = "monarch-desktop-operation-receipt/v1";
 const HASH32_RE = /^[0-9a-f]{64}$/u;
 const TALOS_CERT_MIN_VALIDITY_DAYS = 14;
-const MAX_DKG_RESHARE_INTENT_ID = 72057594037927935n;
-const DKG_RESHARE_CONSENSUS_PUBKEY_BYTES = 1952;
-const DKG_RESHARE_ATTESTATION_SIG_BYTES = 3309;
-const DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS = DKG_RESHARE_CONSENSUS_PUBKEY_BYTES * 2;
 
 const file = process.argv.slice(2).find((arg) => arg !== "--") ?? process.env.MONARCH_DESKTOP_E2E_EVIDENCE;
 if (!file) {
@@ -81,11 +76,6 @@ function verify(root) {
     out.push("Desktop readiness evidence is missing.");
   } else {
     checkDesktopReadiness(root.desktop_readiness, out);
-  }
-  if (!isRecord(root.dkg_reshare_attestation)) {
-    out.push("DKG re-share attestation evidence is missing.");
-  } else {
-    checkDkgReshareAttestation(root.dkg_reshare_attestation, out);
   }
   if (isRecord(root.os_smoke) && isRecord(root.desktop_readiness)) {
     checkReleaseDigestBinding(root.os_smoke, root.desktop_readiness, out);
@@ -248,60 +238,6 @@ function checkOsSmoke(osSmoke, out) {
   }
   if (!normalizeDigest(stringValue(osSmoke.expected_protocore_digest))) {
     out.push("QEMU smoke did not provide a valid expected Protocore digest from release metadata.");
-  }
-}
-
-function checkDkgReshareAttestation(dkg, out) {
-  const schema = stringValue(dkg.schema_version);
-  if (schema !== DKG_RESHARE_SCHEMA) {
-    out.push(`DKG re-share attestation schema is unsupported: ${schema || "missing"}.`);
-  }
-  const createdAt = stringValue(dkg.created_at);
-  if (createdAt && Number.isNaN(Date.parse(createdAt))) {
-    out.push("DKG re-share attestation created_at must be an ISO timestamp when set.");
-  }
-  const intent = stringValue(dkg.intent_id);
-  if (!/^(0|[1-9][0-9]*)$/u.test(intent)) {
-    out.push("DKG re-share attestation intent_id must be a decimal integer.");
-  } else {
-    const parsed = BigInt(intent);
-    if (parsed === 0n || parsed > MAX_DKG_RESHARE_INTENT_ID) {
-      out.push("DKG re-share attestation intent_id must be 1..2^56-1.");
-    }
-  }
-
-  const keysHex = normalizeHex(
-    stringValue(dkg.consensus_public_keys_hex) || stringValue(dkg.bls_public_keys_hex),
-  );
-  if (
-    !/^[0-9a-f]+$/u.test(keysHex) ||
-    keysHex.length % DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS !== 0
-  ) {
-    out.push("DKG re-share attestation pubkeys must be concatenated 1952-byte ML-DSA-65 values.");
-  } else {
-    const signerCount = keysHex.length / DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS;
-    if (signerCount < 5 || signerCount > 7) {
-      out.push("DKG re-share attestation must include 5..7 signer pubkeys.");
-    }
-    const keys = [];
-    for (let offset = 0; offset < keysHex.length; offset += DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS) {
-      keys.push(keysHex.slice(offset, offset + DKG_RESHARE_CONSENSUS_PUBKEY_HEX_CHARS));
-    }
-    if (new Set(keys).size !== keys.length) {
-      out.push("DKG re-share attestation signer pubkeys must be unique.");
-    }
-    if (numberValue(dkg.signer_count) !== signerCount) {
-      out.push("DKG re-share attestation signer_count does not match pubkeys.");
-    }
-  }
-
-  const sigHex = normalizeHex(stringValue(dkg.threshold_sig_hex));
-  const signerCount = numberValue(dkg.signer_count);
-  const expectedSigHexChars = signerCount > 0
-    ? signerCount * DKG_RESHARE_ATTESTATION_SIG_BYTES * 2
-    : 0;
-  if (!/^[0-9a-f]+$/u.test(sigHex) || sigHex.length !== expectedSigHexChars) {
-    out.push("DKG re-share attestation threshold_sig_hex must contain one 3309-byte ML-DSA-65 signature per signer.");
   }
 }
 

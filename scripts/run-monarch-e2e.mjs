@@ -105,8 +105,6 @@ async function main() {
     appendOptionalArg(e2eArgs, "--peer-wait-ms", options.peerWaitMs ?? env("MONARCH_E2E_PEER_WAIT_MS"));
     appendOptionalArg(e2eArgs, "--chat-bootstrap-peers-file", options.chatBootstrapPeersFile ?? env("MONARCH_E2E_CHAT_BOOTSTRAP_PEERS_FILE"));
     appendOptionalArg(e2eArgs, "--chat-bootstrap-peers", options.chatBootstrapPeers ?? env("MONARCH_E2E_CHAT_BOOTSTRAP_PEERS"));
-    appendOptionalArg(e2eArgs, "--dkg-reshare-attestation", options.dkgReshareAttestation ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION_FILE"));
-    appendOptionalArg(e2eArgs, "--dkg-reshare-attestation-json", options.dkgReshareAttestationJson ?? env("MONARCH_E2E_DKG_RESHARE_ATTESTATION"));
     if (
       options.allowMissingBootstrapPeers ||
       truthyEnv("MONARCH_E2E_ALLOW_MISSING_BOOTSTRAP_PEERS") ||
@@ -248,8 +246,6 @@ function parseArgs(args) {
     else if (arg === "--peer-wait-ms") out.peerWaitMs = needArg(args, ++i, arg);
     else if (arg === "--chat-bootstrap-peers") out.chatBootstrapPeers = needArg(args, ++i, arg);
     else if (arg === "--chat-bootstrap-peers-file") out.chatBootstrapPeersFile = needArg(args, ++i, arg);
-    else if (arg === "--dkg-reshare-attestation") out.dkgReshareAttestation = needArg(args, ++i, arg);
-    else if (arg === "--dkg-reshare-attestation-json") out.dkgReshareAttestationJson = needArg(args, ++i, arg);
     else if (arg === "--smoke-timeout-ms") out.smokeTimeoutMs = needArg(args, ++i, arg);
     else if (arg === "--build-app") out.buildApp = true;
     else if (arg === "--skip-smoke-config") out.skipSmokeConfig = true;
@@ -298,10 +294,6 @@ Options:
                          Comma/space-separated libp2p peers for chat evidence.
   --chat-bootstrap-peers-file <path>
                          File containing libp2p peers for chat evidence.
-  --dkg-reshare-attestation <path>
-                         OS-rendered monarch-dkg-reshare-attestation/v1 JSON.
-  --dkg-reshare-attestation-json <json>
-                         Inline monarch-dkg-reshare-attestation/v1 JSON.
   --allow-missing-bootstrap-peers
                          Do not fail solely on empty chat bootstrap peers.
                          Also enabled by MONARCH_E2E_ALLOW_DISCOVERED_CHAT_PEERS=true.

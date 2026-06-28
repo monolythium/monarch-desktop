@@ -62,7 +62,6 @@ import { submitClusterResignation } from "../sdk/clusterResignations";
 import { submitFormCluster } from "../sdk/clusterFormOps";
 import { submitUpdateCharter } from "../sdk/charterAmendmentOps";
 import { submitRedelegate } from "../sdk/delegationOps";
-import { submitDkgReshareAttestation } from "../sdk/dkgReshareOps";
 import {
   submitEmergencyKeyRotation,
   submitFreezeAdmission,
@@ -91,7 +90,6 @@ import type {
   OpRequest,
   OpResult,
   OpStage,
-  DkgReshareAttestationInput,
   EmergencyKeyRotationInput,
   FreezeAdmissionInput,
   ChatBootstrapPeersInput,
@@ -197,8 +195,6 @@ type OpsContextValue = OpsState & {
   setClusterResignationInput: (patch: Partial<ClusterResignationInput>) => void;
   /** Update the cluster-formation roster proposal payload. */
   setClusterFormInput: (patch: Partial<ClusterFormInput>) => void;
-  /** Update the DKG re-share attestation payload for rotate-keys. */
-  setDkgReshareInput: (patch: Partial<DkgReshareAttestationInput>) => void;
   /** Update the freezeAdmission incident executor payload. */
   setFreezeAdmissionInput: (patch: Partial<FreezeAdmissionInput>) => void;
   /** Update the emergencyKeyRotation incident executor payload. */
@@ -1117,54 +1113,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [settleOperation],
   );
 
-  const runDkgReshareFlow = useCallback(
-    async (req: OpRequest) => {
-      const input = req.dkgReshareInput;
-      if (!input) {
-        settleOperation(
-          req,
-          { ok: false, message: "DKG re-share attestation form is missing required fields." },
-          { transport: "dkg-reshare-tx" },
-        );
-        return;
-      }
-      try {
-        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
-        if (!mnemonic) {
-          settleOperation(
-            req,
-            {
-              ok: false,
-              message: MISSING_OPERATOR_KEY_MESSAGE,
-            },
-            { transport: "dkg-reshare-tx" },
-          );
-          return;
-        }
-        const res = await submitDkgReshareAttestation({
-          rpcUrl: rpcEndpoint,
-          mnemonic,
-          intentId: input.intentId,
-          consensusPublicKeysHex: input.consensusPublicKeysHex,
-          thresholdSigHex: input.thresholdSigHex,
-        });
-        settleOperation(
-          req,
-          {
-            ok: true,
-            message: `Submitted DKG re-share attestation for intent ${res.intentId} with ${res.signerCount} signers (tx ${res.txHash.slice(0, 10)}...).`,
-            txHash: res.txHash,
-          },
-          { transport: "dkg-reshare-tx" },
-        );
-      } catch (err) {
-        const message = (err as Error)?.message ?? String(err);
-        settleOperation(req, { ok: false, message }, { transport: "dkg-reshare-tx" });
-      }
-    },
-    [settleOperation],
-  );
-
   const runFreezeAdmissionFlow = useCallback(
     async (req: OpRequest) => {
       const input = req.freezeAdmissionInput;
@@ -1911,14 +1859,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
-    if (req.kind === "rotate-keys") {
-      if (inTauri()) {
-        await runDkgReshareFlow(req);
-      } else {
-        blockBrowserExecution(req);
-      }
-      return;
-    }
     if (req.kind === "freeze-admission") {
       if (inTauri()) {
         await runFreezeAdmissionFlow(req);
@@ -2051,7 +1991,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runApplyForSeatFlow,
     runVoteSeatAdmitFlow,
     runClusterResignationFlow,
-    runDkgReshareFlow,
     runEmergencyKeyRotationFlow,
     runExportBackupFlow,
     runFreezeAdmissionFlow,
@@ -2348,25 +2287,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const setDkgReshareInput = useCallback(
-    (patch: Partial<DkgReshareAttestationInput>) => {
-      setState((s) => {
-        if (!s.request || s.request.kind !== "rotate-keys") return s;
-        const base: DkgReshareAttestationInput = s.request.dkgReshareInput ?? {
-          intentId: "",
-          consensusPublicKeysHex: "",
-          thresholdSigHex: "",
-        };
-        const next = { ...base, ...patch };
-        return {
-          ...s,
-          request: { ...s.request, dkgReshareInput: next },
-        };
-      });
-    },
-    [],
-  );
-
   const setFreezeAdmissionInput = useCallback(
     (patch: Partial<FreezeAdmissionInput>) => {
       setState((s) => {
@@ -2487,7 +2407,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setSeatVoteAdmitInput,
       setClusterResignationInput,
       setClusterFormInput,
-      setDkgReshareInput,
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,
       setOtaApplyInput,
@@ -2516,7 +2435,6 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setSeatVoteAdmitInput,
       setClusterResignationInput,
       setClusterFormInput,
-      setDkgReshareInput,
       setFreezeAdmissionInput,
       setEmergencyKeyRotationInput,
       setOtaApplyInput,

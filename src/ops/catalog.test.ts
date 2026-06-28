@@ -132,19 +132,6 @@ describe("operation catalog", () => {
     );
   });
 
-  it("routes key rotation through an operator DKG attestation tx", () => {
-    const rotate = OP_CATALOG.find((entry) => entry.kind === "rotate-keys");
-
-    expect(rotate).toMatchObject({
-      title: "Rotate signing share",
-      confirmLabel: "Sign DKG attestation",
-    });
-    expect(prose(rotate)).toContain("attestDkgReshare(uint64,bytes,bytes)");
-    expect(rotate?.effects).toContain(
-      "Builds attestDkgReshare(intentId, consensusPublicKeys, attestationSigs) calldata against node-registry 0x1005.",
-    );
-  });
-
   it("routes incident executors through foundation-signed transactions", () => {
     const freeze = OP_CATALOG.find((entry) => entry.kind === "freeze-admission");
     const emergency = OP_CATALOG.find((entry) => entry.kind === "emergency-key-rotation");
