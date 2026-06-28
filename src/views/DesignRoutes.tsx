@@ -38,6 +38,7 @@ import {
   useClusterStatus,
   useIndexerStatus,
   useNodeStatus,
+  useOpenSeats,
   useOperatorCapabilities,
   useOperatorFeeConfig,
   useOperatorInfo,
@@ -50,7 +51,7 @@ import {
   type TalosServiceInfo,
   type TalosStatus,
 } from "../sdk";
-import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
+import type { OpenSeatView, RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import { shortAddr, toMono1 } from "../sdk/address";
 import { isValidUpgradeImage } from "../ops/OtaApplyForm";
 
@@ -318,11 +319,12 @@ function useTalosSnapshot(): [TalosSnapshot, () => void] {
 }
 
 export function Marketplace() {
-  const [tab, setTab] = useState<"operators" | "clusters">("operators");
+  const [tab, setTab] = useState<"operators" | "clusters" | "seats">("operators");
   const [voteClusterId, setVoteClusterId] = useState<number>(ACTIVE_CLUSTER_ID);
   const providers = useProviderDirectory(0, null, 100);
   const clusters = useClusterDirectory(0, 100);
   const chain = useChainStatus();
+  const openSeats = useOpenSeats(chain.data?.blockHeight ?? null);
   const rows = useMemo(
     () => [...(providers.data ?? [])].sort((a, b) => b.uptimeBps - a.uptimeBps),
     [providers.data],
@@ -392,6 +394,13 @@ export function Marketplace() {
           onClick={() => setTab("clusters")}
         >
           Clusters
+        </button>
+        <button
+          type="button"
+          className={tab === "seats" ? "is-on" : ""}
+          onClick={() => setTab("seats")}
+        >
+          Open seats
         </button>
       </div>
 
@@ -487,7 +496,7 @@ export function Marketplace() {
             </tbody>
           </table>
         </div>
-      ) : (
+      ) : tab === "clusters" ? (
         <div className="card card--flush">
           <div className="card__head" style={{ padding: "16px 20px 0" }}>
             <div>
@@ -555,13 +564,195 @@ export function Marketplace() {
             </tbody>
           </table>
         </div>
+      ) : (
+        <OpenSeatsPanel seats={openSeats} />
       )}
 
-      <Blocker
-        title="Self-service request-to-join is not live yet."
-        detail="Desktop now prepares the requestClusterJoin and voteClusterAdmit drawer flows. Execution is still blocked until the CJ-1 cluster-vote precompile is live on the connected chain and the installed SDK package exposes the helpers."
-      />
+      <div className="card card--padded" style={{ display: "grid", gap: 6 }}>
+        <div className="card__head">
+          <div>
+            <h3>Self-service cluster admission is live</h3>
+            <div className="sub">
+              The open-seat primitive is live on the connected testnet. Apply to an advertised seat
+              and the cluster's operators vote 7-of-10 to admit you; the CJ-1 request and admit-vote
+              drawer flows are also wired and sign with your operator key.
+            </div>
+          </div>
+          <span className="halo halo--ok">
+            <span className="dot" /> live
+          </span>
+        </div>
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          Live seat discovery is event/indexer-backed — on a node with the indexer disabled the Open
+          seats list is unavailable, but you can still apply by entering a cluster and seat id
+          directly. Your 5,000 LYTH self-bond is only locked when you are admitted and take the seat.
+        </span>
+      </div>
     </section>
+  );
+}
+
+const SEAT_CAPABILITY_LABELS: { bit: number; label: string }[] = [
+  { bit: 0x0001, label: "RPC" },
+  { bit: 0x0002, label: "State sync" },
+  { bit: 0x0004, label: "Snapshots" },
+  { bit: 0x0008, label: "Archival" },
+  { bit: 0x0010, label: "Prover" },
+  { bit: 0x0020, label: "Bridge" },
+  { bit: 0x0040, label: "Oracle" },
+];
+
+function seatCapabilityLabel(mask: number): string {
+  const labels = SEAT_CAPABILITY_LABELS.filter((cap) => (mask & cap.bit) !== 0).map(
+    (cap) => cap.label,
+  );
+  return labels.length > 0 ? labels.join(", ") : "any tier";
+}
+
+function seatStatusTone(status: OpenSeatView["status"]): "ok" | "warn" | "info" {
+  switch (status) {
+    case "open":
+      return "ok";
+    case "filled":
+      return "info";
+    default:
+      return "warn";
+  }
+}
+
+function bondLabel(lythoshi: bigint): string {
+  return `${formatLythHex(`0x${lythoshi.toString(16)}`)} LYTH`;
+}
+
+function OpenSeatsPanel({ seats }: { seats: ReturnType<typeof useOpenSeats> }) {
+  const rows = useMemo(() => seats.data ?? [], [seats.data]);
+  const availableCount = rows.filter(
+    (seat) => seat.status === "open" && seat.filledCount < seat.seatCount,
+  ).length;
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div className="card card--padded">
+        <div className="card__head">
+          <div>
+            <h3>Earn a seat in a cluster</h3>
+            <div className="sub">
+              Apply to an advertised open seat and the cluster votes 7-of-10 to admit you. A small
+              refundable application deposit travels with your request now; your 5,000 LYTH self-bond
+              is bound only when you are admitted.
+            </div>
+          </div>
+          <span className={availableCount > 0 ? "halo halo--ok" : "halo halo--warn"}>
+            <span className="dot" /> {availableCount} open
+          </span>
+        </div>
+        <div className="inline-actions">
+          <CatalogButton kind="seat-apply" variant="primary">
+            Apply to a seat
+          </CatalogButton>
+          <CatalogButton kind="seat-vote-admit">Vote to admit an applicant</CatalogButton>
+        </div>
+        <div className="empty-state" style={{ marginTop: 12 }}>
+          Already know the cluster and seat id? Use “Apply to a seat” and enter them directly — live
+          seat discovery below depends on the connected node exposing the seat-event index.
+        </div>
+      </div>
+
+      <div className="card card--flush">
+        <div className="card__head" style={{ padding: "16px 20px 0" }}>
+          <div>
+            <h3>Advertised open seats</h3>
+            <div className="sub">
+              Live vacancies projected from the cluster seat-event history (event/indexer backed).
+            </div>
+          </div>
+          <span className={seats.notExposed ? "halo halo--warn" : "halo halo--ok"}>
+            <span className="dot" /> {seats.notExposed ? "unavailable" : "live"}
+          </span>
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>cluster</th>
+              <th>seat</th>
+              <th>type</th>
+              <th>service tier</th>
+              <th>self-bond</th>
+              <th>filled</th>
+              <th>status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((seat) => {
+              const available = seat.status === "open" && seat.filledCount < seat.seatCount;
+              return (
+                <tr key={`${seat.clusterId}:${seat.seatId}`}>
+                  <td>{clusterLabel(seat.clusterId)}</td>
+                  <td className="mono">#{seat.seatId}</td>
+                  <td>
+                    <span className={`pill-status ${seat.kind === "active" ? "pill-status--gold" : "pill-status--info"}`}>
+                      {seat.kind}
+                    </span>
+                  </td>
+                  <td className="mono" title={`capability mask 0x${seat.capabilityMask.toString(16).padStart(4, "0")}`}>
+                    {seatCapabilityLabel(seat.capabilityMask)}
+                  </td>
+                  <td className="mono">{bondLabel(seat.minBondLythoshi)}</td>
+                  <td className="mono">{seat.filledCount}/{seat.seatCount}</td>
+                  <td>
+                    <span className={`halo halo--${seatStatusTone(seat.status)}`}>
+                      <span className="dot" /> {seat.status}
+                    </span>
+                  </td>
+                  <td>
+                    <CatalogButton
+                      kind="seat-apply"
+                      overrides={{
+                        title: `Apply for seat #${seat.seatId} in ${clusterLabel(seat.clusterId)}`,
+                        fields: [
+                          { key: "cluster", label: "Cluster", value: clusterLabel(seat.clusterId) },
+                          { key: "seat", label: "Seat", value: `#${seat.seatId} · ${seat.kind}` },
+                          { key: "tier", label: "Service tier", value: seatCapabilityLabel(seat.capabilityMask) },
+                          { key: "bond", label: "Self-bond (on admit)", value: bondLabel(seat.minBondLythoshi) },
+                          { key: "flow", label: "Flow", value: "applyForSeat; refundable escrow now, 7-of-10 admit" },
+                        ],
+                        seatApplyInput: {
+                          clusterId: String(seat.clusterId),
+                          seatId: String(seat.seatId),
+                          operatorPubkeyHex: "",
+                          escrowLythoshi: "0",
+                        },
+                      }}
+                    >
+                      {available ? "Apply" : "View"}
+                    </CatalogButton>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={8}>
+                  <Blocker
+                    title={
+                      seats.notExposed
+                        ? "Live seat discovery is unavailable from this endpoint."
+                        : "No open seats advertised in the scanned window."
+                    }
+                    detail={
+                      seats.notExposed
+                        ? "Open-seat discovery is event/indexer-backed; the connected node does not expose the seat-event index (the public testnet profile runs with the indexer disabled). You can still apply by entering a cluster and seat id directly above."
+                        : seats.error ?? "No cluster has an advertised vacancy in the recent block window. You can still apply directly if you know the cluster and seat id."
+                    }
+                  />
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

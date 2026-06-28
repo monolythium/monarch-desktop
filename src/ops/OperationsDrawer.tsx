@@ -25,6 +25,12 @@ import {
   isClusterVoteAdmitInputComplete,
 } from "./ClusterJoinForms";
 import {
+  ApplyForSeatForm,
+  VoteSeatAdmitForm,
+  isApplyForSeatInputComplete,
+  isVoteSeatAdmitInputComplete,
+} from "./SeatForms";
+import {
   ClusterResignationForm,
   isClusterResignationInputComplete,
 } from "./ClusterResignationForm";
@@ -383,6 +389,14 @@ export function OperationsDrawer() {
     request?.kind === "cluster-vote-admit" &&
     stage === "preview" &&
     !isClusterVoteAdmitInputComplete(request.clusterVoteAdmitInput);
+  const seatApplyNeedsInput =
+    request?.kind === "seat-apply" &&
+    stage === "preview" &&
+    !isApplyForSeatInputComplete(request.seatApplyInput);
+  const seatVoteAdmitNeedsInput =
+    request?.kind === "seat-vote-admit" &&
+    stage === "preview" &&
+    !isVoteSeatAdmitInputComplete(request.seatVoteAdmitInput);
   const clusterResignationNeedsInput =
     request?.kind === "cluster-resign" &&
     stage === "preview" &&
@@ -419,6 +433,8 @@ export function OperationsDrawer() {
     pendingChangeNeedsInput ||
     clusterJoinRequestNeedsInput ||
     clusterVoteAdmitNeedsInput ||
+    seatApplyNeedsInput ||
+    seatVoteAdmitNeedsInput ||
     clusterResignationNeedsInput ||
     clusterFormNeedsInput ||
     dkgReshareNeedsInput ||
@@ -446,6 +462,10 @@ export function OperationsDrawer() {
                   ? "Fill the join request details first"
                   : clusterVoteAdmitNeedsInput
                     ? "Fill the admission vote details first"
+                    : seatApplyNeedsInput
+                    ? "Fill the open-seat application details first"
+                    : seatVoteAdmitNeedsInput
+                    ? "Fill the open-seat admit-vote details first"
                     : clusterResignationNeedsInput
                       ? "Enter a valid resignation nonce first"
                       : clusterFormNeedsInput
@@ -745,6 +765,8 @@ function DrawerBody({
         ) : null}
         {request.kind === "cluster-request-join" ? <ClusterJoinRequestForm /> : null}
         {request.kind === "cluster-vote-admit" ? <ClusterVoteAdmitForm /> : null}
+        {request.kind === "seat-apply" ? <ApplyForSeatForm /> : null}
+        {request.kind === "seat-vote-admit" ? <VoteSeatAdmitForm /> : null}
         {request.kind === "cluster-resign" ? <ClusterResignationForm /> : null}
         {request.kind === "cluster-form" ? <ClusterFormProposalForm /> : null}
         {request.kind === "rotate-keys" ? <DkgReshareAttestationForm /> : null}

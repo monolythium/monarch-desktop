@@ -34,6 +34,7 @@ import type {
   UpcomingDutiesResponse,
 } from "@monolythium/core-sdk";
 import { addressToTypedBech32, deriveClusterAnchorAddress, formatLyth } from "@monolythium/core-sdk";
+import type { OpenSeatView } from "@monolythium/core-sdk";
 import { rpc } from "./client";
 import { useQuery } from "./queryCache";
 import { useLiveCommit } from "./subscriptions";
@@ -41,6 +42,7 @@ import {
   readClusterJoinRequest,
   type ClusterJoinRequestView,
 } from "./clusterJoinOps";
+import { readOpenSeats, resolveSeatDiscoveryRange } from "./seatReads";
 
 const RPC_METHOD_NOT_FOUND = -32601;
 // A node can also gate a method off at runtime (e.g. `lyth_chainStatus`
@@ -182,6 +184,33 @@ export function useProviderDirectory(
 
 export function useIndexerStatus(): RpcSlice<IndexerStatus | null> {
   return usePolledRpc("lyth_indexerStatus", () => rpc.lythIndexerStatus(), () => false);
+}
+
+// Open-seat discovery is event/indexer backed (#147 ships no `getOpenSeat`
+// view selector). This hook scans the node's native-event history over a
+// bounded recent window for the seat lifecycle events and folds them into live
+// `OpenSeatView` listings. When the connected node runs without the event
+// projection (e.g. the public testnet profile with the indexer disabled) the
+// native-events method is unavailable, so the slice is `notExposed` and the
+// marketplace shows an honest blocker rather than a fabricated listing.
+function isSeatDiscoveryUnavailable(err: unknown): boolean {
+  if (isMethodNotFound(err) || isNotFound(err)) return true;
+  const msg = ((err as { message?: string } | null)?.message ?? "").toLowerCase();
+  return (
+    msg.includes("indexer") ||
+    msg.includes("native events") ||
+    msg.includes("nativeevents") ||
+    msg.includes("not yet exposed")
+  );
+}
+
+export function useOpenSeats(chainHeight: number | null): RpcSlice<OpenSeatView[]> {
+  const range = resolveSeatDiscoveryRange(chainHeight);
+  return usePolledRpc(
+    `openSeats:${range ? `${range.fromBlock}:${range.toBlock}` : ""}`,
+    () => (range ? readOpenSeats(rpc, range) : Promise.reject(NO_TARGET)),
+    isSeatDiscoveryUnavailable,
+  );
 }
 
 export function useRuntimeProvenance(): RpcSlice<RuntimeProvenanceResponse> {

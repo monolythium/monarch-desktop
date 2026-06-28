@@ -49,6 +49,11 @@ export function commandFor(op: OpRequest): string | null {
     case "cluster-update-charter":
     case "cluster-request-join":
     case "cluster-vote-admit":
+    // Open-seat apply/vote are signed node-registry txs handled by
+    // `OpsContext.runApplyForSeatFlow` / `runVoteSeatAdmitFlow`; never
+    // shell-fallback a signed admission action.
+    case "seat-apply":
+    case "seat-vote-admit":
     case "cluster-resign":
     case "freeze-admission":
     case "emergency-key-rotation":

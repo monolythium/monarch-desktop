@@ -31,7 +31,7 @@ export const DESIGN_OPERATION_IDS = [
   "apply-ota",
   "wipe-chain-data",
   "toggle-autostart",
-  "rotate-cluster-share",
+  "rotate-consensus-key",
   "rotate-admin-passkey",
   "rotate-bridge-ed25519",
   "backup-keys",
@@ -44,8 +44,8 @@ export const DESIGN_OPERATION_IDS = [
   "enable-private-receive",
   "burn-private",
   "unjail-cluster",
-  "accept-cluster-invite",
-  "invite-operator",
+  "request-cluster-join",
+  "vote-cluster-admit",
   "vouch-peer-recovery",
   "eject-replace-operator",
   "toggle-service-role",
@@ -100,7 +100,7 @@ export const DESIGN_OPERATION_PARITY = {
     reason:
       "No service autostart policy operation is exposed by the current Talos bridge.",
   },
-  "rotate-cluster-share": {
+  "rotate-consensus-key": {
     status: "implemented",
     kind: "rotate-keys",
     note: "Current chain path is the DKG reshare attestation operation.",
@@ -165,16 +165,15 @@ export const DESIGN_OPERATION_PARITY = {
       "Design calls for cluster-threshold unjail; current restore path uses the guarded recovery executor.",
     relatedKind: "operator-restore",
   },
-  "accept-cluster-invite": {
+  "request-cluster-join": {
     status: "implemented",
-    kind: "cluster-accept-invite",
-    note: "Foundation Add pending-change path retained until CJ-1 is live.",
+    kind: "cluster-request-join",
+    note: "Self-service CJ-1 join request; signs with the operator key and is live on the connected testnet.",
   },
-  "invite-operator": {
-    status: "deferred",
-    reason:
-      "Replaced by CJ-1 request/vote preparation; execution waits for the live CJ-1 runtime and SDK package.",
-    relatedKind: "cluster-vote-admit",
+  "vote-cluster-admit": {
+    status: "implemented",
+    kind: "cluster-vote-admit",
+    note: "Self-service CJ-1 admit vote; cluster members vote and the chain admits at the policy threshold.",
   },
   "vouch-peer-recovery": {
     status: "deferred",
@@ -250,6 +249,15 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   "cluster-update-charter",
   "cluster-request-join",
   "cluster-vote-admit",
+  // Retained foundation Add pending-change op. The corrected design folded its
+  // invite flow into the self-service CJ-1 request/vote, so this no longer maps
+  // 1:1 to a design id — it stays as a product extension.
+  "cluster-accept-invite",
+  // L6 open-seat marketplace — apply to a cluster's advertised vacancy and the
+  // member admit-vote. On-chain primitive #147; a product extension beyond the
+  // original design's CJ-1 operation set.
+  "seat-apply",
+  "seat-vote-admit",
   "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
@@ -494,10 +502,13 @@ export const DESIGN_SOURCE_AUDIT = [
     status: "partial",
     desktopSurface: "/marketplace",
     routes: ["/marketplace"],
-    operationKinds: ["cluster-request-join"],
-    runtimePrereq: "CJ-1 runtime for live join requests.",
-    evidence: "Marketplace route and provider/cluster directory reads are wired.",
-    decision: "Read-side marketplace exists; live join execution waits for W4/W5.",
+    operationKinds: ["cluster-request-join", "seat-apply", "seat-vote-admit"],
+    runtimePrereq:
+      "Live open-seat primitive (testnet-69420) for applications/votes; a native-event indexer for live seat discovery.",
+    evidence:
+      "Marketplace route, provider/cluster directories, live open-seat browse, and signed applyForSeat / voteSeatAdmit drawer flows are wired.",
+    decision:
+      "Apply and admit-vote execute against the live open-seat primitive; live seat discovery is event/indexer-backed and shows an honest blocker where the connected node's indexer is off.",
   },
   {
     file: "metrics.jsx",

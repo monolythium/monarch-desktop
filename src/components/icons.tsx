@@ -111,6 +111,8 @@ const OP_ICONS: Record<OpKind, LucideIcon> = {
   "cluster-update-charter": FileSignature,
   "cluster-request-join": PlugZap,
   "cluster-vote-admit": Vote,
+  "seat-apply": Store,
+  "seat-vote-admit": Vote,
   "cluster-resign": DoorOpen,
   "cluster-accept-invite": UserPlus,
   "cluster-swap": ArrowRightLeft,
