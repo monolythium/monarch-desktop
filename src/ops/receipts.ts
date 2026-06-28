@@ -16,6 +16,8 @@ export type OperationReceiptTransport =
   | "foundation-pending-change-tx"
   | "cluster-join-request-tx"
   | "cluster-vote-admit-tx"
+  | "seat-apply-tx"
+  | "seat-vote-admit-tx"
   | "cluster-resignation-tx"
   | "cluster-form-tx"
   | "cluster-update-charter-tx"

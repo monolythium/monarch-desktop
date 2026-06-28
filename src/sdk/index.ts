@@ -107,6 +107,7 @@ export {
   useProviderDirectory,
   useOperatorRisk,
   useOperatorSigningActivity,
+  useOpenSeats,
   useOperatorRouterConfig,
   useOracleSigners,
   useProverMarketStatus,
@@ -289,6 +290,48 @@ export type {
   SubmitVoteClusterAdmitArgs,
   VoteClusterAdmitCalldataArgs,
 } from "./clusterJoinOps";
+export {
+  buildApplyForSeatTxFields,
+  buildVoteSeatAdmitTxFields,
+  DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
+  deriveSeatApplicationKeyHex,
+  encodeApplyForSeatCalldataHex,
+  encodeVoteSeatAdmitCalldataHex,
+  NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
+  NODE_REGISTRY_SEAT_KIND_ACTIVE,
+  NODE_REGISTRY_SEAT_KIND_STANDBY,
+  SEAT_KINDS,
+  seatKindToByte,
+  submitApplyForSeat,
+  submitVoteSeatAdmit,
+} from "./seatOps";
+export type {
+  ApplyForSeatCalldataArgs,
+  ApplyForSeatSubmitResult,
+  SeatKind,
+  SeatSubmitResult,
+  SubmitApplyForSeatArgs,
+  SubmitVoteSeatAdmitArgs,
+  VoteSeatAdmitCalldataArgs,
+} from "./seatOps";
+export {
+  decodedToSeatAdvertised,
+  decodedToSeatClosed,
+  decodedToSeatFilled,
+  foldSeatEvents,
+  openSeatsAvailable,
+  readOpenSeats,
+  readSeatEventBatch,
+  resolveSeatDiscoveryRange,
+  SEAT_DISCOVERY_WINDOW_BLOCKS,
+  SEAT_EVENT_NAMES,
+  SEAT_PRIMITIVE_ACTIVATION_HEIGHT,
+} from "./seatReads";
+export type {
+  SeatDiscoveryRange,
+  SeatEventBatch,
+  SeatEventReadClient,
+} from "./seatReads";
 export {
   buildFormClusterTxFields,
   ClusterCharterError,

@@ -828,6 +828,68 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "seat-apply",
+    category: "cluster",
+    actionNumber: 33,
+    icon: "AS",
+    risk: "high",
+    title: "Apply for an open seat",
+    sub: "Apply to a cluster's advertised vacancy",
+    intro:
+      "Applies for a cluster's advertised open seat. Applying escrows your full self-bond (5,000+ LYTH) up front and lists a pending application; the cluster's operators then vote 7-of-10 to admit you. The escrow is refundable if you withdraw before admission, and is retained as your operator bond once you are admitted.",
+    technical:
+      "Submits a payable applyForSeat(uint32,uint32,bytes) to node-registry 0x1005 for the target cluster and seat. Desktop signs from the operator recovery phrase and attaches the full self-bond — max(5,000 LYTH floor, the seat's minBond) — as native value; an under-funded apply reverts SeatBondTooLow on chain. The escrow is refundable on withdraw before admission and is retained as the operator bond on admit. The applicant's ML-DSA-65 consensus pubkey is published for cluster-member voting, and the application key is BLAKE3(consensus pubkey).",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Approve seat application",
+    keywords: ["seat", "apply", "open seat", "marketplace", "vacancy", "join", "earn"],
+    effects: [
+      "Creates a pending application against the advertised seat.",
+      "Escrows your full self-bond (5,000+ LYTH) as native value, refundable if you withdraw before admission.",
+      "Publishes your consensus pubkey so cluster members can vote to admit you.",
+    ],
+    diff: [
+      { key: "application", label: "Seat application", value: "+ pending cluster vote" },
+      { key: "bond", label: "Self-bond", value: "5,000+ LYTH escrowed now, refundable until admission" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "advertised cluster" },
+      { key: "seat", label: "Seat", value: "advertised seat id" },
+      { key: "operator", label: "Operator", value: "your operator key" },
+    ],
+  },
+  {
+    kind: "seat-vote-admit",
+    category: "cluster",
+    actionNumber: 34,
+    icon: "VS",
+    risk: "high",
+    title: "Vote to admit a seat applicant",
+    sub: "Approve a pending open-seat application",
+    intro:
+      "Casts your vote, as a current cluster member, to admit an operator who applied for one of your cluster's open seats. The chain tallies votes and admits the applicant once 7 of the 10 operators have approved.",
+    technical:
+      "Approves a pending open-seat application by its application key. Submits voteSeatAdmit(uint32,bytes32,bytes) to node-registry 0x1005, signed once with your operator key; the chain tallies the vote against the snapshot 7-of-10 admission threshold and, on the threshold vote, admits the applicant — whose full self-bond was already escrowed at apply.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign admit vote",
+    keywords: ["seat", "vote", "admit", "open seat", "applicant", "cluster", "marketplace"],
+    effects: [
+      "Checks the applicant has an open application before approval.",
+      "Uses your stored operator key only for the approval step.",
+      "Counts toward the 7-of-10 admission threshold; the applicant is admitted on the threshold vote.",
+    ],
+    diff: [
+      { key: "vote", label: "Admission vote", value: "+ one member vote" },
+      { key: "threshold", label: "Policy", value: "7-of-10 cluster approval" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "your cluster" },
+      { key: "application", label: "Application", value: "candidate application key" },
+      { key: "voter", label: "Approver", value: "your operator" },
+    ],
+  },
+  {
     kind: "freeze-admission",
     category: "emergency",
     actionNumber: 84,

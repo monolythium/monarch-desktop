@@ -19,6 +19,8 @@ export const OP_KINDS = [
   "cluster-update-charter",
   "cluster-request-join",
   "cluster-vote-admit",
+  "seat-apply",
+  "seat-vote-admit",
   "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
@@ -107,6 +109,29 @@ export type ClusterJoinRequestInput = {
 export type ClusterVoteAdmitInput = {
   clusterId: string;
   operatorIdHex: string;
+  voterPubkeyHex: string;
+};
+
+// Inputs for the L6 open-seat `applyForSeat(uint32,uint32,bytes)` call. The
+// applicant signs with the operator key and escrows the FULL self-bond as
+// native value. `selfBondLythoshi` is `max(min_self_bond_floor, seat.minBond)`
+// — defaulting to the 5,000 LYTH floor — escrowed at apply and refundable if
+// the applicant withdraws before admission; admission retains the already-
+// escrowed bond. There is no separate application escrow.
+export type ApplyForSeatInput = {
+  clusterId: string;
+  seatId: string;
+  operatorPubkeyHex: string;
+  selfBondLythoshi: string;
+};
+
+// Inputs for the L6 open-seat `voteSeatAdmit(uint32,bytes32,bytes)` call cast
+// by a current cluster member. The application key is the candidate's op-hash
+// returned by `applyForSeat`; the chain admits once the 7-of-10 threshold is
+// reached.
+export type VoteSeatAdmitInput = {
+  clusterId: string;
+  appKeyHex: string;
   voterPubkeyHex: string;
 };
 
@@ -299,6 +324,12 @@ export type OpRequest = {
   clusterJoinRequestInput?: ClusterJoinRequestInput;
   /** Present only when `kind === "cluster-vote-admit"`. */
   clusterVoteAdmitInput?: ClusterVoteAdmitInput;
+  /** Present only when `kind === "seat-apply"`. Carries the open-seat
+   *  application target + the full self-bond escrowed at apply. */
+  seatApplyInput?: ApplyForSeatInput;
+  /** Present only when `kind === "seat-vote-admit"`. Carries the candidate
+   *  application key the cluster member is voting to admit. */
+  seatVoteAdmitInput?: VoteSeatAdmitInput;
   /** Present only when `kind === "cluster-resign"`. Carries the
    *  operator-local resignation nonce and the foundation-expedite flag. */
   clusterResignationInput?: ClusterResignationInput;

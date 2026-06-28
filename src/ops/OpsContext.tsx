@@ -54,6 +54,10 @@ import {
   submitRequestClusterJoin,
   submitVoteClusterAdmit,
 } from "../sdk/clusterJoinOps";
+import {
+  submitApplyForSeat,
+  submitVoteSeatAdmit,
+} from "../sdk/seatOps";
 import { submitClusterResignation } from "../sdk/clusterResignations";
 import { submitFormCluster } from "../sdk/clusterFormOps";
 import { submitUpdateCharter } from "../sdk/charterAmendmentOps";
@@ -95,6 +99,8 @@ import type {
   ClusterFormInput,
   ClusterJoinRequestInput,
   ClusterVoteAdmitInput,
+  ApplyForSeatInput,
+  VoteSeatAdmitInput,
   ClusterResignationInput,
   OtaApplyInput,
   LogRetentionInput,
@@ -183,6 +189,10 @@ type OpsContextValue = OpsState & {
   setClusterJoinRequestInput: (patch: Partial<ClusterJoinRequestInput>) => void;
   /** Update the CJ-1 admit vote payload. */
   setClusterVoteAdmitInput: (patch: Partial<ClusterVoteAdmitInput>) => void;
+  /** Update the open-seat application payload. */
+  setSeatApplyInput: (patch: Partial<ApplyForSeatInput>) => void;
+  /** Update the open-seat admit-vote payload. */
+  setSeatVoteAdmitInput: (patch: Partial<VoteSeatAdmitInput>) => void;
   /** Update the Q120 cluster resignation payload. */
   setClusterResignationInput: (patch: Partial<ClusterResignationInput>) => void;
   /** Update the cluster-formation roster proposal payload. */
@@ -863,6 +873,97 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           { ok: false, message },
           { transport: "cluster-vote-admit-tx" },
         );
+      }
+    },
+    [settleOperation],
+  );
+
+  const runApplyForSeatFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.seatApplyInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Open-seat application form is missing required fields." },
+          { transport: "seat-apply-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "seat-apply-tx" },
+          );
+          return;
+        }
+        const res = await submitApplyForSeat({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          seatId: input.seatId,
+          operatorPubkeyHex: input.operatorPubkeyHex,
+          selfBondLythoshi: input.selfBondLythoshi,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Applied for seat ${res.seatId} in cluster ${res.clusterId}, application ${res.appKeyHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...). Your full self-bond is escrowed and refundable until admission; the cluster votes 7-of-10 to admit.`,
+            txHash: res.txHash,
+          },
+          { transport: "seat-apply-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "seat-apply-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
+  const runVoteSeatAdmitFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.seatVoteAdmitInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Open-seat admit-vote form is missing required fields." },
+          { transport: "seat-vote-admit-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "seat-vote-admit-tx" },
+          );
+          return;
+        }
+        const res = await submitVoteSeatAdmit({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          appKeyHex: input.appKeyHex,
+          voterPubkeyHex: input.voterPubkeyHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Voted to admit application ${res.appKeyHex.slice(0, 18)}... to cluster ${res.clusterId} (tx ${res.txHash.slice(0, 10)}...).`,
+            txHash: res.txHash,
+          },
+          { transport: "seat-vote-admit-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "seat-vote-admit-tx" });
       }
     },
     [settleOperation],
@@ -1770,6 +1871,22 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "seat-apply") {
+      if (inTauri()) {
+        await runApplyForSeatFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "seat-vote-admit") {
+      if (inTauri()) {
+        await runVoteSeatAdmitFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-resign") {
       if (inTauri()) {
         await runClusterResignationFlow(req);
@@ -1931,6 +2048,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runClusterNameFlow,
     runClusterJoinRequestFlow,
     runClusterVoteAdmitFlow,
+    runApplyForSeatFlow,
+    runVoteSeatAdmitFlow,
     runClusterResignationFlow,
     runDkgReshareFlow,
     runEmergencyKeyRotationFlow,
@@ -2152,6 +2271,45 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setSeatApplyInput = useCallback(
+    (patch: Partial<ApplyForSeatInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "seat-apply") return s;
+        const base: ApplyForSeatInput = s.request.seatApplyInput ?? {
+          clusterId: "",
+          seatId: "",
+          operatorPubkeyHex: "",
+          selfBondLythoshi: "0",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, seatApplyInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setSeatVoteAdmitInput = useCallback(
+    (patch: Partial<VoteSeatAdmitInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "seat-vote-admit") return s;
+        const base: VoteSeatAdmitInput = s.request.seatVoteAdmitInput ?? {
+          clusterId: "",
+          appKeyHex: "",
+          voterPubkeyHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, seatVoteAdmitInput: next },
+        };
+      });
+    },
+    [],
+  );
+
   const setClusterResignationInput = useCallback(
     (patch: Partial<ClusterResignationInput>) => {
       setState((s) => {
@@ -2325,6 +2483,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
+      setSeatApplyInput,
+      setSeatVoteAdmitInput,
       setClusterResignationInput,
       setClusterFormInput,
       setDkgReshareInput,
@@ -2352,6 +2512,8 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setPendingChangeInput,
       setClusterJoinRequestInput,
       setClusterVoteAdmitInput,
+      setSeatApplyInput,
+      setSeatVoteAdmitInput,
       setClusterResignationInput,
       setClusterFormInput,
       setDkgReshareInput,
