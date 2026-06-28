@@ -54,6 +54,32 @@ const fail = (message) => {
   process.exit(1);
 };
 
+// Opt-in: a platform whose build is externally blocked (e.g. macOS notarization
+// failing on an expired Apple Developer agreement) can be skipped via
+// ALLOW_MISSING_PLATFORMS (comma-separated platform keys). Skipped platforms are
+// excluded from EVERY check below; the platforms that ARE present stay fully
+// verified (bundle + signature + installers + manifest). Empty/unset = all
+// required (default behaviour unchanged).
+const knownKeys = REQUIRED_PLATFORMS.map((platform) => platform.key);
+const allowMissing = (process.env.ALLOW_MISSING_PLATFORMS ?? "")
+  .split(",")
+  .map((key) => key.trim())
+  .filter((key) => key.length > 0);
+
+for (const key of allowMissing) {
+  if (!knownKeys.includes(key)) {
+    fail(`ALLOW_MISSING_PLATFORMS lists an unknown platform key: ${key} (known: ${knownKeys.join(", ")})`);
+  }
+}
+
+const activePlatforms = REQUIRED_PLATFORMS.filter((platform) => !allowMissing.includes(platform.key));
+if (activePlatforms.length === 0) {
+  fail("ALLOW_MISSING_PLATFORMS skips every platform; nothing left to verify");
+}
+if (allowMissing.length > 0) {
+  console.log(`skipping platforms (ALLOW_MISSING_PLATFORMS): ${allowMissing.join(", ")}`);
+}
+
 if (!existsSync(artifactDir) || !statSync(artifactDir).isDirectory()) {
   fail(`artifact directory is missing: ${artifactDir}`);
 }
@@ -75,7 +101,7 @@ const requireNonEmpty = (file, label = file) => {
 };
 
 const platformBundles = {};
-for (const platform of REQUIRED_PLATFORMS) {
+for (const platform of activePlatforms) {
   const bundle = findOne(platform.bundle, `${platform.key} updater bundle`);
   const sig = `${bundle}.sig`;
   requireNonEmpty(bundle, `${platform.key} updater bundle`);
@@ -113,12 +139,12 @@ if (!latest.platforms || typeof latest.platforms !== "object" || Array.isArray(l
 }
 
 const actualKeys = Object.keys(latest.platforms).sort();
-const expectedKeys = REQUIRED_PLATFORMS.map((platform) => platform.key).sort();
+const expectedKeys = activePlatforms.map((platform) => platform.key).sort();
 if (actualKeys.join("\n") !== expectedKeys.join("\n")) {
   fail(`latest.json platform keys mismatch: ${actualKeys.join(", ") || "(none)"}`);
 }
 
-for (const platform of REQUIRED_PLATFORMS) {
+for (const platform of activePlatforms) {
   const entry = latest.platforms[platform.key];
   const { bundle, sig } = platformBundles[platform.key];
   const expectedSig = readFileSync(path.join(artifactDir, sig), "utf8").trim();
@@ -132,4 +158,4 @@ for (const platform of REQUIRED_PLATFORMS) {
   }
 }
 
-console.log(`release artifact verification ok: ${REQUIRED_PLATFORMS.length} platforms`);
+console.log(`release artifact verification ok: ${activePlatforms.length} platforms`);

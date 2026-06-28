@@ -18,6 +18,11 @@ on:
         description: "Release tag to attach artifacts to (e.g. v0.1.0). Leave empty for a dry-run build with no release upload."
         required: false
         type: string
+      allow_missing_platforms:
+        description: "Comma-separated platform keys to skip in the release artifact verifier when a platform is externally blocked (e.g. darwin-aarch64,darwin-x86_64). Default empty = all platforms required. Present platforms stay fully verified."
+        required: false
+        default: ""
+        type: string
       rpc_endpoint:
         description: "Default Protocore JSON-RPC endpoint baked into the app."
         required: false
@@ -559,6 +564,10 @@ jobs:
       - name: Verify release artifact set
         env:
           TAG: ${{ github.event.inputs.tag || inputs.tag || github.ref_name }}
+          # Opt-in skip for an externally-blocked platform (e.g. macOS when the
+          # Apple Developer agreement has expired and notarization 403s). Empty
+          # on a normal tag push, so the full 4-platform matrix is enforced.
+          ALLOW_MISSING_PLATFORMS: ${{ inputs.allow_missing_platforms }}
         run: node scripts/verify-release-artifacts.mjs ./artifacts --tag "$TAG"
 
       - name: Publish release
