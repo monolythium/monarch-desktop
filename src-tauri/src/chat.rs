@@ -2510,6 +2510,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cluster_membership_accepts_bip39_identity_in_roster() {
+        // The post-DEC-029 surface: an operator identity derived via
+        // BIP-39 → ML-DSA-65 (no seal keys) is a proven cluster member when
+        // its derived 20-byte address is the one registered on the cluster
+        // roster. This is exactly the proof the chat subscription gate
+        // (assert_cluster_member) requires before subscribing a cluster
+        // channel, so a cluster-0 subscription succeeds for a registered
+        // operator.
+        let id = ChatIdentity::from_mnemonic(TEST_MNEMONIC).unwrap();
+        let operator_id =
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+        let endpoint = spawn_membership_rpc(
+            vec![operator_id.clone()],
+            vec![(operator_id, id.address_hex().to_string(), None)],
+        )
+        .await;
+
+        assert_cluster_member(&endpoint, 0, id.address_hex())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cluster_membership_rejects_identity_absent_from_roster() {
+        // If the roster carries a DIFFERENT address than the operator's
+        // current key derives, membership fails closed — the chat
+        // subscription is then never granted. This mirrors the regression
+        // symptom (the on-chain roster address not matching the live
+        // operator identity).
+        let id = ChatIdentity::from_mnemonic(TEST_MNEMONIC).unwrap();
+        let other = make_identity_variant(200);
+        assert_ne!(id.address_hex(), other.address_hex());
+        let operator_id =
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+        let endpoint = spawn_membership_rpc(
+            vec![operator_id.clone()],
+            vec![(operator_id, other.address_hex().to_string(), None)],
+        )
+        .await;
+
+        assert!(matches!(
+            assert_cluster_member(&endpoint, 0, id.address_hex()).await,
+            Err(ChatError::NotMember(0))
+        ));
+    }
+
+    #[tokio::test]
     async fn cluster_member_directory_serves_monikers_from_one_fetch() {
         let endpoint = spawn_membership_rpc(
             vec!["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()],

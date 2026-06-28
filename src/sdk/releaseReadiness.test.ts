@@ -352,6 +352,82 @@ describe("Desktop release readiness gate", () => {
     }));
   });
 
+  it("fails closed when no subscribed active cluster channel is selected", () => {
+    // The #12 regression root: the operator key derivation moved to BIP-39 →
+    // ML-DSA-65, so chat init succeeds but the operator is no longer a proven
+    // member of the configured cluster, so no channel is subscribed and the
+    // active selection is empty. The gate must report this specific root.
+    const report = desktopReleaseReadiness(input({
+      chat: {
+        init: chatInit(),
+        channels: [],
+        activeChannelId: null,
+        messages: [],
+        bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/peer-a"],
+        membership: null,
+      },
+    }));
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      id: "chat-exchange",
+      summary: "No subscribed active cluster channel is selected.",
+    }));
+  });
+
+  it("fails closed when the selected channel is not actually subscribed", () => {
+    const report = desktopReleaseReadiness(input({
+      chat: {
+        init: chatInit(),
+        channels: [channel({ subscribed: false })],
+        activeChannelId: "cluster-1",
+        messages: [],
+        bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/peer-a"],
+        membership: null,
+      },
+    }));
+
+    expect(report.ok).toBe(false);
+    expect(report.blockers).toContainEqual(expect.objectContaining({
+      id: "chat-exchange",
+      summary: "No subscribed active cluster channel is selected.",
+    }));
+  });
+
+  it("accepts a subscribed cluster-0 channel with a verified two-party exchange", () => {
+    // The live operator cohort is cluster-id 0; guard the falsy-zero edge so a
+    // genuine cluster-0 subscription and two-party signed exchange pass the
+    // gate end-to-end on the plaintext / ML-DSA-65 surface.
+    const local = "0x1111111111111111111111111111111111111111";
+    const peer = "0x2222222222222222222222222222222222222222";
+    const report = desktopReleaseReadiness(input({
+      chat: {
+        init: chatInit({ address_hex: local }),
+        channels: [channel({ channel_id: "cluster-0", cluster_id: 0, name: "Cluster 0" })],
+        activeChannelId: "cluster-0",
+        messages: [
+          message({ msg_id: hex("a", 32), channel_id: "cluster-0", cluster_id: 0, from_me: true, sender_address: local }),
+          message({ msg_id: hex("b", 32), channel_id: "cluster-0", cluster_id: 0, from_me: false, sender_address: peer }),
+        ],
+        bootstrapPeers: ["/ip4/127.0.0.1/tcp/41001/p2p/peer-a"],
+        membership: membership({
+          clusterId: 0,
+          proofs: [
+            { source: "lyth_clusterStatus+lyth_operatorInfo", clusterId: 0, senderAddress: local, operatorId: hex("c", 32), chainAddress: local, chainAddressHex: local },
+            { source: "lyth_clusterStatus+lyth_operatorInfo", clusterId: 0, senderAddress: peer, operatorId: hex("d", 32), chainAddress: peer, chainAddressHex: peer },
+          ],
+        }),
+      },
+    }));
+
+    expect(report.ok).toBe(true);
+    expect(report.gates).toContainEqual(expect.objectContaining({
+      id: "chat-exchange",
+      ok: true,
+      summary: "Chat initialized and recorded a verified two-party exchange.",
+    }));
+  });
+
   it("requires chat bootstrap, active subscription, and verified two-party messages", () => {
     const report = desktopReleaseReadiness(input({
       chat: {

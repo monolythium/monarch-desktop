@@ -87,6 +87,7 @@ import {
 import { rpc } from "./client";
 import { resolveChatBootstrapPeersForCluster } from "./chatConfig";
 import { collectMonarchE2eReadiness } from "./e2eReadinessCollector";
+import { desktopReleaseReadiness } from "./releaseReadiness";
 import { releaseAttestationStatus } from "./releaseAttestation";
 
 const activeChannel: ChatChannel = {
@@ -393,5 +394,79 @@ describe("collectMonarchE2eReadiness", () => {
     );
     expect(readiness.chat?.membership?.membersChecked).toBe(2);
     expect(readiness.chat?.membership?.proofs).toHaveLength(2);
+  });
+
+  it("selects the active cluster channel from proven membership and passes the chat gate", async () => {
+    const readiness = await collectMonarchE2eReadiness({
+      expectedChainId: 69420,
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      expectedDigest: "sha256:expected",
+      operatorMnemonic: "abandon ".repeat(23).trim(),
+      chatBootstrapPeers: ["/ip4/127.0.0.1/tcp/7100/p2p/peer-a"],
+      clusterId: 42,
+      chatBody: "hello",
+    });
+
+    // The operator (0x1111…) is a proven cluster-42 member, so a channel is
+    // subscribed and the recorded two-party signed exchange satisfies the
+    // release chat-exchange gate end-to-end.
+    expect(chatSubscribeChannel).toHaveBeenCalledWith({ clusterId: 42, name: undefined });
+    expect(readiness.chat?.activeChannelId).toBe("cluster-42");
+    const chatGate = desktopReleaseReadiness(readiness).gates.find(
+      (gate) => gate.id === "chat-exchange",
+    );
+    expect(chatGate?.ok).toBe(true);
+    expect(chatGate?.summary).toBe("Chat initialized and recorded a verified two-party exchange.");
+  });
+
+  it("does not subscribe a cluster channel when the operator is not a roster member", async () => {
+    // BIP-39 → ML-DSA-65 identity that is absent from the live cluster roster:
+    // selection is membership-driven, so the doomed subscribe is skipped and
+    // the evidence honestly reports no active cluster channel (the regression
+    // root) rather than a half-open channel.
+    vi.mocked(chatInitialize).mockResolvedValue({
+      address_hex: "0x9999999999999999999999999999999999999999",
+      public_key_hex: "abcd",
+      rpc_endpoint: "https://rpc.monolythium.test",
+    } as never);
+    vi.mocked(chatGetChannels).mockReset().mockResolvedValue([] as never);
+
+    const readiness = await collectMonarchE2eReadiness({
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      expectedDigest: "sha256:expected",
+      clusterId: 42,
+    });
+
+    expect(chatSubscribeChannel).not.toHaveBeenCalled();
+    expect(readiness.chat?.activeChannelId).toBeNull();
+    expect(readiness.chat?.membership).toBeNull();
+    const chatGate = desktopReleaseReadiness(readiness).gates.find(
+      (gate) => gate.id === "chat-exchange",
+    );
+    expect(chatGate?.ok).toBe(false);
+    expect(chatGate?.summary).toBe("No subscribed active cluster channel is selected.");
+  });
+
+  it("reflects a freshly subscribed channel in the evidence even if the refresh races", async () => {
+    // The operator is a member → subscribe succeeds, but the post-subscribe
+    // channel refresh races its persistence and returns an empty list. The
+    // subscribed channel must still appear in the evidence channel list so the
+    // gate does not misread it as "not selected".
+    vi.mocked(chatGetChannels)
+      .mockReset()
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+
+    const readiness = await collectMonarchE2eReadiness({
+      expectedRpcEndpoint: "https://rpc.monolythium.test",
+      expectedDigest: "sha256:expected",
+      clusterId: 42,
+    });
+
+    expect(chatSubscribeChannel).toHaveBeenCalledWith({ clusterId: 42, name: undefined });
+    expect(readiness.chat?.activeChannelId).toBe("cluster-42");
+    expect(readiness.chat?.channels).toContainEqual(
+      expect.objectContaining({ channel_id: "cluster-42", subscribed: true }),
+    );
   });
 });
