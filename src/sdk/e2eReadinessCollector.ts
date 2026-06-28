@@ -214,14 +214,45 @@ async function collectChatEvidence(
     bootstrapPeers,
   }).catch(() => null);
 
+  // The operator's own ML-DSA-65 chat address (BIP-39 → ML-DSA-65, no seal
+  // keys). Active-channel selection is bound to this identity's proven
+  // membership in the live cluster roster — never a configured cluster id
+  // alone — so a channel is only subscribed when the operator is actually a
+  // registered member of that cluster.
+  const localAddress = init?.address_hex ? normalizeChatAddress(init.address_hex) : null;
+
+  // Resolve the live cluster member directory once (lyth_clusterStatus +
+  // lyth_operatorInfo). The same read backs both membership-driven channel
+  // selection and the sender-membership proof, so the evidence is internally
+  // consistent and we never double-walk the roster.
+  const directory = typeof options.clusterId === "number"
+    ? await readClusterMemberDirectory(endpoint, options.clusterId).catch(() => null)
+    : null;
+
   let channels = await chatGetChannels().catch(() => []);
   let active = chooseActiveChannel(channels, options.clusterId);
   if (!active && typeof options.clusterId === "number") {
-    active = await chatSubscribeChannel({
-      clusterId: options.clusterId,
-      name: options.clusterName,
-    }).catch(() => null);
-    channels = await chatGetChannels().catch(() => active ? [active] : []);
+    // Subscribe when the operator is a proven roster member, or when the
+    // roster read was unavailable (defer to the Rust subscribe gate, which
+    // re-checks live membership through assert_cluster_member). Skip the
+    // doomed subscribe only when the roster positively excludes the operator.
+    const memberByDirectory =
+      localAddress && directory ? directoryHasAddress(directory, localAddress) : null;
+    if (memberByDirectory !== false) {
+      active = await chatSubscribeChannel({
+        clusterId: options.clusterId,
+        name: options.clusterName,
+      }).catch(() => null);
+      channels = await chatGetChannels().catch(() => active ? [active] : []);
+    }
+  }
+
+  // A freshly subscribed channel must be present in the channel list the
+  // readiness gate inspects, even if the post-subscribe refresh raced its
+  // persistence — otherwise a subscribed cluster channel reads as "not
+  // selected".
+  if (active && !channels.some((channel) => channel.channel_id === active!.channel_id)) {
+    channels = [...channels, active];
   }
 
   if (active && options.sendChatMessage !== false) {
@@ -239,7 +270,7 @@ async function collectChatEvidence(
     ? await chatGetMessages(active.channel_id, 100).catch(() => [])
     : [];
   const messages = normalizeMessagePerspective(rawMessages, init?.address_hex);
-  const membership = await collectChatMembershipEvidence(endpoint, active, messages);
+  const membership = buildChatMembershipEvidence(directory, active, messages);
 
   return {
     init,
@@ -268,11 +299,72 @@ function normalizeMessagePerspective(
   });
 }
 
-async function collectChatMembershipEvidence(
+/** One resolved cluster member: operator id + registered chain address. */
+type ClusterMemberEntry = {
+  operatorId: string;
+  chainAddress: string;
+  chainAddressHex: string;
+};
+
+/**
+ * The live cluster member directory: every roster member resolved through
+ * lyth_operatorInfo to its registered chain address. `membersChecked` is the
+ * full roster size (including members whose operatorInfo lookup failed) so the
+ * readiness gate can see the whole roster was walked.
+ */
+type ClusterMemberDirectory = {
+  clusterId: number;
+  membersChecked: number;
+  members: ClusterMemberEntry[];
+};
+
+/**
+ * Walk the cluster roster (lyth_clusterStatus) and resolve every member's
+ * registered chain address (lyth_operatorInfo). A single read backs both the
+ * membership-driven channel selection and the sender-membership proof.
+ */
+async function readClusterMemberDirectory(
   endpoint: string,
+  clusterId: number,
+): Promise<ClusterMemberDirectory> {
+  const cluster = await readClusterStatus(endpoint, clusterId);
+  const resolved = await Promise.all(
+    cluster.members.map((member) =>
+      readOperatorInfo(endpoint, member.operatorId)
+        .then((operator) => ({ member, operator }))
+        .catch(() => null),
+    ),
+  );
+  const members = resolved.flatMap((entry): ClusterMemberEntry[] => {
+    if (!entry) return [];
+    const chainAddressHex = normalizeChatAddress(entry.operator.chainAddress);
+    if (!chainAddressHex) return [];
+    return [{
+      operatorId: entry.member.operatorId,
+      chainAddress: entry.operator.chainAddress,
+      chainAddressHex,
+    }];
+  });
+  return { clusterId, membersChecked: cluster.members.length, members };
+}
+
+/** Whether `address` (any form) is a registered member of the directory. */
+function directoryHasAddress(directory: ClusterMemberDirectory, address: string): boolean {
+  const normalized = normalizeChatAddress(address);
+  if (!normalized) return false;
+  return directory.members.some((member) => member.chainAddressHex === normalized);
+}
+
+/**
+ * Build the sender-membership proof for the active channel's verified
+ * messages from the pre-resolved cluster directory. Returns null when there
+ * is no active channel or no verified senders to prove.
+ */
+function buildChatMembershipEvidence(
+  directory: ClusterMemberDirectory | null,
   active: ChatChannel | null,
   messages: Awaited<ReturnType<typeof chatGetMessages>>,
-): Promise<ReleaseChatMembershipEvidence | null> {
+): ReleaseChatMembershipEvidence | null {
   if (!active) return null;
 
   const senderAddresses = new Set(
@@ -283,44 +375,32 @@ async function collectChatMembershipEvidence(
   );
   if (senderAddresses.size === 0) return null;
 
-  const cluster = await readClusterStatus(endpoint, active.cluster_id).catch(() => null);
-  if (!cluster) {
+  const checkedAt = new Date().toISOString();
+  if (!directory || directory.clusterId !== active.cluster_id) {
     return {
       source: "lyth_clusterStatus+lyth_operatorInfo",
       clusterId: active.cluster_id,
-      checkedAt: new Date().toISOString(),
+      checkedAt,
       membersChecked: 0,
       proofs: [],
     };
   }
 
-  const operatorInfos = await Promise.all(
-    cluster.members.map((member) =>
-      readOperatorInfo(endpoint, member.operatorId)
-        .then((operator) => ({ member, operator }))
-        .catch(() => null),
-    ),
-  );
-
   return {
     source: "lyth_clusterStatus+lyth_operatorInfo",
     clusterId: active.cluster_id,
-    checkedAt: new Date().toISOString(),
-    membersChecked: cluster.members.length,
-    proofs: operatorInfos
-      .flatMap((entry) => {
-        if (!entry) return [];
-        const chainAddressHex = normalizeChatAddress(entry.operator.chainAddress);
-        if (!chainAddressHex || !senderAddresses.has(chainAddressHex)) return [];
-        return [{
-          source: "lyth_clusterStatus+lyth_operatorInfo" as const,
-          clusterId: active.cluster_id,
-          senderAddress: chainAddressHex,
-          operatorId: entry.member.operatorId,
-          chainAddress: entry.operator.chainAddress,
-          chainAddressHex,
-        }];
-      }),
+    checkedAt,
+    membersChecked: directory.membersChecked,
+    proofs: directory.members
+      .filter((member) => senderAddresses.has(member.chainAddressHex))
+      .map((member) => ({
+        source: "lyth_clusterStatus+lyth_operatorInfo" as const,
+        clusterId: active.cluster_id,
+        senderAddress: member.chainAddressHex,
+        operatorId: member.operatorId,
+        chainAddress: member.chainAddress,
+        chainAddressHex: member.chainAddressHex,
+      })),
   };
 }
 
