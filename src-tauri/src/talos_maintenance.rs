@@ -676,7 +676,7 @@ fn persist_talosconfig(
 
 /// Inline-secret env keys that must never be carried in a machine config; they
 /// belong in enrollment/secret files. Mirrors the protocore entrypoint reject
-/// list. `_SHARE` suffixes (BLS / cluster-key / key shares) are matched
+/// list. `_SHARE` suffixes (cluster-key / key shares) are matched
 /// separately by suffix so future share keys are also caught.
 const FORBIDDEN_SECRET_ENVS: [&str; 3] = [
     "PROTOCORE_KEYSTORE_PASSPHRASE",
@@ -741,8 +741,8 @@ pub(crate) fn scan_config(config_yaml: &str) -> Result<(), String> {
         }
     }
 
-    // Any `*_SHARE` env (PROTOCORE_BLS_SHARE / PROTOCORE_CLUSTER_KEY_SHARE /
-    // PROTOCORE_KEY_SHARE / …) is share material and must never be inlined.
+    // Any `*_SHARE` env (PROTOCORE_CLUSTER_KEY_SHARE / PROTOCORE_KEY_SHARE / …)
+    // is share material and must never be inlined.
     for token in config_yaml.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         let upper = token.to_ascii_uppercase();
         if upper.starts_with("PROTOCORE_") && upper.ends_with("_SHARE") {
