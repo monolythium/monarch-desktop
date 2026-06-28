@@ -3,16 +3,18 @@
 // Wraps the published SDK seat encoders/builders into the same mnemonic ->
 // backend -> build -> sign -> submit shape Desktop already uses for the CJ-1
 // cluster-join ops (`clusterJoinOps.ts`). A cluster advertises a vacancy
-// (`advertiseSeat`), an operator applies with a refundable application escrow
+// (`advertiseSeat`), an operator applies by escrowing the full self-bond
 // (`applyForSeat`, payable), and active members vote 7-of-10 to admit
 // (`voteSeatAdmit`). Admission terminates in the pre-existing signed-consent
 // path — these helpers add discovery + intent, no new consensus surface.
 //
-// IMPORTANT economic note: `applyForSeat` escrows only the refundable
-// application escrow (100 LYTH), NOT the 5,000 LYTH operator self-bond. The
-// self-bond is bound into the operator's bond when the seat is FILLED (on
-// admit), not at apply time. Both numerics are surfaced to the operator so the
-// distinction is never hidden.
+// IMPORTANT economic note: `applyForSeat` escrows the FULL operator self-bond
+// up front — `max(min_self_bond_floor, seat.minBond)`, defaulting to the
+// 5,000 LYTH floor — and rejects an under-funded applicant on chain
+// (`SeatBondTooLow`). The escrow is refundable if the applicant withdraws
+// before admission; on admission the chain simply retains the already-escrowed
+// bond. There is no separate 100-LYTH application escrow (that pre-audit
+// behaviour was removed in node-registry audit fix #150/#153).
 
 import {
   addressToTypedBech32,
@@ -23,7 +25,6 @@ import {
   encodeApplyForSeatCalldata,
   encodeVoteSeatAdmitCalldata,
   NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
-  NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI,
   NODE_REGISTRY_SEAT_KIND_ACTIVE,
   NODE_REGISTRY_SEAT_KIND_STANDBY,
   resolveSeatExecutionFee,
@@ -42,7 +43,6 @@ import { makeRpcClient } from "./rpcTransport";
 export {
   DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
   NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
-  NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI,
   NODE_REGISTRY_SEAT_KIND_ACTIVE,
   NODE_REGISTRY_SEAT_KIND_STANDBY,
   SEAT_KINDS,
@@ -71,11 +71,13 @@ export interface SubmitApplyForSeatArgs {
   seatId: bigint | number | string;
   operatorPubkeyHex: string;
   /**
-   * Native escrow to attach, in lythoshi. Defaults to the refundable
-   * application escrow (100 LYTH). The 5,000 LYTH self-bond is bound at admit,
-   * not here.
+   * Self-bond to escrow at apply, in lythoshi. Defaults to the operator
+   * self-bond floor (5,000 LYTH). The chain requires
+   * `max(min_self_bond_floor, seat.minBond)`, so when the targeted seat's
+   * advertised `minBond` exceeds the floor, pass that larger amount here or
+   * the application reverts (`SeatBondTooLow`).
    */
-  escrowLythoshi?: bigint | number | string;
+  selfBondLythoshi?: bigint | number | string;
   executionUnitLimit?: bigint;
 }
 
@@ -98,7 +100,7 @@ export interface SeatSubmitResult {
 
 export interface ApplyForSeatSubmitResult extends SeatSubmitResult {
   seatId: string;
-  escrowLythoshi: string;
+  selfBondLythoshi: string;
 }
 
 function stripHex(value: string): string {
@@ -168,7 +170,7 @@ export function buildApplyForSeatTxFields(args: {
   clusterId: bigint | number | string;
   seatId: bigint | number | string;
   operatorPubkeyHex: string;
-  escrowLythoshi?: bigint | number | string;
+  selfBondLythoshi?: bigint | number | string;
   executionUnitLimit?: bigint;
 }): NativeEvmTxFields {
   return buildSdkApplyForSeatTxFields({
@@ -180,7 +182,7 @@ export function buildApplyForSeatTxFields(args: {
     clusterId: args.clusterId,
     seatId: args.seatId,
     operatorPubkey: args.operatorPubkeyHex,
-    escrowLythoshi: args.escrowLythoshi,
+    selfBondLythoshi: args.selfBondLythoshi,
   });
 }
 
@@ -212,7 +214,7 @@ export async function submitApplyForSeat(
   const clusterId = parseUint32(args.clusterId, "clusterId");
   const seatId = parseUint32(args.seatId, "seatId");
   const appKeyHex = deriveSeatApplicationKeyHex(args.operatorPubkeyHex);
-  const escrowLythoshi = args.escrowLythoshi ?? NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI;
+  const selfBondLythoshi = args.selfBondLythoshi ?? NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI;
   const backend = mnemonicToMlDsa65Backend(args.mnemonic);
   const senderAddress = addressToTypedBech32("user", backend.addressBytes());
 
@@ -228,7 +230,7 @@ export async function submitApplyForSeat(
     clusterId,
     seatId,
     operatorPubkeyHex: args.operatorPubkeyHex,
-    escrowLythoshi,
+    selfBondLythoshi,
     executionUnitLimit: args.executionUnitLimit,
   });
   // v2 runs a plaintext mempool — the seat application is a public action,
@@ -241,7 +243,7 @@ export async function submitApplyForSeat(
     clusterId: clusterId.toString(),
     seatId: seatId.toString(),
     appKeyHex,
-    escrowLythoshi: BigInt(escrowLythoshi).toString(),
+    selfBondLythoshi: BigInt(selfBondLythoshi).toString(),
     innerSighashHex: bytesToHex(signed.sighash),
     envelopeWireBytes: signed.wireBytes.length,
   };

@@ -2,8 +2,9 @@
 //
 // The L6 open-seat primitive (#147) ships NO on-chain `getOpenSeat` view
 // selector — discovery is event/indexer backed. A cluster advertises a
-// vacancy (`SeatAdvertised`), applicants escrow an application (`SeatApplied`),
-// admission fills it (`SeatFilled`), and an advertiser can rescind (`SeatClosed`).
+// vacancy (`SeatAdvertised`), applicants escrow their full self-bond
+// (`SeatApplied`), admission fills it (`SeatFilled`), and an advertiser can
+// rescind (`SeatClosed`).
 // This module projects those native events into the `OpenSeatView` shape the
 // SDK defines, folding fill/close state over the base advertised listing.
 //

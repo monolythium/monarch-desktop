@@ -25,6 +25,7 @@ import {
   inTauri,
   KEYCHAIN_ACCOUNTS,
   keychainGet,
+  NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
   protocoreUpdateStatus,
   releaseAttestationStatus,
   rpcEndpoint,
@@ -585,7 +586,7 @@ export function Marketplace() {
         <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
           Live seat discovery is event/indexer-backed — on a node with the indexer disabled the Open
           seats list is unavailable, but you can still apply by entering a cluster and seat id
-          directly. Your 5,000 LYTH self-bond is only locked when you are admitted and take the seat.
+          directly. Applying escrows your full self-bond (5,000+ LYTH), refundable until admission.
         </span>
       </div>
     </section>
@@ -624,6 +625,14 @@ function bondLabel(lythoshi: bigint): string {
   return `${formatLythHex(`0x${lythoshi.toString(16)}`)} LYTH`;
 }
 
+// The self-bond escrowed at apply is max(self-bond floor, the seat's advertised
+// minBond) — applyForSeat reverts SeatBondTooLow below this.
+function seatSelfBond(minBondLythoshi: bigint): bigint {
+  return minBondLythoshi > NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI
+    ? minBondLythoshi
+    : NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI;
+}
+
 function OpenSeatsPanel({ seats }: { seats: ReturnType<typeof useOpenSeats> }) {
   const rows = useMemo(() => seats.data ?? [], [seats.data]);
   const availableCount = rows.filter(
@@ -637,9 +646,9 @@ function OpenSeatsPanel({ seats }: { seats: ReturnType<typeof useOpenSeats> }) {
           <div>
             <h3>Earn a seat in a cluster</h3>
             <div className="sub">
-              Apply to an advertised open seat and the cluster votes 7-of-10 to admit you. A small
-              refundable application deposit travels with your request now; your 5,000 LYTH self-bond
-              is bound only when you are admitted.
+              Apply to an advertised open seat and the cluster votes 7-of-10 to admit you. Applying
+              escrows your full self-bond (5,000+ LYTH) up front, refundable if you withdraw before
+              admission; on admission the chain keeps the already-escrowed bond.
             </div>
           </div>
           <span className={availableCount > 0 ? "halo halo--ok" : "halo halo--warn"}>
@@ -714,14 +723,14 @@ function OpenSeatsPanel({ seats }: { seats: ReturnType<typeof useOpenSeats> }) {
                           { key: "cluster", label: "Cluster", value: clusterLabel(seat.clusterId) },
                           { key: "seat", label: "Seat", value: `#${seat.seatId} · ${seat.kind}` },
                           { key: "tier", label: "Service tier", value: seatCapabilityLabel(seat.capabilityMask) },
-                          { key: "bond", label: "Self-bond (on admit)", value: bondLabel(seat.minBondLythoshi) },
-                          { key: "flow", label: "Flow", value: "applyForSeat; refundable escrow now, 7-of-10 admit" },
+                          { key: "bond", label: "Self-bond (escrowed now)", value: bondLabel(seatSelfBond(seat.minBondLythoshi)) },
+                          { key: "flow", label: "Flow", value: "applyForSeat; full self-bond escrowed now, 7-of-10 admit" },
                         ],
                         seatApplyInput: {
                           clusterId: String(seat.clusterId),
                           seatId: String(seat.seatId),
                           operatorPubkeyHex: "",
-                          escrowLythoshi: "0",
+                          selfBondLythoshi: seatSelfBond(seat.minBondLythoshi).toString(),
                         },
                       }}
                     >

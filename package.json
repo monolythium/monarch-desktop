@@ -24,7 +24,7 @@
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
-    "@monolythium/core-sdk": "^0.5.0",
+    "@monolythium/core-sdk": "^0.5.1",
     "@noble/hashes": "2.2.0",
     "@radix-ui/react-dialog": "1.1.15",
     "@tauri-apps/api": "2.10.1",

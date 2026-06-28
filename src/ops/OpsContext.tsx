@@ -905,13 +905,13 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           clusterId: input.clusterId,
           seatId: input.seatId,
           operatorPubkeyHex: input.operatorPubkeyHex,
-          escrowLythoshi: input.escrowLythoshi,
+          selfBondLythoshi: input.selfBondLythoshi,
         });
         settleOperation(
           req,
           {
             ok: true,
-            message: `Applied for seat ${res.seatId} in cluster ${res.clusterId}, application ${res.appKeyHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...). The cluster votes 7-of-10 to admit; your self-bond binds on admission.`,
+            message: `Applied for seat ${res.seatId} in cluster ${res.clusterId}, application ${res.appKeyHex.slice(0, 18)}... (tx ${res.txHash.slice(0, 10)}...). Your full self-bond is escrowed and refundable until admission; the cluster votes 7-of-10 to admit.`,
             txHash: res.txHash,
           },
           { transport: "seat-apply-tx" },
@@ -2279,7 +2279,7 @@ export function OpsProvider({ children }: { children: ReactNode }) {
           clusterId: "",
           seatId: "",
           operatorPubkeyHex: "",
-          escrowLythoshi: "0",
+          selfBondLythoshi: "0",
         };
         const next = { ...base, ...patch };
         return {

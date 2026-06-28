@@ -13,7 +13,6 @@ import {
   keychainGet,
   NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES,
   NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
-  NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI,
 } from "../sdk";
 import { useOps } from "./OpsContext";
 import type { ApplyForSeatInput, VoteSeatAdmitInput } from "./types";
@@ -27,8 +26,9 @@ const CLUSTER_SIZE = 10;
 const SEAT_RUNTIME_NOTICE =
   "Submission is signed locally and broadcast to the connected node. A node that has not activated the open-seat primitive rejects the transaction before it is admitted.";
 const SELF_BOND_LABEL = `${formatLythHex(`0x${NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI.toString(16)}`)} LYTH`;
-const APPLICATION_ESCROW_LABEL = `${formatLythHex(`0x${NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI.toString(16)}`)} LYTH`;
-const DEFAULT_ESCROW_LYTHOSHI = NODE_REGISTRY_SEAT_APPLICATION_ESCROW_LYTHOSHI.toString();
+// `applyForSeat` escrows the full self-bond at apply; the floor (5,000 LYTH) is
+// the default when a seat does not advertise a higher minBond.
+const DEFAULT_SELF_BOND_LYTHOSHI = NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI.toString();
 
 type LocalConsensusKeyState = {
   status: "checking" | "ready" | "missing" | "error";
@@ -208,7 +208,7 @@ export function ApplyForSeatForm() {
   const current: ApplyForSeatInput =
     request?.kind === "seat-apply" && input
       ? input
-      : { clusterId: "", seatId: "", operatorPubkeyHex: "", escrowLythoshi: DEFAULT_ESCROW_LYTHOSHI };
+      : { clusterId: "", seatId: "", operatorPubkeyHex: "", selfBondLythoshi: DEFAULT_SELF_BOND_LYTHOSHI };
 
   const validity = useMemo(
     () => ({
@@ -224,19 +224,19 @@ export function ApplyForSeatForm() {
       ? deriveSeatApplicationKeyHex(current.operatorPubkeyHex)
       : "";
 
-  // Prefill the consensus pubkey from the stored mnemonic, and seed the fixed
-  // application escrow so the input is complete without manual entry.
+  // Prefill the consensus pubkey from the stored mnemonic, and seed the
+  // self-bond floor so the input is complete without manual entry.
   useEffect(() => {
     if (request?.kind !== "seat-apply") return;
     if (localKey.status === "ready" && localKey.pubkeyHex && !(input?.operatorPubkeyHex ?? "").trim()) {
       setSeatApplyInput({ operatorPubkeyHex: localKey.pubkeyHex });
     }
-    if (!isPositiveDecimal(input?.escrowLythoshi)) {
-      setSeatApplyInput({ escrowLythoshi: DEFAULT_ESCROW_LYTHOSHI });
+    if (!isPositiveDecimal(input?.selfBondLythoshi)) {
+      setSeatApplyInput({ selfBondLythoshi: DEFAULT_SELF_BOND_LYTHOSHI });
     }
   }, [
     input?.operatorPubkeyHex,
-    input?.escrowLythoshi,
+    input?.selfBondLythoshi,
     localKey.pubkeyHex,
     localKey.status,
     request?.kind,
@@ -252,8 +252,8 @@ export function ApplyForSeatForm() {
       <SeatEconomicsPanel
         title="What you commit"
         rows={[
-          { label: "Application escrow (now)", value: `${APPLICATION_ESCROW_LABEL} · refundable`, tone: "ok" },
-          { label: "Self-bond (on admission)", value: `${SELF_BOND_LABEL} · bound when admitted`, tone: "warn" },
+          { label: "Self-bond escrowed (now)", value: `${SELF_BOND_LABEL} · refundable until admission`, tone: "warn" },
+          { label: "On admission", value: "the escrowed self-bond is retained — nothing more is charged", tone: "ok" },
           { label: "Admission threshold", value: `${CLUSTER_ADMISSION_THRESHOLD}-of-${CLUSTER_SIZE} cluster vote` },
           { label: "Application key", value: appKeyHex ? compactHex(appKeyHex) : "derives from your consensus pubkey" },
         ]}
@@ -356,7 +356,7 @@ export function VoteSeatAdmitForm() {
         title="Admission context"
         rows={[
           { label: "Admission threshold", value: `${CLUSTER_ADMISSION_THRESHOLD}-of-${CLUSTER_SIZE} cluster vote` },
-          { label: "Candidate self-bond", value: `${SELF_BOND_LABEL} · bound on the admitting vote`, tone: "warn" },
+          { label: "Candidate self-bond", value: `${SELF_BOND_LABEL} · escrowed at apply, retained on admit`, tone: "warn" },
           { label: "Application key", value: validity.appKeyOk ? compactHex(current.appKeyHex) : "enter the candidate's application key" },
         ]}
       />
@@ -428,7 +428,7 @@ export function isApplyForSeatInputComplete(input: ApplyForSeatInput | undefined
     isUint32Decimal(input.clusterId) &&
     isUint32Decimal(input.seatId) &&
     isFixedHex(input.operatorPubkeyHex, NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES) &&
-    isPositiveDecimal(input.escrowLythoshi)
+    isPositiveDecimal(input.selfBondLythoshi)
   );
 }
 

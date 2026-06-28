@@ -113,15 +113,16 @@ export type ClusterVoteAdmitInput = {
 };
 
 // Inputs for the L6 open-seat `applyForSeat(uint32,uint32,bytes)` call. The
-// applicant signs with the operator key and attaches the refundable
-// application escrow as native value. `escrowLythoshi` is the application
-// escrow (100 LYTH), NOT the 5,000 LYTH self-bond — the self-bond binds into
-// the operator's bond only when the seat is filled on admit.
+// applicant signs with the operator key and escrows the FULL self-bond as
+// native value. `selfBondLythoshi` is `max(min_self_bond_floor, seat.minBond)`
+// — defaulting to the 5,000 LYTH floor — escrowed at apply and refundable if
+// the applicant withdraws before admission; admission retains the already-
+// escrowed bond. There is no separate application escrow.
 export type ApplyForSeatInput = {
   clusterId: string;
   seatId: string;
   operatorPubkeyHex: string;
-  escrowLythoshi: string;
+  selfBondLythoshi: string;
 };
 
 // Inputs for the L6 open-seat `voteSeatAdmit(uint32,bytes32,bytes)` call cast
@@ -324,7 +325,7 @@ export type OpRequest = {
   /** Present only when `kind === "cluster-vote-admit"`. */
   clusterVoteAdmitInput?: ClusterVoteAdmitInput;
   /** Present only when `kind === "seat-apply"`. Carries the open-seat
-   *  application target + the refundable application escrow. */
+   *  application target + the full self-bond escrowed at apply. */
   seatApplyInput?: ApplyForSeatInput;
   /** Present only when `kind === "seat-vote-admit"`. Carries the candidate
    *  application key the cluster member is voting to admit. */
