@@ -7,14 +7,13 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
@@ -59,9 +58,6 @@ const PROTOCORE_DATA_DIR: &str = "/var/lib/protocore";
 // redirect never rotates, so this directory grows unbounded — the Log
 // management surface reports its size (read) and patches retention (config).
 const PROTOCORE_LOG_DIR: &str = "/var/lib/protocore/logs";
-const PROTOCORE_OPERATOR_SEAL_EK_PATH: &str =
-    "/var/lib/protocore/operator/threshold/lythiumseal-operator-key.ek";
-const PROTOCORE_OPERATOR_SEAL_EK_HEX_LEN: usize = 1_184 * 2;
 const TALOS_CERT_EXPIRY_WARNING_DAYS: i64 = 30;
 
 #[derive(Debug, Error)]
@@ -335,19 +331,6 @@ pub struct TalosBackupResult {
     #[serde(rename = "sourcePath")]
     pub source_path: String,
     pub service: Option<TalosServiceInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TalosOperatorSealEkResult {
-    pub endpoint: String,
-    #[serde(rename = "nodeAddress")]
-    pub node_address: String,
-    pub command: String,
-    pub path: String,
-    #[serde(rename = "sealEkHex")]
-    pub seal_ek_hex: String,
-    #[serde(rename = "sha256")]
-    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1502,141 +1485,6 @@ async fn write_talos_copy_archive(
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     Ok((size, archive_sha256))
-}
-
-async fn read_talos_copy_archive(
-    endpoint: &str,
-    config_path: &str,
-    root_path: &str,
-) -> Result<Vec<u8>, TalosError> {
-    let mut client = machine_client(endpoint, config_path).await?;
-    let response = timeout(
-        TALOS_TIMEOUT,
-        client.copy(machine::CopyRequest {
-            root_path: root_path.to_string(),
-        }),
-    )
-    .await
-    .map_err(|_| TalosError::Timeout)?
-    .map_err(TalosError::from)?;
-
-    let mut stream = response.into_inner();
-    let mut out = Vec::new();
-    while let Some(chunk) = timeout(TALOS_BACKUP_TIMEOUT, stream.next())
-        .await
-        .map_err(|_| TalosError::Timeout)?
-    {
-        let data = chunk.map_err(TalosError::from)?;
-        if let Some(metadata) = data.metadata {
-            if !metadata.error.trim().is_empty() {
-                return Err(TalosError::Api(metadata.error));
-            }
-        }
-        out.extend_from_slice(&data.bytes);
-    }
-
-    if out.is_empty() {
-        return Err(TalosError::Api(format!(
-            "Talos Copy returned no data for {root_path}"
-        )));
-    }
-    Ok(out)
-}
-
-fn extract_talos_copy_file(
-    archive_bytes: &[u8],
-    expected_path: &str,
-) -> Result<Vec<u8>, TalosError> {
-    match extract_file_from_tar(GzDecoder::new(Cursor::new(archive_bytes)), expected_path) {
-        Ok(bytes) => Ok(bytes),
-        Err(gzip_err) => extract_file_from_tar(Cursor::new(archive_bytes), expected_path).map_err(
-            |raw_err| {
-                TalosError::Api(format!(
-                    "could not decode Talos Copy archive for {expected_path}: gzip={gzip_err}; raw={raw_err}"
-                ))
-            },
-        ),
-    }
-}
-
-fn extract_file_from_tar<R: Read>(reader: R, expected_path: &str) -> Result<Vec<u8>, TalosError> {
-    let mut archive = tar::Archive::new(reader);
-    let expected = expected_path.trim_start_matches('/');
-    let expected_name = Path::new(expected)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| TalosError::Api(format!("invalid expected path {expected_path}")))?;
-    let entries = archive
-        .entries()
-        .map_err(|err| TalosError::Api(format!("read Talos Copy archive: {err}")))?;
-
-    for entry in entries {
-        let mut entry =
-            entry.map_err(|err| TalosError::Api(format!("read Talos Copy entry: {err}")))?;
-        let path = entry
-            .path()
-            .map_err(|err| TalosError::Api(format!("read Talos Copy entry path: {err}")))?
-            .into_owned();
-        let path_matches = path == Path::new(expected)
-            || path.ends_with(expected)
-            || path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == expected_name);
-        if !path_matches {
-            continue;
-        }
-        let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|err| TalosError::Api(format!("read Talos Copy file: {err}")))?;
-        return Ok(bytes);
-    }
-
-    Err(TalosError::Api(format!(
-        "Talos Copy archive did not contain {expected_path}"
-    )))
-}
-
-fn normalize_operator_seal_ek(raw: &[u8]) -> Result<(String, String), TalosError> {
-    let text = std::str::from_utf8(raw)
-        .map_err(|err| TalosError::Api(format!("operator seal EK is not UTF-8 hex: {err}")))?;
-    let clean = text
-        .trim()
-        .trim_start_matches("0x")
-        .trim_start_matches("0X");
-    if clean.len() != PROTOCORE_OPERATOR_SEAL_EK_HEX_LEN {
-        return Err(TalosError::Api(format!(
-            "operator seal EK must be {PROTOCORE_OPERATOR_SEAL_EK_HEX_LEN} hex characters, got {}",
-            clean.len()
-        )));
-    }
-    if !clean.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err(TalosError::Api(
-            "operator seal EK contains non-hex characters".to_string(),
-        ));
-    }
-    let hex = clean.to_ascii_lowercase();
-    let bytes = decode_hex_bytes(&hex, "operator seal EK")?;
-    if bytes.iter().all(|byte| *byte == 0) {
-        return Err(TalosError::Api(
-            "operator seal EK must not be all-zero".to_string(),
-        ));
-    }
-    Ok((format!("0x{hex}"), hex_sha256(&bytes)))
-}
-
-fn decode_hex_bytes(hex: &str, label: &str) -> Result<Vec<u8>, TalosError> {
-    if hex.len() % 2 != 0 {
-        return Err(TalosError::Api(format!("{label} has odd hex length")));
-    }
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    for idx in (0..hex.len()).step_by(2) {
-        let byte = u8::from_str_radix(&hex[idx..idx + 2], 16)
-            .map_err(|err| TalosError::Api(format!("{label} has invalid hex: {err}")))?;
-        out.push(byte);
-    }
-    Ok(out)
 }
 
 fn used_percent(total: u64, available: u64) -> f64 {
@@ -3254,32 +3102,6 @@ pub async fn talos_export_protocore_backup(
         manifest_sha256,
         source_path: PROTOCORE_DATA_DIR.to_string(),
         service: Some(service),
-    })
-}
-
-#[tauri::command]
-pub async fn talos_operator_seal_ek(
-    state: State<'_, TalosState>,
-) -> Result<TalosOperatorSealEkResult, String> {
-    let (endpoint, config_path) = resolve_config(&state).await.map_err(|e| e.to_string())?;
-    let endpoint = endpoint.ok_or_else(|| TalosError::MissingEndpoint.to_string())?;
-    let config_path = config_path.ok_or_else(|| TalosError::MissingConfigPath.to_string())?;
-    let endpoint = endpoint_url(&endpoint).map_err(|e| e.to_string())?;
-    let archive = read_talos_copy_archive(&endpoint, &config_path, PROTOCORE_OPERATOR_SEAL_EK_PATH)
-        .await
-        .map_err(|e| e.to_string())?;
-    let raw = extract_talos_copy_file(&archive, PROTOCORE_OPERATOR_SEAL_EK_PATH)
-        .map_err(|e| e.to_string())?;
-    let (seal_ek_hex, sha256) = normalize_operator_seal_ek(&raw).map_err(|e| e.to_string())?;
-    let node = node_address(&endpoint);
-
-    Ok(TalosOperatorSealEkResult {
-        endpoint: endpoint.clone(),
-        node_address: node,
-        command: format!("talos copy {PROTOCORE_OPERATOR_SEAL_EK_PATH}"),
-        path: PROTOCORE_OPERATOR_SEAL_EK_PATH.to_string(),
-        seal_ek_hex,
-        sha256,
     })
 }
 
