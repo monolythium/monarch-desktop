@@ -67,7 +67,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Operator",
     icon: "TR",
     keywords: ["wallet", "treasury", "bond", "fee", "stake", "redelegate"],
-    preview: true,
   },
   {
     path: "/audit",
@@ -77,7 +76,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Operator",
     icon: "AU",
     keywords: ["audit", "receipts", "hash", "trail"],
-    preview: true,
   },
   {
     path: "/cluster",
@@ -114,7 +112,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Cluster",
     icon: "MP",
     keywords: ["marketplace", "providers", "clusters", "seat", "join"],
-    preview: true,
   },
   {
     path: "/services",
@@ -151,7 +148,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Chain",
     icon: "GV",
     keywords: ["governance", "proposal", "memo", "vote", "signal"],
-    preview: true,
   },
   {
     path: "/alerts",
@@ -224,7 +220,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Setup",
     icon: "AT",
     keywords: ["attestation", "ota", "upgrade", "release", "digest"],
-    preview: true,
   },
   {
     path: "/keys",
@@ -243,7 +238,6 @@ export const NAV_ROUTES: ReadonlyArray<NavRoute> = [
     group: "Setup",
     icon: "RC",
     keywords: ["recovery", "restore", "incident", "backup", "emergency"],
-    preview: true,
   },
 ];
 
