@@ -15,11 +15,20 @@ import {
   NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
 } from "../sdk";
 import { useOps } from "./OpsContext";
-import type { ApplyForSeatInput, VoteSeatAdmitInput } from "./types";
+import type {
+  AdvertiseSeatInput,
+  ApplyForSeatInput,
+  CloseSeatInput,
+  VoteSeatAdmitInput,
+  WithdrawSeatApplicationInput,
+} from "./types";
 
 const CONSENSUS_PUBKEY_HEX_CHARS = NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES * 2;
 const APP_KEY_HEX_CHARS = 32 * 2;
+const TERMS_HASH_HEX_CHARS = 32 * 2;
 const MAX_UINT32 = (1n << 32n) - 1n;
+const MAX_UINT16 = (1n << 16n) - 1n;
+const ZERO_TERMS_HASH = `0x${"00".repeat(32)}`;
 // 7-of-10 admission threshold for a full 10-operator cluster.
 const CLUSTER_ADMISSION_THRESHOLD = 7;
 const CLUSTER_SIZE = 10;
@@ -55,6 +64,17 @@ function parseDecimal(value: string | undefined): bigint | null {
 function isUint32Decimal(value: string | undefined): boolean {
   const parsed = parseDecimal(value);
   return parsed !== null && parsed >= 0n && parsed <= MAX_UINT32;
+}
+
+function isUint16Decimal(value: string | undefined): boolean {
+  const parsed = parseDecimal(value);
+  return parsed !== null && parsed >= 0n && parsed <= MAX_UINT16;
+}
+
+// seatCount must be a positive uint32 (a listing offers at least one seat).
+function isPositiveUint32Decimal(value: string | undefined): boolean {
+  const parsed = parseDecimal(value);
+  return parsed !== null && parsed > 0n && parsed <= MAX_UINT32;
 }
 
 function isPositiveDecimal(value: string | undefined): boolean {
@@ -422,6 +442,292 @@ export function VoteSeatAdmitForm() {
   );
 }
 
+const DEFAULT_ADVERTISE_INPUT: AdvertiseSeatInput = {
+  clusterId: "",
+  kind: "active",
+  seatCount: "1",
+  minBondLythoshi: DEFAULT_SELF_BOND_LYTHOSHI,
+  capabilityMask: "1",
+  termsHashHex: ZERO_TERMS_HASH,
+};
+
+export function AdvertiseSeatForm() {
+  const { request, setSeatAdvertiseInput } = useOps();
+  const input = request?.seatAdvertiseInput;
+  const localKey = useStoredOperatorConsensusPubkeyHex();
+  const current: AdvertiseSeatInput =
+    request?.kind === "seat-advertise" && input ? input : DEFAULT_ADVERTISE_INPUT;
+
+  const validity = useMemo(
+    () => ({
+      clusterOk: isUint32Decimal(input?.clusterId),
+      seatCountOk: isPositiveUint32Decimal(input?.seatCount),
+      minBondOk: isPositiveDecimal(input?.minBondLythoshi),
+      capabilityOk: isUint16Decimal(input?.capabilityMask),
+      termsOk: isFixedHex(input?.termsHashHex, 32),
+    }),
+    [input?.clusterId, input?.seatCount, input?.minBondLythoshi, input?.capabilityMask, input?.termsHashHex],
+  );
+
+  // Seed the defaults so the input is complete without manual entry.
+  useEffect(() => {
+    if (request?.kind !== "seat-advertise") return;
+    if (!isPositiveUint32Decimal(input?.seatCount)) setSeatAdvertiseInput({ seatCount: "1" });
+    if (!isPositiveDecimal(input?.minBondLythoshi)) {
+      setSeatAdvertiseInput({ minBondLythoshi: DEFAULT_SELF_BOND_LYTHOSHI });
+    }
+    if (!isUint16Decimal(input?.capabilityMask)) setSeatAdvertiseInput({ capabilityMask: "1" });
+    if (!isFixedHex(input?.termsHashHex, 32)) setSeatAdvertiseInput({ termsHashHex: ZERO_TERMS_HASH });
+  }, [
+    input?.seatCount,
+    input?.minBondLythoshi,
+    input?.capabilityMask,
+    input?.termsHashHex,
+    request?.kind,
+    setSeatAdvertiseInput,
+  ]);
+
+  if (!request || request.kind !== "seat-advertise") return null;
+
+  return (
+    <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
+      <div className="cap" style={{ marginBottom: 8 }}>Advertise open-seat inputs</div>
+      <SeatDisclosure localKey={localKey} />
+      <SeatEconomicsPanel
+        title="What you publish"
+        rows={[
+          { label: "Seat type", value: current.kind === "active" ? "active vacancy" : "standby vacancy" },
+          { label: "Min self-bond", value: `${SELF_BOND_LABEL} floor (applicants escrow at least this)`, tone: "warn" },
+          { label: "Admission threshold", value: `${CLUSTER_ADMISSION_THRESHOLD}-of-${CLUSTER_SIZE} cluster vote` },
+        ]}
+      />
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="kv__k">Cluster id</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="7"
+          value={current.clusterId}
+          onChange={(e) => setSeatAdvertiseInput({ clusterId: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.clusterOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>Decimal uint32 of your cluster.</span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Seat type</span>
+        <select
+          value={current.kind}
+          onChange={(e) => setSeatAdvertiseInput({ kind: e.target.value === "standby" ? "standby" : "active" })}
+          style={inputStyle(true)}
+        >
+          <option value="active">active</option>
+          <option value="standby">standby</option>
+        </select>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Seat count</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="1"
+          value={current.seatCount}
+          onChange={(e) => setSeatAdvertiseInput({ seatCount: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.seatCountOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>How many identical seats to offer.</span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Minimum self-bond (lythoshi)</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder={DEFAULT_SELF_BOND_LYTHOSHI}
+          value={current.minBondLythoshi}
+          onChange={(e) => setSeatAdvertiseInput({ minBondLythoshi: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.minBondOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          Applicants escrow at least this; active seats require {SELF_BOND_LABEL} or more.
+        </span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Service-tier capability mask</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="1"
+          value={current.capabilityMask}
+          onChange={(e) => setSeatAdvertiseInput({ capabilityMask: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.capabilityOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>Decimal low-16 bitfield of required service tiers.</span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Terms hash</span>
+        <input
+          type="text"
+          inputMode="text"
+          placeholder="0x00...00"
+          value={current.termsHashHex}
+          onChange={(e) => setSeatAdvertiseInput({ termsHashHex: normalizeHex(e.target.value) })}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          style={inputStyle(validity.termsOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          {TERMS_HASH_HEX_CHARS}-hex-char digest over the offered charter-share + off-chain terms (zeros if none).
+        </span>
+      </label>
+    </div>
+  );
+}
+
+export function WithdrawSeatApplicationForm() {
+  const { request, setSeatWithdrawApplicationInput } = useOps();
+  const input = request?.seatWithdrawApplicationInput;
+  const localKey = useStoredOperatorConsensusPubkeyHex();
+  const current: WithdrawSeatApplicationInput =
+    request?.kind === "seat-withdraw-application" && input ? input : { clusterId: "", appKeyHex: "" };
+
+  const validity = useMemo(
+    () => ({
+      clusterOk: isUint32Decimal(input?.clusterId),
+      appKeyOk: isFixedHex(input?.appKeyHex, 32),
+    }),
+    [input?.clusterId, input?.appKeyHex],
+  );
+
+  // Prefill the application key derived from the stored operator's own
+  // consensus pubkey — the natural "withdraw MY pending application" path.
+  useEffect(() => {
+    if (request?.kind !== "seat-withdraw-application") return;
+    if (localKey.status !== "ready" || !localKey.pubkeyHex) return;
+    if ((input?.appKeyHex ?? "").trim()) return;
+    setSeatWithdrawApplicationInput({ appKeyHex: deriveSeatApplicationKeyHex(localKey.pubkeyHex) });
+  }, [input?.appKeyHex, localKey.pubkeyHex, localKey.status, request?.kind, setSeatWithdrawApplicationInput]);
+
+  if (!request || request.kind !== "seat-withdraw-application") return null;
+
+  return (
+    <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
+      <div className="cap" style={{ marginBottom: 8 }}>Withdraw seat-application inputs</div>
+      <SeatDisclosure localKey={localKey} />
+      <SeatEconomicsPanel
+        title="What you reclaim"
+        rows={[
+          { label: "Escrowed self-bond", value: `${SELF_BOND_LABEL} · refunded on withdraw`, tone: "ok" },
+          { label: "Application key", value: validity.appKeyOk ? compactHex(current.appKeyHex) : "prefilled from your operator key" },
+        ]}
+      />
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="kv__k">Cluster id</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="7"
+          value={current.clusterId}
+          onChange={(e) => setSeatWithdrawApplicationInput({ clusterId: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.clusterOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>The cluster you applied to.</span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Application key</span>
+        <input
+          type="text"
+          inputMode="text"
+          placeholder="0x..."
+          value={current.appKeyHex}
+          onChange={(e) => setSeatWithdrawApplicationInput({ appKeyHex: normalizeHex(e.target.value) })}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          style={inputStyle(validity.appKeyOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>
+          The {APP_KEY_HEX_CHARS}-hex-char application key from your apply (BLAKE3 of your consensus pubkey).
+        </span>
+      </label>
+    </div>
+  );
+}
+
+export function CloseSeatForm() {
+  const { request, setSeatCloseInput } = useOps();
+  const input = request?.seatCloseInput;
+  const localKey = useStoredOperatorConsensusPubkeyHex();
+  const current: CloseSeatInput =
+    request?.kind === "seat-close" && input ? input : { clusterId: "", seatId: "" };
+
+  const validity = useMemo(
+    () => ({
+      clusterOk: isUint32Decimal(input?.clusterId),
+      seatOk: isUint32Decimal(input?.seatId),
+    }),
+    [input?.clusterId, input?.seatId],
+  );
+
+  if (!request || request.kind !== "seat-close") return null;
+
+  return (
+    <div className="card" style={{ background: "rgba(255,255,255,0.02)", marginTop: 12 }}>
+      <div className="cap" style={{ marginBottom: 8 }}>Close open-seat inputs</div>
+      <SeatDisclosure localKey={localKey} />
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }}>
+        <span className="kv__k">Cluster id</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="7"
+          value={current.clusterId}
+          onChange={(e) => setSeatCloseInput({ clusterId: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.clusterOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>Your advertising cluster.</span>
+      </label>
+
+      <label className="kv" style={{ flexDirection: "column", alignItems: "stretch", gap: 6, marginTop: 12 }}>
+        <span className="kv__k">Seat id</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          placeholder="0"
+          value={current.seatId}
+          onChange={(e) => setSeatCloseInput({ seatId: e.target.value.trim() })}
+          spellCheck={false}
+          autoComplete="off"
+          style={inputStyle(validity.seatOk)}
+        />
+        <span style={{ fontSize: 10.5, color: "var(--fg-400)" }}>The advertised seat id to rescind.</span>
+      </label>
+    </div>
+  );
+}
+
 export function isApplyForSeatInputComplete(input: ApplyForSeatInput | undefined): boolean {
   return (
     !!input &&
@@ -439,6 +745,28 @@ export function isVoteSeatAdmitInputComplete(input: VoteSeatAdmitInput | undefin
     isFixedHex(input.appKeyHex, 32) &&
     isFixedHex(input.voterPubkeyHex, NODE_REGISTRY_CONSENSUS_PUBKEY_BYTES)
   );
+}
+
+export function isAdvertiseSeatInputComplete(input: AdvertiseSeatInput | undefined): boolean {
+  return (
+    !!input &&
+    isUint32Decimal(input.clusterId) &&
+    (input.kind === "active" || input.kind === "standby") &&
+    isPositiveUint32Decimal(input.seatCount) &&
+    isPositiveDecimal(input.minBondLythoshi) &&
+    isUint16Decimal(input.capabilityMask) &&
+    isFixedHex(input.termsHashHex, 32)
+  );
+}
+
+export function isWithdrawSeatApplicationInputComplete(
+  input: WithdrawSeatApplicationInput | undefined,
+): boolean {
+  return !!input && isUint32Decimal(input.clusterId) && isFixedHex(input.appKeyHex, 32);
+}
+
+export function isCloseSeatInputComplete(input: CloseSeatInput | undefined): boolean {
+  return !!input && isUint32Decimal(input.clusterId) && isUint32Decimal(input.seatId);
 }
 
 export const SEAT_FORM_HEX_LENGTHS = {

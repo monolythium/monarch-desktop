@@ -55,8 +55,11 @@ import {
   submitVoteClusterAdmit,
 } from "../sdk/clusterJoinOps";
 import {
+  submitAdvertiseSeat,
   submitApplyForSeat,
+  submitCloseSeat,
   submitVoteSeatAdmit,
+  submitWithdrawSeatApplication,
 } from "../sdk/seatOps";
 import { submitClusterResignation } from "../sdk/clusterResignations";
 import { submitFormCluster } from "../sdk/clusterFormOps";
@@ -99,6 +102,9 @@ import type {
   ClusterVoteAdmitInput,
   ApplyForSeatInput,
   VoteSeatAdmitInput,
+  AdvertiseSeatInput,
+  WithdrawSeatApplicationInput,
+  CloseSeatInput,
   ClusterResignationInput,
   OtaApplyInput,
   LogRetentionInput,
@@ -191,6 +197,12 @@ type OpsContextValue = OpsState & {
   setSeatApplyInput: (patch: Partial<ApplyForSeatInput>) => void;
   /** Update the open-seat admit-vote payload. */
   setSeatVoteAdmitInput: (patch: Partial<VoteSeatAdmitInput>) => void;
+  /** Update the open-seat advertise payload. */
+  setSeatAdvertiseInput: (patch: Partial<AdvertiseSeatInput>) => void;
+  /** Update the open-seat withdraw-application payload. */
+  setSeatWithdrawApplicationInput: (patch: Partial<WithdrawSeatApplicationInput>) => void;
+  /** Update the open-seat close payload. */
+  setSeatCloseInput: (patch: Partial<CloseSeatInput>) => void;
   /** Update the Q120 cluster resignation payload. */
   setClusterResignationInput: (patch: Partial<ClusterResignationInput>) => void;
   /** Update the cluster-formation roster proposal payload. */
@@ -960,6 +972,142 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         const message = (err as Error)?.message ?? String(err);
         settleOperation(req, { ok: false, message }, { transport: "seat-vote-admit-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
+  const runAdvertiseSeatFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.seatAdvertiseInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Advertise-seat form is missing required fields." },
+          { transport: "seat-advertise-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "seat-advertise-tx" },
+          );
+          return;
+        }
+        const res = await submitAdvertiseSeat({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          kind: input.kind,
+          seatCount: input.seatCount,
+          minBondLythoshi: input.minBondLythoshi,
+          capabilityMask: Number(input.capabilityMask),
+          termsHashHex: input.termsHashHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Advertised ${res.seatCount} ${input.kind} seat(s) on cluster ${res.clusterId} (tx ${res.txHash.slice(0, 10)}...). Operators can now apply; your cluster votes 7-of-10 to admit.`,
+            txHash: res.txHash,
+          },
+          { transport: "seat-advertise-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "seat-advertise-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
+  const runWithdrawSeatApplicationFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.seatWithdrawApplicationInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Withdraw seat-application form is missing required fields." },
+          { transport: "seat-withdraw-application-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "seat-withdraw-application-tx" },
+          );
+          return;
+        }
+        const res = await submitWithdrawSeatApplication({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          appKeyHex: input.appKeyHex,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Withdrew application ${res.appKeyHex.slice(0, 18)}... from cluster ${res.clusterId} (tx ${res.txHash.slice(0, 10)}...). Your escrowed self-bond is refunded.`,
+            txHash: res.txHash,
+          },
+          { transport: "seat-withdraw-application-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "seat-withdraw-application-tx" });
+      }
+    },
+    [settleOperation],
+  );
+
+  const runCloseSeatFlow = useCallback(
+    async (req: OpRequest) => {
+      const input = req.seatCloseInput;
+      if (!input) {
+        settleOperation(
+          req,
+          { ok: false, message: "Close-seat form is missing required fields." },
+          { transport: "seat-close-tx" },
+        );
+        return;
+      }
+      try {
+        const mnemonic = await keychainGet(KEYCHAIN_ACCOUNTS.operatorMnemonic);
+        if (!mnemonic) {
+          settleOperation(
+            req,
+            { ok: false, message: MISSING_OPERATOR_KEY_MESSAGE },
+            { transport: "seat-close-tx" },
+          );
+          return;
+        }
+        const res = await submitCloseSeat({
+          rpcUrl: rpcEndpoint,
+          mnemonic,
+          clusterId: input.clusterId,
+          seatId: input.seatId,
+        });
+        settleOperation(
+          req,
+          {
+            ok: true,
+            message: `Closed seat ${res.seatId} on cluster ${res.clusterId} (tx ${res.txHash.slice(0, 10)}...). No new applications will be accepted.`,
+            txHash: res.txHash,
+          },
+          { transport: "seat-close-tx" },
+        );
+      } catch (err) {
+        const message = (err as Error)?.message ?? String(err);
+        settleOperation(req, { ok: false, message }, { transport: "seat-close-tx" });
       }
     },
     [settleOperation],
@@ -1835,6 +1983,30 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
+    if (req.kind === "seat-advertise") {
+      if (inTauri()) {
+        await runAdvertiseSeatFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "seat-withdraw-application") {
+      if (inTauri()) {
+        await runWithdrawSeatApplicationFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
+    if (req.kind === "seat-close") {
+      if (inTauri()) {
+        await runCloseSeatFlow(req);
+      } else {
+        blockBrowserExecution(req);
+      }
+      return;
+    }
     if (req.kind === "cluster-resign") {
       if (inTauri()) {
         await runClusterResignationFlow(req);
@@ -1990,6 +2162,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     runClusterVoteAdmitFlow,
     runApplyForSeatFlow,
     runVoteSeatAdmitFlow,
+    runAdvertiseSeatFlow,
+    runWithdrawSeatApplicationFlow,
+    runCloseSeatFlow,
     runClusterResignationFlow,
     runEmergencyKeyRotationFlow,
     runExportBackupFlow,
@@ -2249,6 +2424,64 @@ export function OpsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const setSeatAdvertiseInput = useCallback(
+    (patch: Partial<AdvertiseSeatInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "seat-advertise") return s;
+        const base: AdvertiseSeatInput = s.request.seatAdvertiseInput ?? {
+          clusterId: "",
+          kind: "active",
+          seatCount: "1",
+          minBondLythoshi: "0",
+          capabilityMask: "1",
+          termsHashHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, seatAdvertiseInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setSeatWithdrawApplicationInput = useCallback(
+    (patch: Partial<WithdrawSeatApplicationInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "seat-withdraw-application") return s;
+        const base: WithdrawSeatApplicationInput = s.request.seatWithdrawApplicationInput ?? {
+          clusterId: "",
+          appKeyHex: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, seatWithdrawApplicationInput: next },
+        };
+      });
+    },
+    [],
+  );
+
+  const setSeatCloseInput = useCallback(
+    (patch: Partial<CloseSeatInput>) => {
+      setState((s) => {
+        if (!s.request || s.request.kind !== "seat-close") return s;
+        const base: CloseSeatInput = s.request.seatCloseInput ?? {
+          clusterId: "",
+          seatId: "",
+        };
+        const next = { ...base, ...patch };
+        return {
+          ...s,
+          request: { ...s.request, seatCloseInput: next },
+        };
+      });
+    },
+    [],
+  );
+
   const setClusterResignationInput = useCallback(
     (patch: Partial<ClusterResignationInput>) => {
       setState((s) => {
@@ -2405,6 +2638,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setClusterVoteAdmitInput,
       setSeatApplyInput,
       setSeatVoteAdmitInput,
+      setSeatAdvertiseInput,
+      setSeatWithdrawApplicationInput,
+      setSeatCloseInput,
       setClusterResignationInput,
       setClusterFormInput,
       setFreezeAdmissionInput,
@@ -2433,6 +2669,9 @@ export function OpsProvider({ children }: { children: ReactNode }) {
       setClusterVoteAdmitInput,
       setSeatApplyInput,
       setSeatVoteAdmitInput,
+      setSeatAdvertiseInput,
+      setSeatWithdrawApplicationInput,
+      setSeatCloseInput,
       setClusterResignationInput,
       setClusterFormInput,
       setFreezeAdmissionInput,

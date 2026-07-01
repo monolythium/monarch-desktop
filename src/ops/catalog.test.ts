@@ -66,6 +66,37 @@ describe("operation catalog", () => {
     );
   });
 
+  it("surfaces the full open-seat marketplace verb set", () => {
+    const apply = OP_CATALOG.find((e) => e.kind === "seat-apply");
+    const vote = OP_CATALOG.find((e) => e.kind === "seat-vote-admit");
+    const advertise = OP_CATALOG.find((e) => e.kind === "seat-advertise");
+    const withdraw = OP_CATALOG.find((e) => e.kind === "seat-withdraw-application");
+    const close = OP_CATALOG.find((e) => e.kind === "seat-close");
+
+    for (const entry of [apply, vote, advertise, withdraw, close]) {
+      expect(entry?.category).toBe("cluster");
+    }
+
+    expect(advertise).toMatchObject({
+      title: "Advertise an open seat",
+      confirmLabel: "Sign seat advertisement",
+    });
+    expect(prose(advertise)).toContain("advertiseSeat(uint32,uint8,uint32,uint128,uint32,bytes32)");
+
+    expect(withdraw).toMatchObject({
+      title: "Withdraw a seat application",
+      confirmLabel: "Sign application withdrawal",
+    });
+    expect(prose(withdraw)).toContain("withdrawSeatApplication(uint32,bytes32)");
+    expect(withdraw?.effects).toContain("Refunds the full self-bond you escrowed at apply.");
+
+    expect(close).toMatchObject({
+      title: "Close an advertised seat",
+      confirmLabel: "Sign seat close",
+    });
+    expect(prose(close)).toContain("closeSeat(uint32,uint32)");
+  });
+
   it("routes operator restore through the foundation operations signer", () => {
     const restore = OP_CATALOG.find((entry) => entry.kind === "operator-restore");
 

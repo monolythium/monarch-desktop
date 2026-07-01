@@ -18,12 +18,18 @@
 
 import {
   addressToTypedBech32,
+  buildAdvertiseSeatTxFields as buildSdkAdvertiseSeatTxFields,
   buildApplyForSeatTxFields as buildSdkApplyForSeatTxFields,
+  buildCloseSeatTxFields as buildSdkCloseSeatTxFields,
   buildVoteSeatAdmitTxFields as buildSdkVoteSeatAdmitTxFields,
+  buildWithdrawSeatApplicationTxFields as buildSdkWithdrawSeatApplicationTxFields,
   DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
   deriveSeatApplicationKey,
+  encodeAdvertiseSeatCalldata,
   encodeApplyForSeatCalldata,
+  encodeCloseSeatCalldata,
   encodeVoteSeatAdmitCalldata,
+  encodeWithdrawSeatApplicationCalldata,
   NODE_REGISTRY_MIN_SELF_BOND_LYTHOSHI,
   NODE_REGISTRY_SEAT_KIND_ACTIVE,
   NODE_REGISTRY_SEAT_KIND_STANDBY,
@@ -244,6 +250,280 @@ export async function submitApplyForSeat(
     seatId: seatId.toString(),
     appKeyHex,
     selfBondLythoshi: BigInt(selfBondLythoshi).toString(),
+    innerSighashHex: bytesToHex(signed.sighash),
+    envelopeWireBytes: signed.wireBytes.length,
+  };
+}
+
+// ---- advertiseSeat / withdrawSeatApplication / closeSeat -------------
+//
+// The three remaining L6 selectors, wrapped in the same
+// mnemonic -> backend -> build -> sign -> submit shape. A cluster member
+// advertises a vacancy (`advertiseSeat`, non-payable), an applicant rescinds
+// a pending application and reclaims the escrowed self-bond
+// (`withdrawSeatApplication`, non-payable), and an advertiser closes a stale
+// listing (`closeSeat`, non-payable). None move native value: apply is the
+// only payable selector; withdraw refunds the already-escrowed bond on chain.
+
+export interface AdvertiseSeatCalldataArgs {
+  clusterId: bigint | number | string;
+  kind: SeatKind | number;
+  seatCount: bigint | number | string;
+  minBondLythoshi: bigint | number | string;
+  capabilityMask: number;
+  termsHashHex: string;
+}
+
+export interface WithdrawSeatApplicationCalldataArgs {
+  clusterId: bigint | number | string;
+  appKeyHex: string;
+}
+
+export interface CloseSeatCalldataArgs {
+  clusterId: bigint | number | string;
+  seatId: bigint | number | string;
+}
+
+export interface SubmitAdvertiseSeatArgs {
+  rpcUrl: string;
+  mnemonic: string;
+  clusterId: bigint | number | string;
+  kind: SeatKind | number;
+  seatCount: bigint | number | string;
+  minBondLythoshi: bigint | number | string;
+  capabilityMask: number;
+  termsHashHex: string;
+  executionUnitLimit?: bigint;
+}
+
+export interface SubmitWithdrawSeatApplicationArgs {
+  rpcUrl: string;
+  mnemonic: string;
+  clusterId: bigint | number | string;
+  appKeyHex: string;
+  executionUnitLimit?: bigint;
+}
+
+export interface SubmitCloseSeatArgs {
+  rpcUrl: string;
+  mnemonic: string;
+  clusterId: bigint | number | string;
+  seatId: bigint | number | string;
+  executionUnitLimit?: bigint;
+}
+
+export interface AdvertiseSeatSubmitResult {
+  txHash: string;
+  clusterId: string;
+  seatCount: string;
+  minBondLythoshi: string;
+  innerSighashHex: string;
+  envelopeWireBytes: number;
+}
+
+export interface WithdrawSeatApplicationSubmitResult {
+  txHash: string;
+  clusterId: string;
+  appKeyHex: string;
+  innerSighashHex: string;
+  envelopeWireBytes: number;
+}
+
+export interface CloseSeatSubmitResult {
+  txHash: string;
+  clusterId: string;
+  seatId: string;
+  innerSighashHex: string;
+  envelopeWireBytes: number;
+}
+
+export function encodeAdvertiseSeatCalldataHex(args: AdvertiseSeatCalldataArgs): string {
+  return encodeAdvertiseSeatCalldata({
+    clusterId: args.clusterId,
+    kind: args.kind,
+    seatCount: args.seatCount,
+    minBondLythoshi: args.minBondLythoshi,
+    capabilityMask: args.capabilityMask,
+    termsHash: args.termsHashHex,
+  });
+}
+
+export function encodeWithdrawSeatApplicationCalldataHex(
+  args: WithdrawSeatApplicationCalldataArgs,
+): string {
+  return encodeWithdrawSeatApplicationCalldata({
+    clusterId: args.clusterId,
+    appKey: args.appKeyHex,
+  });
+}
+
+export function encodeCloseSeatCalldataHex(args: CloseSeatCalldataArgs): string {
+  return encodeCloseSeatCalldata({ clusterId: args.clusterId, seatId: args.seatId });
+}
+
+export function buildAdvertiseSeatTxFields(args: {
+  chainId: bigint | number | string;
+  nonce: bigint | number | string;
+  fee: ExecutionUnitPriceResponse;
+  clusterId: bigint | number | string;
+  kind: SeatKind | number;
+  seatCount: bigint | number | string;
+  minBondLythoshi: bigint | number | string;
+  capabilityMask: number;
+  termsHashHex: string;
+  executionUnitLimit?: bigint;
+}): NativeEvmTxFields {
+  return buildSdkAdvertiseSeatTxFields({
+    chainId: args.chainId,
+    nonce: args.nonce,
+    fee: resolveSeatExecutionFee(args.fee, {
+      executionUnitLimit: args.executionUnitLimit ?? DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
+    }),
+    clusterId: args.clusterId,
+    kind: args.kind,
+    seatCount: args.seatCount,
+    minBondLythoshi: args.minBondLythoshi,
+    capabilityMask: args.capabilityMask,
+    termsHash: args.termsHashHex,
+  });
+}
+
+export function buildWithdrawSeatApplicationTxFields(args: {
+  chainId: bigint | number | string;
+  nonce: bigint | number | string;
+  fee: ExecutionUnitPriceResponse;
+  clusterId: bigint | number | string;
+  appKeyHex: string;
+  executionUnitLimit?: bigint;
+}): NativeEvmTxFields {
+  return buildSdkWithdrawSeatApplicationTxFields({
+    chainId: args.chainId,
+    nonce: args.nonce,
+    fee: resolveSeatExecutionFee(args.fee, {
+      executionUnitLimit: args.executionUnitLimit ?? DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
+    }),
+    clusterId: args.clusterId,
+    appKey: args.appKeyHex,
+  });
+}
+
+export function buildCloseSeatTxFields(args: {
+  chainId: bigint | number | string;
+  nonce: bigint | number | string;
+  fee: ExecutionUnitPriceResponse;
+  clusterId: bigint | number | string;
+  seatId: bigint | number | string;
+  executionUnitLimit?: bigint;
+}): NativeEvmTxFields {
+  return buildSdkCloseSeatTxFields({
+    chainId: args.chainId,
+    nonce: args.nonce,
+    fee: resolveSeatExecutionFee(args.fee, {
+      executionUnitLimit: args.executionUnitLimit ?? DEFAULT_SEAT_EXECUTION_UNIT_LIMIT,
+    }),
+    clusterId: args.clusterId,
+    seatId: args.seatId,
+  });
+}
+
+export async function submitAdvertiseSeat(
+  args: SubmitAdvertiseSeatArgs,
+): Promise<AdvertiseSeatSubmitResult> {
+  const rpc = makeRpcClient(args.rpcUrl);
+  const clusterId = parseUint32(args.clusterId, "clusterId");
+  const seatCount = parseUint32(args.seatCount, "seatCount");
+  const termsHashHex = bytesToHex(hexToBytes(args.termsHashHex, "termsHash", 32));
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+
+  const [chainId, nonce, fee] = await Promise.all([
+    rpc.ethChainId(),
+    rpc.lythGetTransactionCount(senderAddress),
+    rpc.lythExecutionUnitPrice(),
+  ]);
+  const tx = buildAdvertiseSeatTxFields({
+    chainId,
+    nonce,
+    fee,
+    clusterId,
+    kind: args.kind,
+    seatCount,
+    minBondLythoshi: args.minBondLythoshi,
+    capabilityMask: args.capabilityMask,
+    termsHashHex,
+    executionUnitLimit: args.executionUnitLimit,
+  });
+  const txHash = await submitTransaction({ client: rpc, backend, tx });
+  const signed = backend.signEvmTx(tx);
+  return {
+    txHash,
+    clusterId: clusterId.toString(),
+    seatCount: seatCount.toString(),
+    minBondLythoshi: BigInt(args.minBondLythoshi).toString(),
+    innerSighashHex: bytesToHex(signed.sighash),
+    envelopeWireBytes: signed.wireBytes.length,
+  };
+}
+
+export async function submitWithdrawSeatApplication(
+  args: SubmitWithdrawSeatApplicationArgs,
+): Promise<WithdrawSeatApplicationSubmitResult> {
+  const rpc = makeRpcClient(args.rpcUrl);
+  const clusterId = parseUint32(args.clusterId, "clusterId");
+  const appKeyHex = bytesToHex(hexToBytes(args.appKeyHex, "appKey", 32));
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+
+  const [chainId, nonce, fee] = await Promise.all([
+    rpc.ethChainId(),
+    rpc.lythGetTransactionCount(senderAddress),
+    rpc.lythExecutionUnitPrice(),
+  ]);
+  const tx = buildWithdrawSeatApplicationTxFields({
+    chainId,
+    nonce,
+    fee,
+    clusterId,
+    appKeyHex,
+    executionUnitLimit: args.executionUnitLimit,
+  });
+  const txHash = await submitTransaction({ client: rpc, backend, tx });
+  const signed = backend.signEvmTx(tx);
+  return {
+    txHash,
+    clusterId: clusterId.toString(),
+    appKeyHex,
+    innerSighashHex: bytesToHex(signed.sighash),
+    envelopeWireBytes: signed.wireBytes.length,
+  };
+}
+
+export async function submitCloseSeat(args: SubmitCloseSeatArgs): Promise<CloseSeatSubmitResult> {
+  const rpc = makeRpcClient(args.rpcUrl);
+  const clusterId = parseUint32(args.clusterId, "clusterId");
+  const seatId = parseUint32(args.seatId, "seatId");
+  const backend = mnemonicToMlDsa65Backend(args.mnemonic);
+  const senderAddress = addressToTypedBech32("user", backend.addressBytes());
+
+  const [chainId, nonce, fee] = await Promise.all([
+    rpc.ethChainId(),
+    rpc.lythGetTransactionCount(senderAddress),
+    rpc.lythExecutionUnitPrice(),
+  ]);
+  const tx = buildCloseSeatTxFields({
+    chainId,
+    nonce,
+    fee,
+    clusterId,
+    seatId,
+    executionUnitLimit: args.executionUnitLimit,
+  });
+  const txHash = await submitTransaction({ client: rpc, backend, tx });
+  const signed = backend.signEvmTx(tx);
+  return {
+    txHash,
+    clusterId: clusterId.toString(),
+    seatId: seatId.toString(),
     innerSighashHex: bytesToHex(signed.sighash),
     envelopeWireBytes: signed.wireBytes.length,
   };

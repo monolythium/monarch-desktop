@@ -25,10 +25,16 @@ import {
   isClusterVoteAdmitInputComplete,
 } from "./ClusterJoinForms";
 import {
+  AdvertiseSeatForm,
   ApplyForSeatForm,
+  CloseSeatForm,
   VoteSeatAdmitForm,
+  WithdrawSeatApplicationForm,
+  isAdvertiseSeatInputComplete,
   isApplyForSeatInputComplete,
+  isCloseSeatInputComplete,
   isVoteSeatAdmitInputComplete,
+  isWithdrawSeatApplicationInputComplete,
 } from "./SeatForms";
 import {
   ClusterResignationForm,
@@ -393,6 +399,18 @@ export function OperationsDrawer() {
     request?.kind === "seat-vote-admit" &&
     stage === "preview" &&
     !isVoteSeatAdmitInputComplete(request.seatVoteAdmitInput);
+  const seatAdvertiseNeedsInput =
+    request?.kind === "seat-advertise" &&
+    stage === "preview" &&
+    !isAdvertiseSeatInputComplete(request.seatAdvertiseInput);
+  const seatWithdrawApplicationNeedsInput =
+    request?.kind === "seat-withdraw-application" &&
+    stage === "preview" &&
+    !isWithdrawSeatApplicationInputComplete(request.seatWithdrawApplicationInput);
+  const seatCloseNeedsInput =
+    request?.kind === "seat-close" &&
+    stage === "preview" &&
+    !isCloseSeatInputComplete(request.seatCloseInput);
   const clusterResignationNeedsInput =
     request?.kind === "cluster-resign" &&
     stage === "preview" &&
@@ -427,6 +445,9 @@ export function OperationsDrawer() {
     clusterVoteAdmitNeedsInput ||
     seatApplyNeedsInput ||
     seatVoteAdmitNeedsInput ||
+    seatAdvertiseNeedsInput ||
+    seatWithdrawApplicationNeedsInput ||
+    seatCloseNeedsInput ||
     clusterResignationNeedsInput ||
     clusterFormNeedsInput ||
     freezeAdmissionNeedsInput ||
@@ -457,6 +478,12 @@ export function OperationsDrawer() {
                     ? "Fill the open-seat application details first"
                     : seatVoteAdmitNeedsInput
                     ? "Fill the open-seat admit-vote details first"
+                    : seatAdvertiseNeedsInput
+                    ? "Fill the advertise-seat details first"
+                    : seatWithdrawApplicationNeedsInput
+                    ? "Fill the withdraw-application details first"
+                    : seatCloseNeedsInput
+                    ? "Fill the close-seat details first"
                     : clusterResignationNeedsInput
                       ? "Enter a valid resignation nonce first"
                       : clusterFormNeedsInput
@@ -756,6 +783,9 @@ function DrawerBody({
         {request.kind === "cluster-vote-admit" ? <ClusterVoteAdmitForm /> : null}
         {request.kind === "seat-apply" ? <ApplyForSeatForm /> : null}
         {request.kind === "seat-vote-admit" ? <VoteSeatAdmitForm /> : null}
+        {request.kind === "seat-advertise" ? <AdvertiseSeatForm /> : null}
+        {request.kind === "seat-withdraw-application" ? <WithdrawSeatApplicationForm /> : null}
+        {request.kind === "seat-close" ? <CloseSeatForm /> : null}
         {request.kind === "cluster-resign" ? <ClusterResignationForm /> : null}
         {request.kind === "cluster-form" ? <ClusterFormProposalForm /> : null}
         {request.kind === "freeze-admission" ? <FreezeAdmissionForm /> : null}

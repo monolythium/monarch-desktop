@@ -859,6 +859,100 @@ export const OP_CATALOG: ReadonlyArray<OpCatalogEntry> = [
     ],
   },
   {
+    kind: "seat-advertise",
+    category: "cluster",
+    actionNumber: 35,
+    icon: "AD",
+    risk: "high",
+    title: "Advertise an open seat",
+    sub: "Publish a vacancy on your cluster",
+    intro:
+      "Advertises an open seat on your cluster so operators can discover and apply for it. You set the seat type, how many identical seats to offer, the minimum self-bond an applicant must escrow, and the service tier the cluster needs. Applicants then escrow their self-bond and your cluster votes 7-of-10 to admit them.",
+    technical:
+      "Submits advertiseSeat(uint32,uint8,uint32,uint128,uint32,bytes32) to node-registry 0x1005, signed with the active operator's recovery phrase. The call publishes a SeatAdvertised listing for the cluster: seat kind (0=active, 1=standby), seat count, minBond floor (>= 5,000 LYTH for active seats), a service-tier capability bitmask, and a 32-byte terms hash over the offered charter-share + off-chain terms. Non-payable.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign seat advertisement",
+    keywords: ["seat", "advertise", "open seat", "marketplace", "vacancy", "cluster", "publish"],
+    effects: [
+      "Publishes a SeatAdvertised listing for your cluster.",
+      "Uses your stored operator key only for the signing step.",
+      "Records the submitted advertisement transaction hash in the local audit trail.",
+    ],
+    diff: [
+      { key: "listing", label: "Seat listing", value: "+ advertised vacancy" },
+      { key: "bond", label: "Min self-bond", value: "advertised floor (5,000+ LYTH)" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "your cluster" },
+      { key: "kind", label: "Seat type", value: "active or standby" },
+      { key: "bond", label: "Min self-bond", value: "5,000+ LYTH" },
+      { key: "executor", label: "Executor", value: "advertiseSeat" },
+    ],
+  },
+  {
+    kind: "seat-withdraw-application",
+    category: "cluster",
+    actionNumber: 36,
+    icon: "WD",
+    risk: "high",
+    title: "Withdraw a seat application",
+    sub: "Rescind a pending application and reclaim the bond",
+    intro:
+      "Withdraws your pending open-seat application before the cluster admits you, and the chain refunds the full self-bond you escrowed at apply. Use this to cancel an application you no longer want to pursue — the escrow is returned to you as long as you have not yet been admitted.",
+    technical:
+      "Submits withdrawSeatApplication(uint32,bytes32) to node-registry 0x1005 for the target cluster and application key, signed with the operator recovery phrase. The chain removes the pending application and refunds the escrowed self-bond to the applicant. Only works before admission — once admitted, the bond is retained as the operator bond. Non-payable.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign application withdrawal",
+    keywords: ["seat", "withdraw", "refund", "cancel", "application", "open seat", "marketplace", "bond"],
+    effects: [
+      "Removes your pending application from the advertised seat.",
+      "Refunds the full self-bond you escrowed at apply.",
+      "Uses your stored operator key only for the signing step.",
+    ],
+    diff: [
+      { key: "application", label: "Seat application", value: "− pending application" },
+      { key: "bond", label: "Self-bond", value: "refunded to you" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "applied cluster" },
+      { key: "application", label: "Application", value: "your application key" },
+      { key: "executor", label: "Executor", value: "withdrawSeatApplication" },
+    ],
+  },
+  {
+    kind: "seat-close",
+    category: "cluster",
+    actionNumber: 37,
+    icon: "CS",
+    risk: "high",
+    title: "Close an advertised seat",
+    sub: "Rescind a stale seat listing",
+    intro:
+      "Closes an open seat your cluster advertised, removing it from the marketplace. Use this to take down a stale or filled-by-other-means listing. Any pending applicants can withdraw and reclaim their escrowed bond.",
+    technical:
+      "Submits closeSeat(uint32,uint32) to node-registry 0x1005 for the advertising cluster and seat id, signed with the active operator's recovery phrase. The chain marks the SeatAdvertised listing closed so no new applications are accepted. Non-payable.",
+    destructive: true,
+    needsPasskey: true,
+    confirmLabel: "Sign seat close",
+    keywords: ["seat", "close", "rescind", "open seat", "marketplace", "vacancy", "cluster"],
+    effects: [
+      "Marks the advertised seat listing closed.",
+      "Uses your stored operator key only for the signing step.",
+      "Records the submitted close transaction hash in the local audit trail.",
+    ],
+    diff: [
+      { key: "listing", label: "Seat listing", value: "− advertised vacancy" },
+      { key: "status", label: "Status", value: "closed" },
+    ],
+    fields: [
+      { key: "cluster", label: "Cluster", value: "your cluster" },
+      { key: "seat", label: "Seat", value: "advertised seat id" },
+      { key: "executor", label: "Executor", value: "closeSeat" },
+    ],
+  },
+  {
     kind: "freeze-admission",
     category: "emergency",
     actionNumber: 84,

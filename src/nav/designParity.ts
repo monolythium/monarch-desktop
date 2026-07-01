@@ -253,11 +253,17 @@ export const CATALOG_PRODUCT_EXTENSION_KINDS = [
   // invite flow into the self-service CJ-1 request/vote, so this no longer maps
   // 1:1 to a design id — it stays as a product extension.
   "cluster-accept-invite",
-  // L6 open-seat marketplace — apply to a cluster's advertised vacancy and the
-  // member admit-vote. On-chain primitive #147; a product extension beyond the
-  // original design's CJ-1 operation set.
+  // L6 open-seat marketplace — apply to a cluster's advertised vacancy, the
+  // member admit-vote, plus the advertise/withdraw/close selectors that complete
+  // the marketplace loop (a cluster publishes a vacancy, an applicant reclaims
+  // the escrowed bond before admission, an advertiser rescinds a stale listing).
+  // On-chain primitive #147; a product extension beyond the original design's
+  // CJ-1 operation set.
   "seat-apply",
   "seat-vote-admit",
+  "seat-advertise",
+  "seat-withdraw-application",
+  "seat-close",
   "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
