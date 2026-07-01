@@ -810,6 +810,31 @@ export async function talosMaintenanceDisks(host: string): Promise<MaintenanceDi
   return await invoke<MaintenanceDisk[]>("talos_maintenance_disks", { host });
 }
 
+/** Result of cross-checking the pinned installer image against the
+ *  chain-registry release the provision network runs. */
+export type InstallerPinCheck = {
+  pinnedImage: string;
+  pinnedTag: string;
+  registryReleaseTag: string;
+  matches: boolean;
+  detail: string;
+};
+
+/**
+ * Cross-check the pinned Monarch OS installer image against the chain-registry
+ * release the provision network runs. Rust fetches the network's chain-registry
+ * entry and compares its `release_tag` to the installer image tag. Throws
+ * (rejects) on any network/parse failure — the caller treats "could not verify"
+ * as a soft warning and a confirmed mismatch (`matches === false`) as a hard
+ * block, so a stale pin can never silently ship a node that cannot sync.
+ */
+export async function checkInstallerPin(): Promise<InstallerPinCheck> {
+  if (!inTauri()) {
+    throw new Error("check_installer_pin unavailable — running outside Tauri");
+  }
+  return await invoke<InstallerPinCheck>("check_installer_pin");
+}
+
 /**
  * Generate the full provisioning bundle (machine config + talosconfig) for one
  * node. Rust-side native crypto: machine CA, the complete Kubernetes cluster

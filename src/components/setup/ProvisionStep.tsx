@@ -27,6 +27,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  checkInstallerPin,
   probeNodeEndpoint,
   setStoredRpcEndpoint,
   talosBootstrap,
@@ -65,6 +66,15 @@ type ConfigState =
   | { kind: "generating"; key: string }
   | { kind: "ready"; key: string; config: FullNodeConfig }
   | { kind: "err"; key: string; message: string };
+
+// Installer-pin cross-check lifecycle. A confirmed `mismatch` hard-blocks
+// provisioning (the node would run an incompatible binary and never sync);
+// `unverified` (registry unreachable) is a soft warning only.
+type PinCheckState =
+  | { kind: "checking" }
+  | { kind: "ok"; detail: string }
+  | { kind: "mismatch"; detail: string }
+  | { kind: "unverified"; detail: string };
 
 // Debounce before asking Rust to mint a bundle: manual disk entry types
 // through several transient values, and each generation mints a full PKI
@@ -126,6 +136,7 @@ export function ProvisionStep({
   // couldn't) — the node's only management credential.
   const [talosconfigPath, setTalosconfigPath] = useState<string | null>(null);
   const [talosconfigSaveError, setTalosconfigSaveError] = useState<string | null>(null);
+  const [pinCheck, setPinCheck] = useState<PinCheckState>({ kind: "checking" });
   const cancelPoll = useRef(false);
   const configStateRef = useRef<ConfigState>(configState);
   configStateRef.current = configState;
@@ -173,6 +184,31 @@ export function ProvisionStep({
       cancelled = true;
     };
   }, [host]);
+
+  // Cross-check the pinned installer image against the chain-registry release
+  // the network runs, on mount. A confirmed mismatch means a fresh node would
+  // install an incompatible binary and never sync — hard-block provisioning
+  // rather than let that ship silently. Registry unreachable → soft warning.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await checkInstallerPin();
+        if (cancelled) return;
+        setPinCheck(
+          result.matches
+            ? { kind: "ok", detail: result.detail }
+            : { kind: "mismatch", detail: result.detail },
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setPinCheck({ kind: "unverified", detail: (err as Error)?.message ?? String(err) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Mint the provisioning bundle Rust-side once per (host, disk): the machine
   // config with the node's full PKI plus its talosconfig. Debounced (manual
@@ -222,14 +258,23 @@ export function ProvisionStep({
 
   const configReady =
     configState.kind === "ready" && configState.key === `${host}|${effectiveDisk.trim()}`;
+  // A confirmed installer-pin mismatch blocks the whole flow — a node installed
+  // from a mismatched pin can never sync the live chain.
+  const pinBlocked = pinCheck.kind === "mismatch";
   const canDryRun =
     phase === "idle" &&
     effectiveDisk.length > 0 &&
     deviceValidation.ok &&
     configReady &&
+    !pinBlocked &&
     dryRun.kind !== "running";
   const canApply =
-    phase === "idle" && dryRun.kind === "ok" && confirmed && deviceValidation.ok && configReady;
+    phase === "idle" &&
+    dryRun.kind === "ok" &&
+    confirmed &&
+    deviceValidation.ok &&
+    configReady &&
+    !pinBlocked;
 
   const runDryRun = useCallback(async () => {
     if (configState.kind !== "ready") return;
@@ -380,6 +425,37 @@ export function ProvisionStep({
           </span>
         </div>
       </div>
+
+      {/* Installer-pin cross-check against the chain-registry release. */}
+      {pinCheck.kind === "mismatch" ? (
+        <div
+          className="halo halo--err"
+          style={{ alignSelf: "stretch", whiteSpace: "normal", lineHeight: 1.5, alignItems: "flex-start", marginTop: 12 }}
+        >
+          <span className="dot" style={{ marginTop: 4, flex: "0 0 auto" }} />
+          <span>
+            <b>Installer pin does not match the live chain.</b> {pinCheck.detail} Provisioning is
+            blocked until the pin is updated.
+          </span>
+        </div>
+      ) : null}
+      {pinCheck.kind === "unverified" ? (
+        <div
+          className="halo halo--warn"
+          style={{ alignSelf: "stretch", whiteSpace: "normal", lineHeight: 1.5, alignItems: "flex-start", marginTop: 12 }}
+        >
+          <span className="dot" style={{ marginTop: 4, flex: "0 0 auto" }} />
+          <span>
+            Could not verify the installer pin against the chain-registry release ({pinCheck.detail}).
+            You can still provision, but confirm the pinned installer matches the live chain first.
+          </span>
+        </div>
+      ) : null}
+      {pinCheck.kind === "ok" ? (
+        <div className="halo halo--ok" style={{ alignSelf: "flex-start", marginTop: 12 }}>
+          <span className="dot" /> installer pin matches the live chain release
+        </div>
+      ) : null}
 
       {/* Disk picker. */}
       <div className="setup__field" style={{ marginTop: 18 }}>
