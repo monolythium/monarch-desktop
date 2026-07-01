@@ -34,6 +34,12 @@ export interface LatestProtocoreRelease {
   /** `platforms.x86_64-linux.sha256` from the manifest — the TARBALL sha
    *  (display-only; never compared against the runtime binary sha). */
   tarballSha256: string | null;
+  /** `platforms.x86_64-linux.binary_sha256` from the manifest — the sha256 of
+   *  the EXTRACTED protocore binary. This IS comparable to the node's
+   *  `runtime.binarySha256`, so it is a fallback build identity when the git
+   *  commit comparison fails (the release binary self-reports a dirty
+   *  git-describe string). `null` when the manifest does not publish it. */
+  binarySha256: string | null;
   /** Whether the release carries BOTH a cosign `.sig` and `.pem`. PRESENCE
    *  on the published release, NOT an on-device verification. */
   signed: boolean;
@@ -57,6 +63,27 @@ export function shortCommit(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim().toLowerCase();
   return trimmed ? trimmed.slice(0, COMMIT_PREFIX) : null;
+}
+
+/** Normalize a sha256 to a comparable identity: lowercase, trimmed, `0x`
+ *  stripped. Used to compare the release manifest's `binarySha256` against the
+ *  node's `runtime.binarySha256` (a full 64-hex string). */
+export function normalizeSha256(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim().toLowerCase().replace(/^0x/u, "");
+  return /^[0-9a-f]{64}$/u.test(trimmed) ? trimmed : null;
+}
+
+/** True when a release's binary sha and the node's runtime binary sha refer to
+ *  the same build. Both go through {@link normalizeSha256}; two unreadable shas
+ *  never match (an absent sha is not a confirmation). */
+export function binaryShaMatches(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const left = normalizeSha256(a);
+  const right = normalizeSha256(b);
+  return left !== null && right !== null && left === right;
 }
 
 /** True when two commits refer to the same build (normalized first-12 match).
@@ -199,6 +226,23 @@ export function protocoreUpdateStatus({
     };
   }
 
+  // Commit mismatch, but fall back to the binary sha before naming it a dev
+  // build. The release binary self-reports a dirty git-describe string, so the
+  // exact release build reports a commit that does not match the manifest's
+  // mono_core_commit. When the manifest publishes a binarySha256 and it matches
+  // the node's runtime binary sha, the node IS running the release — classify it
+  // "current" despite the differing git-describe strings.
+  if (binaryShaMatches(release.binarySha256, provenance.runtime.binarySha256)) {
+    const sha = normalizeSha256(release.binarySha256);
+    return {
+      state: "current",
+      className: "halo halo--ok",
+      text: "node is current",
+      title: `Node binary matches the latest signed release (${release.tag}, binary sha ${sha?.slice(0, 12)}…) despite a differing git-describe string.`,
+      nodeCommit,
+    };
+  }
+
   // The node reported a real commit that does not match the latest signed
   // release. This is an unreleased / dev build — name it honestly instead of
   // the alarming "could not match". The latest signed release is still offered
@@ -293,6 +337,54 @@ export function protocoreNodeReleaseSummary(
     updateAvailable: index > 0,
     latest,
   };
+}
+
+/** The resolution state of a derived installer image tag on ghcr. */
+export type InstallerImageExistence = "checking" | "exists" | "absent" | "unverified";
+
+/** HEAD the ghcr manifest for a derived installer image. Returns `true`/`false`
+ *  for a resolvable/absent tag, or `null` outside Tauri or on any error (the
+ *  caller renders that as "could not verify"). */
+export async function fetchInstallerImageExists(image: string): Promise<boolean | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const result = await invoke<{ image: string; exists: boolean }>("installer_image_exists", {
+      image,
+    });
+    return result.exists;
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve whether a derived installer image tag exists on ghcr, once per image
+ *  ref. Backs the OTA Apply guard: a tag that 404s must disable Apply so the
+ *  flow never dead-ends at an image pull. */
+export function useInstallerImageExists(image: string | null): InstallerImageExistence {
+  const [state, setState] = useState<InstallerImageExistence>("checking");
+
+  useEffect(() => {
+    if (!image) {
+      setState("checking");
+      return;
+    }
+    let cancelled = false;
+    setState("checking");
+    fetchInstallerImageExists(image)
+      .then((exists) => {
+        if (cancelled) return;
+        setState(exists === null ? "unverified" : exists ? "exists" : "absent");
+      })
+      .catch(() => {
+        if (!cancelled) setState("unverified");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [image]);
+
+  return state;
 }
 
 export type LatestProtocoreReleaseHook = {

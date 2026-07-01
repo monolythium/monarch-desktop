@@ -126,6 +126,7 @@ pub fn run() {
             provision::talos_generate_recovery_node_config,
             release_feed::latest_protocore_release,
             release_feed::recent_protocore_releases,
+            release_feed::installer_image_exists,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,

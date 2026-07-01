@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimeProvenanceResponse } from "@monolythium/core-sdk";
 import {
+  binaryShaMatches,
   commitMatches,
   friendlyTagForCommit,
+  normalizeSha256,
   protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
   shortCommit,
@@ -22,6 +24,7 @@ function release(overrides: Partial<LatestProtocoreRelease> = {}): LatestProtoco
     htmlUrl: "https://github.com/monolythium/protocore/releases/tag/v0.1.52-testnet",
     monoCoreCommit: RELEASE_COMMIT,
     tarballSha256: "deadbeef".repeat(8),
+    binarySha256: null,
     signed: true,
     sbom: true,
     installerImage: "ghcr.io/monolythium/monarch-os-installer:v0.1.52-testnet",
@@ -29,7 +32,10 @@ function release(overrides: Partial<LatestProtocoreRelease> = {}): LatestProtoco
   };
 }
 
-function provenance(gitCommit: string | null): RuntimeProvenanceResponse {
+function provenance(
+  gitCommit: string | null,
+  binarySha256: string | null = "ff".repeat(32),
+): RuntimeProvenanceResponse {
   return {
     schemaVersion: 1,
     chainId: 69420,
@@ -46,7 +52,7 @@ function provenance(gitCommit: string | null): RuntimeProvenanceResponse {
       profile: "release",
       features: "mdbx",
       p2pProtocolVersion: 5,
-      binarySha256: "ff".repeat(32),
+      binarySha256,
       stateMigrations: [],
     },
     upgrade: null,
@@ -78,6 +84,40 @@ describe("protocore update status", () => {
     // HONEST: never asserts "outdated".
     expect(status.title.toLowerCase()).not.toContain("outdated");
     expect(status.title.toLowerCase()).toContain("unreleased build");
+  });
+
+  it("reports current on a binary-sha match even when the git commit differs", () => {
+    // The release binary self-reports a dirty git-describe string, so the exact
+    // release build reports a commit that matches no release. When the manifest
+    // publishes a binarySha256 that matches the node's runtime binary sha, the
+    // node IS on the release — classify current, not dev-build.
+    const sha = "0c7dd293".repeat(8);
+    const status = protocoreUpdateStatus({
+      release: release({ binarySha256: `0x${sha.toUpperCase()}` }),
+      provenance: provenance(NODE_COMMIT_DIFFER, sha),
+    });
+    expect(status.state).toBe("current");
+    expect(status.className).toBe("halo halo--ok");
+    expect(status.title).toContain("despite a differing git-describe string");
+  });
+
+  it("still reports dev-build when neither the commit nor the binary sha match", () => {
+    const status = protocoreUpdateStatus({
+      release: release({ binarySha256: `0x${"0c7dd293".repeat(8)}` }),
+      provenance: provenance(NODE_COMMIT_DIFFER, "ab".repeat(32)),
+    });
+    expect(status.state).toBe("dev-build");
+  });
+
+  it("normalizes and compares binary shas case- and 0x-insensitively", () => {
+    const sha = "0c7dd293".repeat(8);
+    expect(normalizeSha256(`0x${sha.toUpperCase()}`)).toBe(sha);
+    expect(normalizeSha256("not-a-sha")).toBeNull();
+    expect(normalizeSha256(null)).toBeNull();
+    expect(binaryShaMatches(`0x${sha}`, sha.toUpperCase())).toBe(true);
+    expect(binaryShaMatches(sha, "ab".repeat(32))).toBe(false);
+    // Two absent shas never match (absence is not confirmation).
+    expect(binaryShaMatches(null, null)).toBe(false);
   });
 
   it("is unknown when the release is missing", () => {

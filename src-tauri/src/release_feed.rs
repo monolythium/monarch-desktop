@@ -48,6 +48,13 @@ pub struct LatestProtocoreRelease {
     /// `platforms.<plat>.sha256` from the release manifest — the TARBALL sha,
     /// NOT the runtime's binary sha. Surfaced for display only.
     pub tarball_sha256: Option<String>,
+    /// `platforms.<plat>.binary_sha256` (or a top-level `binary_sha256`) from
+    /// the release manifest — the sha256 of the EXTRACTED protocore binary. This
+    /// IS comparable to the node's `runtime.binarySha256`, so it serves as a
+    /// fallback build identity when the git-describe / commit comparison fails
+    /// (the release binary self-reports a dirty git-describe string). `None`
+    /// when the manifest does not publish it.
+    pub binary_sha256: Option<String>,
     /// Whether the published release carries BOTH a cosign `.sig` and `.pem`.
     /// PRESENCE on the release, not an on-device verification.
     pub signed: bool,
@@ -155,21 +162,29 @@ fn manifest_url(release: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Extract `(mono_core_commit, tarball_sha256)` from a parsed manifest body.
-/// Degrades to `(None, None)` for any missing field.
-fn manifest_identity(manifest: &Value) -> (Option<String>, Option<String>) {
+/// Extract `(mono_core_commit, tarball_sha256, binary_sha256)` from a parsed
+/// manifest body. Degrades each field to `None` when absent. The binary sha is
+/// read from `platforms.x86_64-linux.binary_sha256` first, then a top-level
+/// `binary_sha256`, so either manifest shape is accepted.
+fn manifest_identity(manifest: &Value) -> (Option<String>, Option<String>, Option<String>) {
     let mono_core_commit = manifest
         .get("compatibility")
         .and_then(|c| c.get("mono_core_commit"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let tarball_sha256 = manifest
+    let linux_platform = manifest
         .get("platforms")
-        .and_then(|p| p.get("x86_64-linux"))
+        .and_then(|p| p.get("x86_64-linux"));
+    let tarball_sha256 = linux_platform
         .and_then(|plat| plat.get("sha256"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    (mono_core_commit, tarball_sha256)
+    let binary_sha256 = linux_platform
+        .and_then(|plat| plat.get("binary_sha256"))
+        .and_then(Value::as_str)
+        .or_else(|| manifest.get("binary_sha256").and_then(Value::as_str))
+        .map(str::to_owned);
+    (mono_core_commit, tarball_sha256, binary_sha256)
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -232,7 +247,7 @@ async fn build_release(client: &reqwest::Client, release: &Value) -> LatestProto
     let signed = has_sig && has_pem;
     let sbom = names.iter().any(|n| n.ends_with(".spdx.json"));
 
-    let (mono_core_commit, tarball_sha256) = match manifest_url(release) {
+    let (mono_core_commit, tarball_sha256, binary_sha256) = match manifest_url(release) {
         Some(url) => match client
             .get(&url)
             .header("User-Agent", "monarch-desktop")
@@ -242,11 +257,11 @@ async fn build_release(client: &reqwest::Client, release: &Value) -> LatestProto
         {
             Ok(resp) => match resp.json::<Value>().await {
                 Ok(manifest) => manifest_identity(&manifest),
-                Err(_) => (None, None),
+                Err(_) => (None, None, None),
             },
-            Err(_) => (None, None),
+            Err(_) => (None, None, None),
         },
-        None => (None, None),
+        None => (None, None, None),
     };
 
     LatestProtocoreRelease {
@@ -258,6 +273,7 @@ async fn build_release(client: &reqwest::Client, release: &Value) -> LatestProto
         html_url,
         mono_core_commit,
         tarball_sha256,
+        binary_sha256,
         signed,
         sbom,
     }
@@ -307,6 +323,84 @@ pub async fn recent_protocore_releases(
         out.push(build_release(&client, release).await);
     }
     Ok(out)
+}
+
+/// Parse `ghcr.io/<repo...>:<tag>` into `(repo, tag)`. Returns `None` for a
+/// non-ghcr ref, a digest-pinned ref (`...@sha256:...`), or an untagged ref —
+/// none of which the manifest-existence HEAD below can resolve by tag.
+fn parse_ghcr_ref(image: &str) -> Option<(String, String)> {
+    let rest = image.strip_prefix("ghcr.io/")?;
+    if rest.contains('@') {
+        return None;
+    }
+    let (repo, tag) = rest.rsplit_once(':')?;
+    if repo.is_empty() || tag.is_empty() || !repo.contains('/') {
+        return None;
+    }
+    Some((repo.to_string(), tag.to_string()))
+}
+
+/// Whether a derived installer image tag resolves on ghcr.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallerImageCheck {
+    pub image: String,
+    pub exists: bool,
+}
+
+/// HEAD the ghcr manifest for a derived installer image tag, so the OTA Apply
+/// flow can refuse to target a tag that does not exist yet (the guaranteed
+/// dead-end where a node running the exact release binary is offered an Apply
+/// pointing at an unpublished installer tag). ghcr needs an anonymous pull
+/// token even for public images, so this fetches one, then HEADs the manifest.
+/// A 200 → exists, 404 → absent; any other status is an error the caller treats
+/// as "could not verify".
+#[tauri::command]
+pub async fn installer_image_exists(image: String) -> Result<InstallerImageCheck, String> {
+    let (repo, tag) = parse_ghcr_ref(&image)
+        .ok_or_else(|| format!("not a resolvable ghcr image reference: {image}"))?;
+    let client = http_client()?;
+
+    let token_url =
+        format!("https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull");
+    let token = client
+        .get(&token_url)
+        .header("User-Agent", "monarch-desktop")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Value>()
+        .await
+        .map_err(|e| e.to_string())?
+        .get("token")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "ghcr token response missing token".to_string())?;
+
+    let manifest_url = format!("https://ghcr.io/v2/{repo}/manifests/{tag}");
+    let resp = client
+        .head(&manifest_url)
+        .header("User-Agent", "monarch-desktop")
+        .header("Authorization", format!("Bearer {token}"))
+        .header(
+            "Accept",
+            "application/vnd.oci.image.index.v1+json, \
+             application/vnd.docker.distribution.manifest.list.v2+json, \
+             application/vnd.oci.image.manifest.v1+json, \
+             application/vnd.docker.distribution.manifest.v2+json",
+        )
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status();
+    if status.is_success() {
+        Ok(InstallerImageCheck { image, exists: true })
+    } else if status.as_u16() == 404 {
+        Ok(InstallerImageCheck { image, exists: false })
+    } else {
+        Err(format!("ghcr manifest HEAD returned {status}"))
+    }
 }
 
 #[cfg(test)]
@@ -415,18 +509,51 @@ mod tests {
     fn manifest_identity_extracts_commit_and_tarball_sha() {
         let manifest = json!({
             "compatibility": { "mono_core_commit": "b4257f14abcd" },
-            "platforms": { "x86_64-linux": { "sha256": "deadbeef".repeat(8) } }
+            "platforms": { "x86_64-linux": {
+                "sha256": "deadbeef".repeat(8),
+                "binary_sha256": "0c7dd293".repeat(8)
+            } }
         });
-        let (commit, sha) = manifest_identity(&manifest);
+        let (commit, sha, binary) = manifest_identity(&manifest);
         assert_eq!(commit.as_deref(), Some("b4257f14abcd"));
         assert_eq!(sha.as_deref(), Some(&"deadbeef".repeat(8)[..]));
+        assert_eq!(binary.as_deref(), Some(&"0c7dd293".repeat(8)[..]));
+    }
+
+    #[test]
+    fn manifest_identity_reads_top_level_binary_sha_fallback() {
+        let manifest = json!({
+            "binary_sha256": "0c7dd293".repeat(8),
+            "platforms": { "x86_64-linux": { "sha256": "deadbeef".repeat(8) } }
+        });
+        let (_, _, binary) = manifest_identity(&manifest);
+        assert_eq!(binary.as_deref(), Some(&"0c7dd293".repeat(8)[..]));
     }
 
     #[test]
     fn manifest_identity_degrades_to_none_when_absent() {
-        let (commit, sha) = manifest_identity(&json!({}));
+        let (commit, sha, binary) = manifest_identity(&json!({}));
         assert!(commit.is_none());
         assert!(sha.is_none());
+        assert!(binary.is_none());
+    }
+
+    #[test]
+    fn parse_ghcr_ref_extracts_repo_and_tag() {
+        assert_eq!(
+            parse_ghcr_ref("ghcr.io/monolythium/monarch-os-installer:v0.3.1-testnet"),
+            Some(("monolythium/monarch-os-installer".to_string(), "v0.3.1-testnet".to_string())),
+        );
+    }
+
+    #[test]
+    fn parse_ghcr_ref_rejects_non_ghcr_digest_and_untagged() {
+        // Not ghcr.
+        assert!(parse_ghcr_ref("docker.io/library/alpine:3").is_none());
+        // Digest-pinned (no tag to resolve).
+        assert!(parse_ghcr_ref("ghcr.io/x/y@sha256:abc").is_none());
+        // Untagged.
+        assert!(parse_ghcr_ref("ghcr.io/monolythium/monarch-os-installer").is_none());
     }
 
     #[test]
