@@ -111,7 +111,6 @@ pub fn run() {
             talos::talos_logs,
             talos::talos_log_stream,
             talos::talos_log_cancel,
-            talos::talos_protocore_restart,
             talos::talos_log_disk_usage,
             talos::talos_data_dir_usage,
             talos::talos_set_log_retention,

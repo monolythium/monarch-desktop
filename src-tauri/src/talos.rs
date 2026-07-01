@@ -3548,13 +3548,6 @@ pub async fn talos_log_cancel(state: State<'_, TalosState>, session_id: u64) -> 
     Ok(())
 }
 
-#[tauri::command]
-pub async fn talos_protocore_restart(
-    state: State<'_, TalosState>,
-) -> Result<TalosTextResult, String> {
-    talos_service_action(state, DEFAULT_SERVICE_ID.to_string(), "restart".to_string()).await
-}
-
 /// Read the disk usage of the protocore log directory
 /// (`/var/lib/protocore/logs`) via the Talos `DiskUsage` + `List` RPCs.
 ///
