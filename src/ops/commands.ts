@@ -53,6 +53,12 @@ export function commandFor(op: OpRequest): string | null {
     // shell-fallback a signed admission action.
     case "seat-apply":
     case "seat-vote-admit":
+    // Open-seat advertise/withdraw/close are signed node-registry txs handled
+    // by their dedicated OpsContext flows; never shell-fallback a signed
+    // marketplace action.
+    case "seat-advertise":
+    case "seat-withdraw-application":
+    case "seat-close":
     case "cluster-resign":
     case "freeze-admission":
     case "emergency-key-rotation":

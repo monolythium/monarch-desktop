@@ -659,11 +659,18 @@ function OpenSeatsPanel({ seats }: { seats: ReturnType<typeof useOpenSeats> }) {
           <CatalogButton kind="seat-apply" variant="primary">
             Apply to a seat
           </CatalogButton>
+          <CatalogButton kind="seat-withdraw-application">Withdraw my application</CatalogButton>
           <CatalogButton kind="seat-vote-admit">Vote to admit an applicant</CatalogButton>
+        </div>
+        <div className="inline-actions" style={{ marginTop: 8 }}>
+          <CatalogButton kind="seat-advertise">Advertise a seat</CatalogButton>
+          <CatalogButton kind="seat-close">Close a seat</CatalogButton>
         </div>
         <div className="empty-state" style={{ marginTop: 12 }}>
           Already know the cluster and seat id? Use “Apply to a seat” and enter them directly — live
-          seat discovery below depends on the connected node exposing the seat-event index.
+          seat discovery below depends on the connected node exposing the seat-event index. Applied
+          already? “Withdraw my application” returns your escrowed self-bond before admission. Running
+          a cluster? “Advertise a seat” to publish a vacancy, “Close a seat” to take one down.
         </div>
       </div>
 

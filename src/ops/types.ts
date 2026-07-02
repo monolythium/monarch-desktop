@@ -20,6 +20,9 @@ export const OP_KINDS = [
   "cluster-vote-admit",
   "seat-apply",
   "seat-vote-admit",
+  "seat-advertise",
+  "seat-withdraw-application",
+  "seat-close",
   "cluster-resign",
   "freeze-admission",
   "emergency-key-rotation",
@@ -132,6 +135,35 @@ export type VoteSeatAdmitInput = {
   clusterId: string;
   appKeyHex: string;
   voterPubkeyHex: string;
+};
+
+// Inputs for the L6 `advertiseSeat(uint32,uint8,uint32,uint128,uint32,bytes32)`
+// call an active cluster member makes to publish a vacancy. `kind` is 0=active
+// / 1=standby; `minBondLythoshi` is the advertised self-bond floor (>= 5,000
+// LYTH for active seats); `termsHashHex` is a 32-byte digest over the offered
+// charter-share + off-chain terms. Non-payable.
+export type AdvertiseSeatInput = {
+  clusterId: string;
+  kind: "active" | "standby";
+  seatCount: string;
+  minBondLythoshi: string;
+  capabilityMask: string;
+  termsHashHex: string;
+};
+
+// Inputs for the L6 `withdrawSeatApplication(uint32,bytes32)` call. The
+// applicant rescinds a pending application by its application key and the chain
+// refunds the escrowed self-bond. Non-payable.
+export type WithdrawSeatApplicationInput = {
+  clusterId: string;
+  appKeyHex: string;
+};
+
+// Inputs for the L6 `closeSeat(uint32,uint32)` call an advertiser makes to
+// rescind a stale listing. Non-payable.
+export type CloseSeatInput = {
+  clusterId: string;
+  seatId: string;
 };
 
 // Inputs for the self-service `formCluster(bytes,bytes,bytes)` call.
@@ -322,6 +354,15 @@ export type OpRequest = {
   /** Present only when `kind === "seat-vote-admit"`. Carries the candidate
    *  application key the cluster member is voting to admit. */
   seatVoteAdmitInput?: VoteSeatAdmitInput;
+  /** Present only when `kind === "seat-advertise"`. Carries the vacancy a
+   *  cluster member is publishing. */
+  seatAdvertiseInput?: AdvertiseSeatInput;
+  /** Present only when `kind === "seat-withdraw-application"`. Carries the
+   *  application key to withdraw + refund. */
+  seatWithdrawApplicationInput?: WithdrawSeatApplicationInput;
+  /** Present only when `kind === "seat-close"`. Carries the seat id the
+   *  advertiser is rescinding. */
+  seatCloseInput?: CloseSeatInput;
   /** Present only when `kind === "cluster-resign"`. Carries the
    *  operator-local resignation nonce and the foundation-expedite flag. */
   clusterResignationInput?: ClusterResignationInput;
