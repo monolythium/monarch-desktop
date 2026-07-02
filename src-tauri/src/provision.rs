@@ -68,7 +68,7 @@ pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 /// `:8545` never serves. Pinned to the protocore release the chain runs; bump
 /// alongside the OS/protocore version.
 pub const MONARCH_OS_INSTALLER_IMAGE: &str =
-    "ghcr.io/monolythium/monarch-os-installer:v0.2.4-testnet";
+    "ghcr.io/monolythium/monarch-os-installer:v0.3.1-testnet";
 
 /// On-node path the operator recovery mnemonic is staged to via `machine.files`
 /// (mode `0600`). The protocore entrypoint reads it through
@@ -766,6 +766,124 @@ pub async fn talos_generate_recovery_node_config(
         .map_err(|e| format!("recovery config generation task failed: {e}"))?
 }
 
+/// chain-registry raw base the provision flow resolves the network's pinned
+/// protocore release from (the same repo that serves genesis + peers).
+const CHAIN_REGISTRY_RAW_BASE: &str =
+    "https://raw.githubusercontent.com/monolythium/chain-registry/master/chains";
+
+const INSTALLER_PIN_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The result of cross-checking the pinned installer image against the
+/// chain-registry release the provision network runs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallerPinCheck {
+    /// The full installer image the provision flow pins.
+    pub pinned_image: String,
+    /// The tag portion of the pinned installer image (e.g. `v0.3.1-testnet`).
+    pub pinned_tag: String,
+    /// `release_tag` from the chain-registry entry for the provision network.
+    pub registry_release_tag: String,
+    /// Whether the pinned installer tag matches the registry-pinned release.
+    pub matches: bool,
+    /// Human-readable summary for the provision UI.
+    pub detail: String,
+}
+
+/// Extract the tag from a `registry/repo:tag` image reference. Returns `None`
+/// for a digest-pinned ref (`...@sha256:...`) or a ref with no tag. Splits on
+/// the FINAL path component so a `host:port/...` registry can't be mistaken for
+/// the tag.
+fn installer_image_tag(image: &str) -> Option<&str> {
+    let last = image.rsplit('/').next().unwrap_or(image);
+    if last.contains('@') {
+        return None;
+    }
+    last.rsplit_once(':')
+        .map(|(_, tag)| tag)
+        .filter(|tag| !tag.is_empty())
+}
+
+/// Parse `release_tag = "..."` from a chain-registry `<network>.toml`, skipping
+/// comment lines. The registry pins the signed protocore release operators run
+/// as `release_tag`; the installer image MUST track it.
+fn parse_registry_release_tag(toml_text: &str) -> Option<String> {
+    for line in toml_text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("release_tag") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        // Strip an inline comment, then the surrounding quotes.
+        let value = rest.split('#').next().unwrap_or(rest).trim().trim_matches('"');
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// Compare the pinned installer tag against the registry's pinned release tag.
+/// Pure so it can be unit-tested with inline fixtures.
+fn evaluate_installer_pin(image: &str, registry_toml: &str) -> Result<InstallerPinCheck, String> {
+    let pinned_tag = installer_image_tag(image)
+        .ok_or_else(|| format!("pinned installer image '{image}' has no resolvable tag"))?;
+    let registry_release_tag = parse_registry_release_tag(registry_toml)
+        .ok_or_else(|| "chain-registry entry has no release_tag pin".to_string())?;
+    let matches = pinned_tag == registry_release_tag;
+    let detail = if matches {
+        format!("Installer pin {pinned_tag} matches the registry-pinned protocore release.")
+    } else {
+        format!(
+            "Installer pin {pinned_tag} does NOT match the registry-pinned protocore \
+             release {registry_release_tag}. A node provisioned with this build would run an \
+             incompatible binary and could never sync the live chain. Update the installer pin \
+             before provisioning."
+        )
+    };
+    Ok(InstallerPinCheck {
+        pinned_image: image.to_string(),
+        pinned_tag: pinned_tag.to_string(),
+        registry_release_tag,
+        matches,
+        detail,
+    })
+}
+
+/// Cross-check the pinned installer image against the chain-registry release the
+/// provision network runs. Fetches `<network>.toml` from chain-registry (raw
+/// GitHub, ~8s timeout) and compares its `release_tag` to the installer image
+/// tag, so a stale pin — the class of bug that silently ships a node that can
+/// never sync the live chain — surfaces loudly at provision time instead of
+/// never. Network / parse failures return `Err`; the caller treats "could not
+/// verify" as a soft warning and a confirmed mismatch as a hard block.
+#[tauri::command]
+pub async fn check_installer_pin() -> Result<InstallerPinCheck, String> {
+    let url = format!("{CHAIN_REGISTRY_RAW_BASE}/{PROVISION_REGISTRY_NETWORK}.toml");
+    let client = reqwest::Client::builder()
+        .timeout(INSTALLER_PIN_CHECK_TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let toml_text = client
+        .get(&url)
+        .header("User-Agent", "monarch-desktop")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+    evaluate_installer_pin(MONARCH_OS_INSTALLER_IMAGE, &toml_text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,6 +967,12 @@ mod tests {
         assert!(yaml.contains(&format!(
             "        image: {MONARCH_OS_INSTALLER_IMAGE}\n"
         )));
+        // The pin must track the chain the live fleet runs (bump with each
+        // re-genesis / rolling binary swap).
+        assert_eq!(
+            MONARCH_OS_INSTALLER_IMAGE,
+            "ghcr.io/monolythium/monarch-os-installer:v0.3.1-testnet"
+        );
         assert!(yaml.contains("        grubUseUKICmdline: true\n"));
 
         let token = value_of(yaml, "    token: ");
@@ -1226,5 +1350,54 @@ across act action actor actress",
                 "mnemonic {bad:?} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn installer_image_tag_extracts_the_tag() {
+        assert_eq!(
+            installer_image_tag("ghcr.io/monolythium/monarch-os-installer:v0.3.1-testnet"),
+            Some("v0.3.1-testnet"),
+        );
+        // A host:port registry must not be mistaken for a tag.
+        assert_eq!(
+            installer_image_tag("registry.local:5000/monarch-os-installer:v1"),
+            Some("v1"),
+        );
+        // Digest-pinned or untagged refs have no comparable tag.
+        assert_eq!(installer_image_tag("ghcr.io/x/y@sha256:abc"), None);
+        assert_eq!(installer_image_tag("ghcr.io/x/y"), None);
+    }
+
+    #[test]
+    fn parses_release_tag_skipping_comments() {
+        let toml = "chain_id = 69420\n\
+                    # release_tag = \"v0.0.0-decoy\"\n\
+                    binary_sha   = \"eb403ed9\"\n\
+                    release_tag           = \"v0.3.1-testnet\" # signed release\n";
+        assert_eq!(parse_registry_release_tag(toml).as_deref(), Some("v0.3.1-testnet"));
+        assert!(parse_registry_release_tag("chain_id = 1\n").is_none());
+    }
+
+    #[test]
+    fn evaluate_installer_pin_matches_registry() {
+        let toml = "release_tag = \"v0.3.1-testnet\"\n";
+        let check = evaluate_installer_pin(MONARCH_OS_INSTALLER_IMAGE, toml).unwrap();
+        assert!(check.matches, "current pin must match the fixture registry release");
+        assert_eq!(check.pinned_tag, "v0.3.1-testnet");
+        assert_eq!(check.registry_release_tag, "v0.3.1-testnet");
+    }
+
+    #[test]
+    fn evaluate_installer_pin_flags_a_stale_pin() {
+        // A deliberately mismatched pin vs the registry release must be flagged.
+        let toml = "release_tag = \"v0.3.1-testnet\"\n";
+        let check = evaluate_installer_pin(
+            "ghcr.io/monolythium/monarch-os-installer:v0.2.4-testnet",
+            toml,
+        )
+        .unwrap();
+        assert!(!check.matches, "a stale pin must not be reported as matching");
+        assert!(check.detail.contains("does NOT match"), "detail: {}", check.detail);
+        assert!(check.detail.contains("v0.3.1-testnet"));
     }
 }
