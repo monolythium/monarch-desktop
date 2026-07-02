@@ -291,6 +291,7 @@ jobs:
       - name: Verify release readiness gates
         run: |
           pnpm run check:release-terminology
+          pnpm run check:version-sync
           pnpm typecheck
           pnpm run test:release-readiness
           pnpm test
