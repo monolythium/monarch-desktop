@@ -424,18 +424,23 @@ export type {
   ReleaseAttestationStatus,
 } from "./releaseAttestation";
 export {
+  binaryShaMatches,
   COMMIT_PREFIX,
   commitMatches,
+  fetchInstallerImageExists,
   fetchLatestProtocoreRelease,
   fetchRecentProtocoreReleases,
   friendlyTagForCommit,
+  normalizeSha256,
   protocoreNodeReleaseSummary,
   protocoreUpdateStatus,
   shortCommit,
+  useInstallerImageExists,
   useLatestProtocoreRelease,
   useRecentProtocoreReleases,
 } from "./protocoreRelease";
 export type {
+  InstallerImageExistence,
   LatestProtocoreRelease,
   LatestProtocoreReleaseHook,
   NodeReleaseSummary,

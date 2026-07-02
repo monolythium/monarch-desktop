@@ -29,6 +29,7 @@ import {
   protocoreUpdateStatus,
   releaseAttestationStatus,
   rpcEndpoint,
+  useInstallerImageExists,
   useLatestProtocoreRelease,
   talosProtocoreReadiness,
   talosService,
@@ -1616,6 +1617,11 @@ function LatestSignedReleaseCard({
     () => protocoreUpdateStatus({ release, provenance }),
     [release, provenance],
   );
+  // Resolve whether the derived installer image tag actually exists on ghcr,
+  // BEFORE offering Apply — a released tag whose installer image is not yet
+  // published is a guaranteed dead end at image pull. Called unconditionally
+  // (hook rules); it no-ops with a null image ref.
+  const installerExistence = useInstallerImageExists(release?.installerImage ?? null);
 
   // Mirror updater.ts silence: a failed/empty fetch never blocks the page.
   if (feed.loading && !release) {
@@ -1647,11 +1653,19 @@ function LatestSignedReleaseCard({
   }
 
   const installerOk = isValidUpgradeImage(release.installerImage);
+  // The installer image must resolve on ghcr. Treat "exists" and "unverified"
+  // (registry unreachable / running outside Tauri) as OK — blocking on an
+  // inability to check is worse than a rejected pull — but a confirmed 404
+  // ("absent") or an in-flight check ("checking") disables Apply.
+  const installerResolvable =
+    installerExistence === "exists" || installerExistence === "unverified";
   // Offer Apply when a newer signed release exists to move to — both when the
   // node is on an older signed release ("update-available") and when it is on
   // an unreleased/dev build ("dev-build"). Both can move onto the signed build.
   const applyEnabled =
-    (status.state === "update-available" || status.state === "dev-build") && installerOk;
+    (status.state === "update-available" || status.state === "dev-build") &&
+    installerOk &&
+    installerResolvable;
   const nodeCommit = provenance?.runtime.gitCommit ?? null;
 
   const applyUpdate = () => {
@@ -1758,9 +1772,13 @@ function LatestSignedReleaseCard({
                 ? "Cannot compare the node build against this release."
                 : !installerOk
                   ? "The derived installer image reference is not a valid upgrade image."
-                  : status.state === "dev-build"
-                    ? "Apply the latest signed release to move this node off its unreleased build onto a signed build."
-                    : "Open the guarded OS upgrade drawer pre-filled with this release."
+                  : installerExistence === "absent"
+                    ? `The installer image ${release.installerImage} does not exist on ghcr yet — applying would fail at image pull. It is published alongside the release.`
+                    : installerExistence === "checking"
+                      ? "Checking that the installer image exists on ghcr…"
+                      : status.state === "dev-build"
+                        ? "Apply the latest signed release to move this node off its unreleased build onto a signed build."
+                        : "Open the guarded OS upgrade drawer pre-filled with this release."
           }
         >
           Apply this update

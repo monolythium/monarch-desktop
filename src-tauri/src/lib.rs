@@ -126,6 +126,7 @@ pub fn run() {
             provision::check_installer_pin,
             release_feed::latest_protocore_release,
             release_feed::recent_protocore_releases,
+            release_feed::installer_image_exists,
             chat::chat_initialize,
             chat::chat_get_channels,
             chat::chat_get_messages,
