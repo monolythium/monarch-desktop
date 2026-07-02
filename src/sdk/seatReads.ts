@@ -26,17 +26,12 @@ import {
 } from "@monolythium/core-sdk";
 
 /**
- * Height at which the open-seat primitive activated on testnet-69420 (#147).
- * Used as the default lower bound for the native-event discovery scan — seats
- * cannot exist below it, so there is no reason to scan earlier history.
- */
-export const SEAT_PRIMITIVE_ACTIVATION_HEIGHT = 87500;
-
-/**
  * Default block window the discovery scan looks back over from the chain head.
  * Open-seat listings are short-lived (advertised, then filled or rescinded), so
  * a bounded recent window keeps the native-event read cheap without missing
- * live vacancies. The lower bound is always clamped to the activation height.
+ * live vacancies. The window is not tied to any chain-specific activation
+ * height — the seat marketplace activates at a height that moves with each
+ * re-genesis, so the scan simply covers the recent window from the head.
  */
 export const SEAT_DISCOVERY_WINDOW_BLOCKS = 50_000;
 
@@ -220,14 +215,17 @@ export type SeatDiscoveryRange = {
 
 /**
  * Resolve the discovery scan range from the current chain head: a bounded
- * recent window clamped to the seat-primitive activation height.
+ * recent window ending at the head. Returns `null` only when there is no head
+ * yet (nothing to scan) — never based on a hardcoded activation height, so the
+ * scan works against whatever height the marketplace activated at. The seat
+ * events themselves are the source of truth for what exists in the window.
  */
 export function resolveSeatDiscoveryRange(
   chainHeight: number | null,
   windowBlocks = SEAT_DISCOVERY_WINDOW_BLOCKS,
 ): SeatDiscoveryRange | null {
-  if (chainHeight === null || chainHeight < SEAT_PRIMITIVE_ACTIVATION_HEIGHT) return null;
-  const fromBlock = Math.max(SEAT_PRIMITIVE_ACTIVATION_HEIGHT, chainHeight - windowBlocks);
+  if (chainHeight === null || chainHeight < 0) return null;
+  const fromBlock = Math.max(0, chainHeight - windowBlocks);
   return { fromBlock, toBlock: chainHeight };
 }
 

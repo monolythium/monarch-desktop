@@ -10,7 +10,6 @@ import {
   openSeatsAvailable,
   resolveSeatDiscoveryRange,
   SEAT_DISCOVERY_WINDOW_BLOCKS,
-  SEAT_PRIMITIVE_ACTIVATION_HEIGHT,
   type SeatEventBatch,
 } from "./seatReads";
 
@@ -134,21 +133,20 @@ describe("openSeatsAvailable", () => {
 });
 
 describe("resolveSeatDiscoveryRange", () => {
-  it("returns null below the activation height", () => {
-    expect(resolveSeatDiscoveryRange(SEAT_PRIMITIVE_ACTIVATION_HEIGHT - 1)).toBeNull();
+  it("returns null only when there is no chain head yet", () => {
     expect(resolveSeatDiscoveryRange(null)).toBeNull();
+    expect(resolveSeatDiscoveryRange(-1)).toBeNull();
   });
 
-  it("clamps the lower bound to the activation height for a recent chain", () => {
-    const range = resolveSeatDiscoveryRange(SEAT_PRIMITIVE_ACTIVATION_HEIGHT + 10);
-    expect(range).toEqual({
-      fromBlock: SEAT_PRIMITIVE_ACTIVATION_HEIGHT,
-      toBlock: SEAT_PRIMITIVE_ACTIVATION_HEIGHT + 10,
-    });
+  it("scans from block 0 for a chain younger than the window", () => {
+    // Marketplace activation (e.g. height 4000) is well within the window, so a
+    // young chain must still produce a range — no hardcoded activation floor.
+    const range = resolveSeatDiscoveryRange(27_000);
+    expect(range).toEqual({ fromBlock: 0, toBlock: 27_000 });
   });
 
-  it("uses a bounded window once the chain is far past activation", () => {
-    const height = SEAT_PRIMITIVE_ACTIVATION_HEIGHT + 10 * SEAT_DISCOVERY_WINDOW_BLOCKS;
+  it("uses a bounded window once the chain is far past the window", () => {
+    const height = 10 * SEAT_DISCOVERY_WINDOW_BLOCKS;
     const range = resolveSeatDiscoveryRange(height);
     expect(range).toEqual({
       fromBlock: height - SEAT_DISCOVERY_WINDOW_BLOCKS,

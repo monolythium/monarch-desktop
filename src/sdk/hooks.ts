@@ -130,7 +130,7 @@ const NO_TARGET = { code: RPC_METHOD_NOT_FOUND, message: "method not found: no t
 // distinct targets never share a loop, and identical hooks across
 // components share one.
 function usePolledRpc<T>(
-  key: string,
+  key: string | null,
   fetcher: () => Promise<T>,
   notExposedWhen: (err: unknown) => boolean = isMethodNotFound,
 ): RpcSlice<T> {
@@ -206,8 +206,12 @@ function isSeatDiscoveryUnavailable(err: unknown): boolean {
 
 export function useOpenSeats(chainHeight: number | null): RpcSlice<OpenSeatView[]> {
   const range = resolveSeatDiscoveryRange(chainHeight);
+  // No head yet → null key: the slice stays in the loading state instead of
+  // being classified `notExposed`. `notExposed` (the "node does not expose the
+  // seat-event index" diagnosis) must come only from a real RPC failure of the
+  // event read, never from the absence of a scan range.
   return usePolledRpc(
-    `openSeats:${range ? `${range.fromBlock}:${range.toBlock}` : ""}`,
+    range ? `openSeats:${range.fromBlock}:${range.toBlock}` : null,
     () => (range ? readOpenSeats(rpc, range) : Promise.reject(NO_TARGET)),
     isSeatDiscoveryUnavailable,
   );

@@ -325,7 +325,6 @@ export {
   resolveSeatDiscoveryRange,
   SEAT_DISCOVERY_WINDOW_BLOCKS,
   SEAT_EVENT_NAMES,
-  SEAT_PRIMITIVE_ACTIVATION_HEIGHT,
 } from "./seatReads";
 export type {
   SeatDiscoveryRange,
