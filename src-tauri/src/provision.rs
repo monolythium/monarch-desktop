@@ -68,7 +68,7 @@ pub const PROVISION_REGISTRY_NETWORK: &str = "testnet-69420";
 /// `:8545` never serves. Pinned to the protocore release the chain runs; bump
 /// alongside the OS/protocore version.
 pub const MONARCH_OS_INSTALLER_IMAGE: &str =
-    "ghcr.io/monolythium/monarch-os-installer:v0.3.2-testnet";
+    "ghcr.io/monolythium/monarch-os-installer:v0.3.3-testnet";
 
 /// On-node path the operator recovery mnemonic is staged to via `machine.files`
 /// (mode `0600`). The protocore entrypoint reads it through
@@ -971,7 +971,7 @@ mod tests {
         // re-genesis / rolling binary swap).
         assert_eq!(
             MONARCH_OS_INSTALLER_IMAGE,
-            "ghcr.io/monolythium/monarch-os-installer:v0.3.2-testnet"
+            "ghcr.io/monolythium/monarch-os-installer:v0.3.3-testnet"
         );
         assert!(yaml.contains("        grubUseUKICmdline: true\n"));
 
@@ -1380,11 +1380,11 @@ across act action actor actress",
 
     #[test]
     fn evaluate_installer_pin_matches_registry() {
-        let toml = "release_tag = \"v0.3.2-testnet\"\n";
+        let toml = "release_tag = \"v0.3.3-testnet\"\n";
         let check = evaluate_installer_pin(MONARCH_OS_INSTALLER_IMAGE, toml).unwrap();
         assert!(check.matches, "current pin must match the fixture registry release");
-        assert_eq!(check.pinned_tag, "v0.3.2-testnet");
-        assert_eq!(check.registry_release_tag, "v0.3.2-testnet");
+        assert_eq!(check.pinned_tag, "v0.3.3-testnet");
+        assert_eq!(check.registry_release_tag, "v0.3.3-testnet");
     }
 
     #[test]
